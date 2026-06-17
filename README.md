@@ -5,11 +5,44 @@ coding CLIs, ordered by whichever **weekly / monthly** window resets soonest, wi
 a live countdown and renew date per window.
 
 ```bash
-python3 usage_monitor.py            # dashboard at http://127.0.0.1:8787
-python3 usage_monitor.py --open     # + open browser
-python3 usage_monitor.py --json     # print the raw usage JSON and exit
-python3 usage_monitor.py --port 9000
+python3 src/usage_monitor.py            # dashboard at http://127.0.0.1:8787
+python3 src/usage_monitor.py --open     # + open browser
+python3 src/usage_monitor.py --json     # print the raw usage JSON and exit
+python3 src/usage_monitor.py --port 9000
 ```
+
+## Install as a global `aisub` command
+
+`usage_monitor.py` itself runs on **Windows, Linux, and macOS** (stdlib only). The
+installers drop a tiny `aisub` launcher on your `PATH` that forwards to this repo's
+`usage_monitor.py`, so every flag passes through (`--json`, `--text`, `--open`, …).
+
+**Linux / macOS** (and Windows via WSL or Git Bash):
+
+```bash
+./scripts/install.sh                 # installs `aisub` into ~/.local/bin
+aisub                                # web dashboard at http://127.0.0.1:8787
+aisub --json                         # print the raw usage JSON and exit
+aisub --text                         # compact colored terminal summary
+./scripts/install.sh --uninstall     # remove it
+```
+
+Override the target dir with `BIN_DIR=/usr/local/bin ./scripts/install.sh`.
+
+**Windows** (PowerShell):
+
+```powershell
+.\scripts\install.ps1                # installs aisub.cmd into ~\.local\bin (+ adds it to PATH)
+aisub                                # web dashboard  (open a NEW terminal after install)
+aisub --json
+.\scripts\install.ps1 -Uninstall     # remove it
+```
+
+Override the target dir with `.\scripts\install.ps1 -BinDir 'C:\tools\bin'`.
+
+Both need only `python3` — no packaging, no dependencies. The launcher points back
+at the repo, so `git pull` updates `aisub` too (don't move the repo, or re-run the
+installer after you do).
 
 ## What it reads
 
