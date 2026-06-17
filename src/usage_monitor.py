@@ -53,20 +53,43 @@ HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/codex/usage"
 GEMINI_API = "https://cloudcode-pa.googleapis.com/v1internal:"  # + loadCodeAssist | retrieveUserQuota
 
-# gemini-cli's public "installed app" OAuth client. The secret ships inside the
-# CLI itself (not confidential), and exists only to let the refresh_token already
-# in ~/.gemini/oauth_creds.json mint fresh access tokens -- the exact exchange the
-# CLI performs on startup. See google-gemini/gemini-cli oauth2.ts.
-GEMINI_OAUTH_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-GEMINI_OAUTH_CLIENT_SECRET = "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"
+# ---------------------------------------------------------------------------
+# Public OAuth clients of the upstream CLIs (NOT our secrets, NOT a leak)
+# ---------------------------------------------------------------------------
+# The constants below are the *public* OAuth "installed app" (a.k.a. desktop /
+# native app) client credentials that ship hardcoded inside Google's own
+# gemini-cli and antigravity-cli. They are deliberately embedded in those
+# distributed binaries, so they are not confidential -- the "client secret"
+# here is public by design. Google's OAuth docs say so explicitly:
+#
+#   "The process results in a client ID and, in some cases, a client secret,
+#    which you embed in the source code of your application. (In this context,
+#    the client secret is obviously not treated as a secret.)"
+#   https://developers.google.com/identity/protocols/oauth2/native-app
+#
+# Why we have them: the only credential that actually grants access is the
+# per-user `refresh_token` already stored on disk (written there when the user
+# logged in via the CLI). Google's token endpoint requires the *same* client_id
+# + client_secret that originally minted a refresh_token in order to exchange it
+# for a fresh access_token. So we reuse each CLI's public client pair to perform
+# the exact same refresh exchange the CLI itself runs on startup -- nothing more.
+# We never transmit the refresh_token anywhere except Google's token endpoint.
+#
+# Secret-scanners (GitHub push protection, gitleaks, etc.) may still flag the
+# `GOCSPX-` prefix on pattern alone; that's a false positive given the above.
+
+# gemini-cli's public installed-app client. Source: google-gemini/gemini-cli
+# packages/core/src/code_assist/oauth2.ts. Refreshes the token stored in
+# ~/.gemini/oauth_creds.json.
+GEMINI_CLI_PUBLIC_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+GEMINI_CLI_PUBLIC_CLIENT_SECRET = "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"  # public, embedded in the CLI -- see note above
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
-# antigravity-cli's own Google OAuth "installed app" client (consumer login). Like
-# gemini-cli's above, the secret ships inside the CLI (non-confidential) and exists
-# only to let the refresh_token in ~/.gemini/antigravity-cli/antigravity-oauth-token
-# mint fresh access tokens -- the exact exchange `agy` performs on startup.
-ANTIGRAVITY_OAUTH_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-ANTIGRAVITY_OAUTH_CLIENT_SECRET = "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"
+# antigravity-cli's public installed-app client (consumer login). Same deal as
+# gemini-cli's above. Refreshes the token stored in
+# ~/.gemini/antigravity-cli/antigravity-oauth-token.
+ANTIGRAVITY_CLI_PUBLIC_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+ANTIGRAVITY_CLI_PUBLIC_CLIENT_SECRET = "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"  # public, embedded in the CLI -- see note above
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -698,7 +721,7 @@ def _refresh_gemini_token(creds, path):
     new access token, or None if there's no refresh_token or the exchange fails.
     """
     refresh = creds.get("refresh_token") if isinstance(creds, dict) else None
-    tok = _google_oauth_refresh(GEMINI_OAUTH_CLIENT_ID, GEMINI_OAUTH_CLIENT_SECRET, refresh)
+    tok = _google_oauth_refresh(GEMINI_CLI_PUBLIC_CLIENT_ID, GEMINI_CLI_PUBLIC_CLIENT_SECRET, refresh)
     if not tok:
         return None
     access = tok.get("access_token")
@@ -800,8 +823,8 @@ def _refresh_antigravity_token(creds, path):
     """
     tokobj = creds.get("token") if isinstance(creds, dict) else None
     refresh = tokobj.get("refresh_token") if isinstance(tokobj, dict) else None
-    tok = _google_oauth_refresh(ANTIGRAVITY_OAUTH_CLIENT_ID,
-                                ANTIGRAVITY_OAUTH_CLIENT_SECRET, refresh)
+    tok = _google_oauth_refresh(ANTIGRAVITY_CLI_PUBLIC_CLIENT_ID,
+                                ANTIGRAVITY_CLI_PUBLIC_CLIENT_SECRET, refresh)
     if not tok:
         return None
     access = tok.get("access_token")
