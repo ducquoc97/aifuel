@@ -208,10 +208,13 @@
   .disclosure{
     appearance:none; border:none; cursor:pointer;
     margin-top:16px; width:100%;
+    display:flex; align-items:center; justify-content:center; gap:7px;
     font:inherit; font-size:13px; font-weight:500; color:var(--blue);
     background:var(--fill-4); padding:9px; border-radius:10px;
     transition:background .15s ease;
   }
+  .disclosure .chev{ font-size:15px; line-height:0; transition:transform .15s ease }
+  .disclosure.open .chev{ transform:rotate(90deg) }
   .disclosure:hover{ background:var(--fill-3) }
   .disclosure:active{ transform:scale(.99) }
   .disclosure:focus-visible{ outline:none; box-shadow:0 0 0 3.5px var(--blue-tint) }
@@ -267,8 +270,10 @@ const PROVIDER_ICON = {
   antigravity: "https://antigravity.google/favicon.ico",
 };
 let DATA = null;
-const WINDOW_LIMIT = 6;          // collapse provider lists longer than this
-const EXPANDED = new Set();      // provider keys the user has expanded
+const WINDOW_LIMIT = 6;          // collapse generic provider lists longer than this
+const MODEL_PREVIEW = 3;         // model cards preview this many gauges before "Show all models"
+const MODEL_PROVIDERS = new Set(["gemini","antigravity"]);  // per-model cards (vs time-window cards)
+const EXPANDED = new Set();      // provider keys currently showing every model
 
 function fmtCountdown(sec){
   if(sec===null||sec===undefined) return "—";
@@ -291,6 +296,49 @@ function barColor(rem){
   return "var(--green)";
 }
 
+// Brand family from a model id: token before the first separator
+// (gemini-3.5-flash -> "gemini", claude-opus-4-6 -> "claude", gpt-oss -> "gpt").
+function modelFamily(label){ return String(label).trim().split(/[-_/.]/)[0].toLowerCase(); }
+
+// The preview shown before "Show all models": one (tightest) gauge per family
+// first — so Antigravity leads with gemini / claude / gpt rather than three
+// gemini bars — then top up with the next tightest models to fill `cap` slots.
+// For a single-family card (Gemini) this naturally yields the top `cap` models.
+function familyPreview(models, cap){
+  const seen=new Set(), out=[];
+  for(const m of models){
+    if(out.length>=cap) break;
+    const f=modelFamily(m.label);
+    if(seen.has(f)) continue;
+    seen.add(f); out.push(m);
+  }
+  for(const m of models){
+    if(out.length>=cap) break;
+    if(!out.includes(m)) out.push(m);
+  }
+  return out;
+}
+
+function windowHTML(w){
+  const rem = (w.remaining_percent!==null && w.remaining_percent!==undefined)? w.remaining_percent : null;
+  const width = rem===null? 100 : Math.max(2,Math.min(100,rem));
+  const col = barColor(rem);
+  const remTxt = rem===null? "n/a" : rem.toFixed(0)+"%";
+  const limTxt = (w.limit!=null)? ` · ${w.limit} cap` : "";
+  return `
+   <div class="window">
+     <div class="window-head">
+       <span class="window-label"><span class="name">${w.label}</span><span class="period-tag">${PERIOD_LABEL[w.period]||w.period}</span></span>
+       <span class="remaining" style="color:${col}">${remTxt} left${limTxt}</span>
+     </div>
+     <div class="track"><div class="track-fill" style="width:${width}%;background:${col};${rem===null?'opacity:.3':''}"></div></div>
+     <div class="window-foot">
+       <span class="cd" data-reset="${w.resets_at||''}">renews in —</span>
+       <span>${fmtDate(w.resets_at)}</span>
+     </div>
+   </div>`;
+}
+
 function render(){
   if(!DATA) return;
   const grid=document.getElementById("grid");
@@ -303,34 +351,28 @@ function render(){
     let wins="";
     const allW = p.windows || [];
     const expanded = EXPANDED.has(p.key);
-    const collapsed = allW.length > WINDOW_LIMIT && !expanded;
-    const shown = collapsed ? allW.slice(0, WINDOW_LIMIT) : allW;
+
+    // Model cards (Gemini, Antigravity) preview a few gauges and hide the rest
+    // behind "Show all N models"; Antigravity's preview is one per family so it
+    // leads with gemini / claude / gpt. Other cards use the generic collapse.
+    const isModels = MODEL_PROVIDERS.has(p.key);
+    const noun = isModels ? "models" : "windows";
+    const preview = isModels ? familyPreview(allW, MODEL_PREVIEW)
+                             : allW.slice(0, WINDOW_LIMIT);
+
+    let shown = allW, disclosure=null;
+    if(allW.length > preview.length){
+      shown = expanded ? allW : preview;
+      disclosure = expanded ? "Show less" : `Show all ${allW.length} ${noun}`;
+    }
+
     if(allW.length){
-      shown.forEach(w=>{
-        const rem = (w.remaining_percent!==null && w.remaining_percent!==undefined)? w.remaining_percent : null;
-        const width = rem===null? 100 : Math.max(2,Math.min(100,rem));
-        const col = barColor(rem);
-        const remTxt = rem===null? "n/a" : rem.toFixed(0)+"%";
-        const limTxt = (w.limit!=null)? ` · ${w.limit} cap` : "";
-        wins += `
-         <div class="window">
-           <div class="window-head">
-             <span class="window-label"><span class="name">${w.label}</span><span class="period-tag">${PERIOD_LABEL[w.period]||w.period}</span></span>
-             <span class="remaining" style="color:${col}">${remTxt} left${limTxt}</span>
-           </div>
-           <div class="track"><div class="track-fill" style="width:${width}%;background:${col};${rem===null?'opacity:.3':''}"></div></div>
-           <div class="window-foot">
-             <span class="cd" data-reset="${w.resets_at||''}">renews in —</span>
-             <span>${fmtDate(w.resets_at)}</span>
-           </div>
-         </div>`;
-      });
+      shown.forEach(w=>{ wins += windowHTML(w); });
     } else {
       wins = `<div class="empty">${p.detail||"No data"}</div>`;
     }
-    if(allW.length > WINDOW_LIMIT){
-      wins += `<button class="disclosure" onclick="toggleExpand('${p.key}')">${
-        expanded ? "Show less" : `Show all ${allW.length} windows`}</button>`;
+    if(disclosure){
+      wins += `<button class="disclosure${expanded?' open':''}" onclick="toggleExpand('${p.key}')"><span class="chev">›</span>${disclosure}</button>`;
     }
     card.innerHTML = `
       <div class="rank">${i===0?"resets soonest":"#"+(i+1)}</div>

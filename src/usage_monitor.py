@@ -634,48 +634,14 @@ def _quota_windows(quota):
     return windows
 
 
-def _model_family(model_id):
-    """Brand family inferred from the model id itself -- the token before the
-    first separator. e.g. gemini-3.1-pro-high -> "gemini", claude-opus-4-6 ->
-    "claude", gpt-oss-120b-medium -> "gpt". Nothing is hardcoded: whatever
-    families agy returns are the families we fold into."""
-    head = re.split(r"[-_/.]", str(model_id).strip(), 1)[0].lower()
-    return head or str(model_id).lower()
-
-
-def _family_label(family):
-    """Display name for a folded family: short acronyms upper-cased (gpt -> GPT),
-    longer brands title-cased (gemini -> Gemini, claude -> Claude)."""
-    return family.upper() if len(family) <= 3 else family.capitalize()
-
-
-def _fold_by_family(windows):
-    """Collapse per-model windows into one window per model family, discovered
-    from the model ids themselves (Gemini / Claude / GPT / ...). Each family bar
-    shows the tightest remaining quota and the soonest reset across its models,
-    so a folded gauge never reads higher than the real fuel left. Families are
-    ordered by soonest reset, matching the dashboard's ethos."""
-    groups, order = {}, []
-    for w in windows:
-        fam = _model_family(w["label"])
-        if fam not in groups:
-            groups[fam] = []
-            order.append(fam)
-        groups[fam].append(w)
-
-    folded = []
-    for fam in order:
-        members = groups[fam]
-        rems = [m["remaining_percent"] for m in members if m["remaining_percent"] is not None]
-        resets = [m["resets_at"] for m in members if m["resets_at"]]
-        n = len(members)
-        label = _family_label(fam) + (f" · {n} models" if n > 1 else "")
-        folded.append(window(
-            label, members[0]["period"],
-            remaining_percent=(round(min(rems), 1) if rems else None),
-            resets_at=(min(resets) if resets else None)))
-    folded.sort(key=lambda w: (w["resets_at"] is None, w["resets_at"] or 0))
-    return folded
+def _rank_models(windows):
+    """Per-model gauges sorted tightest fuel first (nulls last), then soonest
+    reset. The card previews the first few models and reveals the rest behind a
+    "Show all models" toggle, so the most-depleted model always leads."""
+    return sorted(windows, key=lambda m: (
+        m["remaining_percent"] is None,
+        m["remaining_percent"] if m["remaining_percent"] is not None else 0.0,
+        m["resets_at"] is None, m["resets_at"] or 0))
 
 
 def _codeassist_quota(token, hint_project, ua):
@@ -835,7 +801,10 @@ def fetch_gemini():
                 new_token, env_project, "gemini-cli/usage-monitor")
 
     if status == "live":
-        return result("gemini", "Gemini CLI", "ok", plan=plan, source="live", windows=windows)
+        # Rank the per-model buckets tightest-first; the card previews the top
+        # few and reveals the rest behind "Show all models".
+        return result("gemini", "Gemini CLI", "ok", plan=plan, source="live",
+                      windows=_rank_models(windows))
     return _gemini_schedule(plan, f"{detail}; showing daily reset window")
 
 
@@ -932,10 +901,10 @@ def fetch_antigravity():
                 status, plan, windows, live_detail = _codeassist_quota(
                     new_token, _antigravity_project(), "antigravity/usage-monitor")
         if status == "live":
-            # agy exposes one bucket per model (Gemini, Claude, GPT, ...); fold
-            # them into one bar per family so the card reads as the CLI groups it.
+            # agy exposes one bucket per model (Gemini, Claude, GPT, ...); rank
+            # them tightest-first so the card can preview one per family.
             return result("antigravity", "Antigravity CLI", "ok", plan=plan,
-                          source="live", windows=_fold_by_family(windows))
+                          source="live", windows=_rank_models(windows))
 
     # Best-effort: scan small json caches for any usage/quota snapshot.
     for d in dirs:
