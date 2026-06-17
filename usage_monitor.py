@@ -13,8 +13,11 @@ Providers:
     - Gemini CLI       (live  : loadCodeAssist -> retrieveUserQuota; daily-reset fallback)
     - Antigravity CLI  (live  : Code Assist quota via its own token; scan + schedule fallback)
 
-Nothing here prints or transmits your tokens. Credential files are read locally
-only to authenticate the provider's own usage endpoint, exactly like the CLIs do.
+Nothing here prints your tokens. Credential files are read locally only to
+authenticate the provider's own usage endpoint, exactly like the CLIs do. For
+Gemini, an expired access token is refreshed against Google's OAuth endpoint from
+its stored refresh_token and written back to ~/.gemini/oauth_creds.json -- the
+same exchange the CLI performs on startup.
 
 Usage:
     python3 usage_monitor.py            # serve dashboard at http://127.0.0.1:8787
@@ -37,6 +40,7 @@ import threading
 import webbrowser
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -46,6 +50,14 @@ HTTP_TIMEOUT = 12  # seconds
 # Live usage endpoints (read-only; authenticated with the CLI's own local token).
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/codex/usage"
 GEMINI_API = "https://cloudcode-pa.googleapis.com/v1internal:"  # + loadCodeAssist | retrieveUserQuota
+
+# gemini-cli's public "installed app" OAuth client. The secret ships inside the
+# CLI itself (not confidential), and exists only to let the refresh_token already
+# in ~/.gemini/oauth_creds.json mint fresh access tokens -- the exact exchange the
+# CLI performs on startup. See google-gemini/gemini-cli oauth2.ts.
+GEMINI_OAUTH_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+GEMINI_OAUTH_CLIENT_SECRET = "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"
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -115,6 +127,18 @@ def http_get(url, headers=None, data=None, method=None):
 def read_json(path):
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def write_json_atomic(path, data):
+    """Overwrite `path` with `data` atomically, preserving its file mode."""
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+    try:
+        os.chmod(tmp, os.stat(path).st_mode & 0o777)
+    except OSError:
+        pass
+    os.replace(tmp, path)
 
 
 def window(label, period, used_percent=None, remaining_percent=None,
@@ -622,6 +646,47 @@ def _codeassist_quota(token, hint_project, ua):
     return ("live", plan, windows, None)
 
 
+def _refresh_gemini_token(creds, path):
+    """Mint a fresh access token from the stored refresh_token and write it back
+    to `path` -- the same OAuth exchange gemini-cli does on startup.
+
+    Google returns a new access_token/id_token but reuses the existing
+    refresh_token, so we merge into `creds` rather than replace it. Returns the
+    new access token, or None if there's no refresh_token or the exchange fails.
+    """
+    refresh = creds.get("refresh_token") if isinstance(creds, dict) else None
+    if not refresh:
+        return None
+    body = urllib.parse.urlencode({
+        "client_id": GEMINI_OAUTH_CLIENT_ID,
+        "client_secret": GEMINI_OAUTH_CLIENT_SECRET,
+        "refresh_token": refresh,
+        "grant_type": "refresh_token",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        GOOGLE_TOKEN_URI, data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            tok = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        return None
+    access = tok.get("access_token")
+    if not access:
+        return None
+    creds["access_token"] = access
+    for src, dst in (("id_token", "id_token"), ("token_type", "token_type"), ("scope", "scope")):
+        if tok.get(src):
+            creds[dst] = tok[src]
+    if tok.get("expires_in"):
+        creds["expiry_date"] = int(now_ts() * 1000) + int(tok["expires_in"]) * 1000
+    try:
+        write_json_atomic(path, creds)
+    except Exception:
+        pass  # the in-memory token is still usable even if we can't persist it
+    return access
+
+
 def _gemini_schedule(plan, detail):
     """Fallback: tier name + daily reset clock (no per-model quota available)."""
     return result("gemini", "Gemini CLI", "partial", plan=plan, source="schedule",
@@ -633,25 +698,45 @@ def fetch_gemini():
     """Live: loadCodeAssist (tier + project) -> retrieveUserQuota (per-model bars).
 
     Works for both a Standard/Enterprise account (user-supplied GOOGLE_CLOUD_PROJECT)
-    and a free / personal login (project auto-provisioned via onboardUser). When no
-    live quota is available we fall back to the tier name + daily reset clock.
+    and a free / personal login (project auto-provisioned via onboardUser). The
+    ~1h access token is refreshed in-place from its refresh_token (like the CLI)
+    so an idle CLI no longer drops us to the reset-clock fallback.
     """
     cred = os.path.join(HOME, ".gemini", "oauth_creds.json")
     if not os.path.exists(cred):
         return result("gemini", "Gemini CLI", "unavailable",
                       detail="No ~/.gemini/oauth_creds.json")
     try:
-        token = deep_find(read_json(cred), {"access_token", "accessToken"})
+        creds = read_json(cred)
     except Exception:
-        token = None
+        creds = None
+    token = deep_find(creds, {"access_token", "accessToken"}) if creds else None
     if not token:
         return result("gemini", "Gemini CLI", "unavailable",
                       detail="No access token in oauth_creds.json")
+
+    # Proactively refresh the cached token when it's expired (or within a minute
+    # of it) instead of letting loadCodeAssist 401 us into the fallback.
+    refreshed = False
+    expiry = to_epoch(creds.get("expiry_date"))
+    if expiry is not None and expiry <= now_ts() + 60:
+        new_token = _refresh_gemini_token(creds, cred)
+        if new_token:
+            token, refreshed = new_token, True
 
     # Only meaningful for the user-supplied (Standard/Enterprise) case; the helper
     # ignores it for personal logins.
     env_project = os.environ.get("GOOGLE_CLOUD_PROJECT") or _gemini_project_from_config()
     status, plan, windows, detail = _codeassist_quota(token, env_project, "gemini-cli/usage-monitor")
+
+    # If we didn't already refresh and the token was rejected (stale expiry_date),
+    # force one refresh and retry before degrading to the reset clock.
+    if status != "live" and not refreshed and creds.get("refresh_token"):
+        new_token = _refresh_gemini_token(creds, cred)
+        if new_token and new_token != token:
+            status, plan, windows, detail = _codeassist_quota(
+                new_token, env_project, "gemini-cli/usage-monitor")
+
     if status == "live":
         return result("gemini", "Gemini CLI", "ok", plan=plan, source="live", windows=windows)
     return _gemini_schedule(plan, f"{detail}; showing daily reset window")
