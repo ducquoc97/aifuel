@@ -22,6 +22,7 @@ same exchange the CLI performs on startup.
 Usage:
     python3 usage_monitor.py            # serve dashboard at http://127.0.0.1:8787
     python3 usage_monitor.py --json     # print the usage JSON and exit
+    python3 usage_monitor.py --text     # print a compact colored terminal summary and exit
     python3 usage_monitor.py --port N   # use a different port
     python3 usage_monitor.py --open     # also open the browser
 
@@ -46,6 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOME = os.path.expanduser("~")
 HTTP_TIMEOUT = 12  # seconds
+HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 
 # Live usage endpoints (read-only; authenticated with the CLI's own local token).
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/codex/usage"
@@ -428,17 +430,21 @@ def _copilot_token():
                 return tok, acct
         except Exception:
             pass
-    hosts = os.path.join(HOME, ".config", "gh", "hosts.yml")
-    if os.path.exists(hosts):
-        try:
-            with open(hosts, "r", encoding="utf-8") as fh:
-                txt = fh.read()
-            m = re.search(r"oauth_token:\s*(\S+)", txt)
-            if m:
-                u = re.search(r"user:\s*(\S+)", txt)
-                return m.group(1), (u.group(1) if u else None)
-        except Exception:
-            pass
+    hosts_candidates = [os.path.join(HOME, ".config", "gh", "hosts.yml")]
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA") or os.path.join(HOME, "AppData", "Roaming")
+        hosts_candidates.insert(0, os.path.join(appdata, "GitHub CLI", "hosts.yml"))
+    for hosts in hosts_candidates:
+        if os.path.exists(hosts):
+            try:
+                with open(hosts, "r", encoding="utf-8") as fh:
+                    txt = fh.read()
+                m = re.search(r"oauth_token:\s*(\S+)", txt)
+                if m:
+                    u = re.search(r"user:\s*(\S+)", txt)
+                    return m.group(1), (u.group(1) if u else None)
+            except Exception:
+                pass
     env = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     return env, None
 
@@ -577,11 +583,19 @@ def _onboard_project(token, tier_id, ua):
     return None
 
 
+# Internal Code Assist buckets the official quota UI hides: tab-completion models
+# (tab_*) and numbered experimental chat models (chat_<digits>). Skipping them
+# keeps the dashboard in sync with the CLI's "Gemini" / "Claude & GPT" groups.
+_HIDDEN_MODEL_RE = re.compile(r"^tab_|^chat_\d+$")
+
+
 def _quota_windows(quota):
     """Map retrieveUserQuota buckets -> per-model windows (the CLI /model bars)."""
     windows = []
     for bucket in (quota.get("buckets") or []) if isinstance(quota, dict) else []:
         if not isinstance(bucket, dict) or not bucket.get("modelId"):
+            continue
+        if _HIDDEN_MODEL_RE.match(bucket["modelId"]):
             continue
         frac = bucket.get("remainingFraction")
         amount = bucket.get("remainingAmount")
@@ -960,170 +974,94 @@ def collect(force=False):
 
 
 # ---------------------------------------------------------------------------
-# Web server
+# Terminal renderer (--text)
 # ---------------------------------------------------------------------------
 
-INDEX_HTML = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>AI CLI Usage Monitor</title>
-<style>
-  :root{
-    --bg:#0b0d12; --card:#151922; --card2:#1b212d; --line:#262d3a;
-    --txt:#e7ecf3; --dim:#8a94a6; --accent:#6ea8fe;
-    --good:#3ddc97; --warn:#ffb454; --bad:#ff6b6b;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#16203a 0,var(--bg) 55%);
-       color:var(--txt);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;}
-  header{padding:28px 24px 8px;max-width:1500px;margin:0 auto;}
-  h1{margin:0;font-size:22px;letter-spacing:.2px}
-  .sub{color:var(--dim);font-size:13px;margin-top:6px}
-  .grid{max-width:1500px;margin:18px auto 60px;padding:0 24px;
-        display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;}
-  @media (max-width:1200px){.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));}}
-  .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
-        border-radius:16px;padding:18px 18px 16px;position:relative;overflow:hidden}
-  .rank{position:absolute;top:14px;right:16px;font-size:11px;color:var(--dim)}
-  .pname{font-size:16px;font-weight:650;display:flex;align-items:center;gap:9px}
-  .dot{width:9px;height:9px;border-radius:50%;flex:none}
-  .badges{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
-  .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);
-         color:var(--dim);background:#0f131b}
-  .badge.live{color:var(--good);border-color:#1e5e44}
-  .badge.cache{color:var(--accent);border-color:#27496f}
-  .badge.schedule{color:var(--warn);border-color:#6b4f1f}
-  .detail{color:var(--dim);font-size:12px;margin-top:10px;font-style:italic}
-  .win{margin-top:14px}
-  .win .top{display:flex;justify-content:space-between;align-items:baseline;font-size:13px}
-  .win .lbl{color:var(--txt)}
-  .win .rem{font-weight:680}
-  .bar{height:9px;border-radius:6px;background:#0c1017;margin-top:7px;overflow:hidden;border:1px solid #0a0e15}
-  .fill{height:100%;border-radius:6px;transition:width .5s ease}
-  .reset{display:flex;justify-content:space-between;margin-top:6px;font-size:11.5px;color:var(--dim)}
-  .cd{font-variant-numeric:tabular-nums;color:var(--txt)}
-  .pill{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
-  .empty{color:var(--dim);font-size:13px;margin-top:12px}
-  footer{max-width:1500px;margin:0 auto;padding:0 24px 40px;color:var(--dim);font-size:12px}
-  .reload{cursor:pointer;color:var(--accent);text-decoration:none}
-  .err{color:var(--bad)}
-</style>
-</head>
-<body>
-<header>
-  <h1>AI CLI Usage Monitor</h1>
-  <div class="sub">Remaining subscription quota, ordered by nearest <b>weekly / monthly</b> reset ·
-     <span id="updated">loading…</span> · <a class="reload" onclick="load(true)">refresh</a></div>
-</header>
-<div class="grid" id="grid"></div>
-<footer>
-  Auto-refreshes every 60s. <b>live</b> = pulled from the provider API ·
-  <b>cache</b> = read from the CLI's local snapshot · <b>schedule</b> = reset clock only
-  (provider exposes no usage number).
-</footer>
+_ANSI = {
+    "reset": "\033[0m", "bold": "\033[1m",
+    "green": "\033[32m", "yellow": "\033[33m", "red": "\033[31m", "grey": "\033[90m",
+}
+_STATUS_COLOR = {"ok": "green", "partial": "yellow", "unavailable": "grey", "error": "red"}
 
-<script>
-const STATUS_COLOR = {ok:"var(--good)", partial:"var(--warn)", unavailable:"var(--dim)", error:"var(--bad)"};
-const PERIOD_LABEL = {"5h":"5-hour","daily":"daily","weekly":"weekly","monthly":"monthly","unknown":"window"};
-let DATA = null;
 
-function fmtCountdown(sec){
-  if(sec===null||sec===undefined) return "—";
-  if(sec<=0) return "resetting…";
-  const d=Math.floor(sec/86400), h=Math.floor(sec%86400/3600),
-        m=Math.floor(sec%3600/60), s=Math.floor(sec%60);
-  if(d>0) return `${d}d ${h}h ${m}m`;
-  if(h>0) return `${h}h ${m}m ${s}s`;
-  return `${m}m ${s}s`;
-}
-function fmtDate(ts){
-  if(!ts) return "—";
-  const dt=new Date(ts*1000);
-  return dt.toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-}
-function barColor(rem){
-  if(rem===null) return "#3a4356";
-  if(rem<=10) return "var(--bad)";
-  if(rem<=30) return "var(--warn)";
-  return "var(--good)";
-}
+def _fmt_countdown(secs):
+    """Human countdown to a reset, mirroring the web dashboard's fmtCountdown."""
+    if secs is None:
+        return "no reset"
+    secs = int(secs)
+    if secs <= 0:
+        return "resetting…"
+    d, rem = divmod(secs, 86400)
+    h, rem = divmod(rem, 3600)
+    m, s = divmod(rem, 60)
+    if d:
+        return f"{d}d {h}h {m}m"
+    if h:
+        return f"{h}h {m}m"
+    return f"{m}m {s}s"
 
-function render(){
-  if(!DATA) return;
-  const grid=document.getElementById("grid");
-  grid.innerHTML="";
-  DATA.providers.forEach((p,i)=>{
-    const card=document.createElement("div");
-    card.className="card";
-    const srcClass = p.source==="live"?"live":(p.source==="local-cache"?"cache":"schedule");
-    const srcText  = p.source==="live"?"live":(p.source==="local-cache"?"cache":(p.source||"—"));
-    let wins="";
-    if(p.windows && p.windows.length){
-      p.windows.forEach(w=>{
-        const rem = (w.remaining_percent!==null && w.remaining_percent!==undefined)? w.remaining_percent : null;
-        const width = rem===null? 100 : Math.max(2,Math.min(100,rem));
-        const col = barColor(rem);
-        const remTxt = rem===null? "n/a" : rem.toFixed(0)+"%";
-        const limTxt = (w.limit!=null)? ` · ${w.limit} cap` : "";
-        wins += `
-         <div class="win">
-           <div class="top">
-             <span class="lbl">${w.label} <span class="pill">${PERIOD_LABEL[w.period]||w.period}</span></span>
-             <span class="rem" style="color:${col}">${remTxt} left${limTxt}</span>
-           </div>
-           <div class="bar"><div class="fill" style="width:${width}%;background:${col};${rem===null?'opacity:.25':''}"></div></div>
-           <div class="reset">
-             <span class="cd" data-reset="${w.resets_at||''}">renews in —</span>
-             <span>${fmtDate(w.resets_at)}</span>
-           </div>
-         </div>`;
-      });
-    } else {
-      wins = `<div class="empty">${p.detail||"No data"}</div>`;
-    }
-    card.innerHTML = `
-      <div class="rank">#${i+1} · soonest reset</div>
-      <div class="pname"><span class="dot" style="background:${STATUS_COLOR[p.status]||'#888'}"></span>${p.name}</div>
-      <div class="badges">
-        ${p.plan?`<span class="badge">${p.plan}</span>`:""}
-        <span class="badge ${srcClass}">${srcText}</span>
-        <span class="badge">${p.status}</span>
-      </div>
-      ${p.detail && p.windows && p.windows.length?`<div class="detail">${p.detail}</div>`:""}
-      ${wins}`;
-    grid.appendChild(card);
-  });
-  tick();
-}
 
-function tick(){
-  const now=Date.now()/1000;
-  document.querySelectorAll(".cd").forEach(el=>{
-    const r=parseFloat(el.dataset.reset);
-    el.textContent = r? ("renews in "+fmtCountdown(r-now)) : "no reset clock";
-  });
-}
+def _rem_color(rem):
+    if rem is None:
+        return "grey"
+    if rem <= 10:
+        return "red"
+    if rem <= 30:
+        return "yellow"
+    return "green"
 
-async function load(force){
-  try{
-    const r=await fetch("/api/usage"+(force?"?force=1":""));
-    DATA=await r.json();
-    const ago=new Date(DATA.generated_at*1000).toLocaleTimeString();
-    document.getElementById("updated").textContent="updated "+ago;
-    render();
-  }catch(e){
-    document.getElementById("updated").innerHTML='<span class="err">fetch failed: '+e+'</span>';
-  }
-}
-load();
-setInterval(tick,1000);
-setInterval(()=>load(false),60000);
-</script>
-</body>
-</html>
-"""
+
+def render_text(data, color=True):
+    """Compact, colored one-screen summary of `collect()` for the terminal."""
+    def paint(code, text):
+        return f"{_ANSI[code]}{text}{_ANSI['reset']}" if (color and code in _ANSI) else text
+
+    providers = data.get("providers", [])
+    # Align model labels to the widest one, capped so a long preview id can't blow
+    # out the column.
+    labels = [w["label"] for p in providers for w in p["windows"]]
+    width = min(max((len(l) for l in labels), default=10), 28)
+
+    now = now_ts()
+    updated = datetime.fromtimestamp(data["generated_at"]).strftime("%H:%M:%S")
+    out = [paint("bold", "AI CLI Usage")
+           + paint("grey", f"   updated {updated} · ranked by soonest reset")]
+
+    for i, p in enumerate(providers, 1):
+        src = ("live" if p["source"] == "live"
+               else "cache" if p["source"] == "local-cache"
+               else p["source"] or "—")
+        meta = " · ".join(x for x in (p.get("plan"), src, p["status"]) if x)
+        dot = paint(_STATUS_COLOR.get(p["status"], "grey"), "●")
+        out.append("")
+        out.append(f"{i}. {dot} {paint('bold', p['name'])}  {paint('grey', meta)}")
+
+        if not p["windows"]:
+            out.append(f"     {paint('grey', p.get('detail') or 'no usage data')}")
+            continue
+        if p.get("detail"):
+            out.append(f"     {paint('grey', p['detail'])}")
+
+        for w in p["windows"]:
+            rem = w["remaining_percent"]
+            rc = _rem_color(rem)
+            filled = 12 if rem is None else max(0, min(12, round(rem / 100 * 12)))
+            bar = paint(rc, "█" * filled) + paint("grey", "░" * (12 - filled))
+            rem_txt = " n/a" if rem is None else f"{round(rem):3d}%"
+            label = w["label"]
+            if len(label) > width:
+                label = label[: width - 1] + "…"
+            cap = f" · {w['limit']} cap" if w.get("limit") is not None else ""
+            secs = (w["resets_at"] - now) if w["resets_at"] else None
+            tail = f"↻ {_fmt_countdown(secs)} {w['period']}"
+            out.append(f"     {label:<{width}}  {bar}  "
+                       f"{paint(rc, rem_txt)}{paint('grey', cap)}  {paint('grey', tail)}")
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Web server
+# ---------------------------------------------------------------------------
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1143,7 +1081,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         if path == "/":
-            self._send(200, INDEX_HTML, "text/html; charset=utf-8")
+            try:
+                with open(HTML_PATH, "r", encoding="utf-8") as fh:
+                    body = fh.read()
+                self._send(200, body, "text/html; charset=utf-8")
+            except OSError as e:
+                self._send(500, f"index.html not found: {e}", "text/plain")
         elif path == "/api/usage":
             force = "force=1" in self.path
             payload = json.dumps(collect(force=force), default=str)
@@ -1157,11 +1100,21 @@ def main():
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--json", action="store_true", help="print usage JSON and exit")
+    ap.add_argument("--text", action="store_true",
+                    help="print a compact colored summary to the terminal and exit")
+    ap.add_argument("--no-color", action="store_true", help="disable --text colors")
     ap.add_argument("--open", action="store_true", help="open browser on start")
     args = ap.parse_args()
 
     if args.json:
         print(json.dumps(collect(force=True), indent=2, default=str))
+        return
+
+    if args.text:
+        color = (not args.no_color
+                 and sys.stdout.isatty()
+                 and os.environ.get("NO_COLOR") is None)
+        print(render_text(collect(force=True), color=color))
         return
 
     url = f"http://{args.host}:{args.port}"
