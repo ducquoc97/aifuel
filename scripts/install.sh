@@ -1,17 +1,17 @@
 #!/bin/sh
-# Install (or remove) `aisub` — a global launcher for usage_monitor.py.
+# Install (or remove) `aifuel` — a global launcher for usage_monitor.py.
 #
-#   ./install.sh              # install `aisub` into a bin dir on your PATH
+#   ./install.sh              # install `aifuel` into a bin dir on your PATH
 #   ./install.sh --uninstall  # remove it
 #   BIN_DIR=/usr/local/bin ./install.sh   # override the target dir
 #
 # The launcher just forwards to this repo's usage_monitor.py, so:
-#   aisub            -> python3 usage_monitor.py        (web dashboard)
-#   aisub --json     -> python3 usage_monitor.py --json
-#   aisub --text     -> ... and every other flag passes through.
+#   aifuel            -> python3 usage_monitor.py        (web dashboard)
+#   aifuel --json     -> python3 usage_monitor.py --json
+#   aifuel --text     -> ... and every other flag passes through.
 set -eu
 
-CMD=aisub
+CMD=aifuel
 
 # Absolute path to the repo root (one level up from scripts/).
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)

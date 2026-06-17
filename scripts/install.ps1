@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-  Install (or remove) `aisub` — a global launcher for usage_monitor.py — on Windows.
+  Install (or remove) `aifuel` — a global launcher for usage_monitor.py — on Windows.
 
 .DESCRIPTION
-  Drops an `aisub.cmd` shim in a bin dir (default ~\.local\bin) that forwards to
+  Drops an `aifuel.cmd` shim in a bin dir (default ~\.local\bin) that forwards to
   this repo's usage_monitor.py, and puts that dir on your user PATH. After install:
-    aisub          -> python usage_monitor.py        (web dashboard)
-    aisub --json   -> python usage_monitor.py --json
-    aisub --text   -> ... and every other flag passes through.
+    aifuel          -> python usage_monitor.py        (web dashboard)
+    aifuel --json   -> python usage_monitor.py --json
+    aifuel --text   -> ... and every other flag passes through.
 
 .EXAMPLE
   .\install.ps1
@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Cmd = 'aisub'
+$Cmd = 'aifuel'
 $Launcher = Join-Path $BinDir "$Cmd.cmd"
 
 if ($Uninstall) {

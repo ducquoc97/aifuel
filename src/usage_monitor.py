@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI CLI Usage Monitor
-====================
+aifuel — fuel gauge for your AI coding subscriptions
+====================================================
 
 Single-file dashboard that shows the *remaining* subscription quota for the AI
 coding CLIs you use, ordered by whichever weekly / monthly window resets soonest.
@@ -1024,7 +1024,7 @@ def render_text(data, color=True):
 
     now = now_ts()
     updated = datetime.fromtimestamp(data["generated_at"]).strftime("%H:%M:%S")
-    out = [paint("bold", "AI CLI Usage")
+    out = [paint("bold", "aifuel")
            + paint("grey", f"   updated {updated} · ranked by soonest reset")]
 
     for i, p in enumerate(providers, 1):
@@ -1096,7 +1096,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="AI CLI usage monitor")
+    ap = argparse.ArgumentParser(description="aifuel — fuel gauge for your AI coding subscriptions")
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--json", action="store_true", help="print usage JSON and exit")
@@ -1119,7 +1119,7 @@ def main():
 
     url = f"http://{args.host}:{args.port}"
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"AI CLI Usage Monitor → {url}")
+    print(f"aifuel → {url}")
     print("Ordered by nearest weekly/monthly reset.  Ctrl-C to stop.")
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
