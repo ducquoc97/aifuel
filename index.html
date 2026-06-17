@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AI CLI Usage Monitor</title>
+<style>
+  :root{
+    --bg:#0b0d12; --card:#151922; --card2:#1b212d; --line:#262d3a;
+    --txt:#e7ecf3; --dim:#8a94a6; --accent:#6ea8fe;
+    --good:#3ddc97; --warn:#ffb454; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#16203a 0,var(--bg) 55%);
+       color:var(--txt);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;}
+  header{padding:28px 24px 8px;max-width:1500px;margin:0 auto;}
+  h1{margin:0;font-size:22px;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:13px;margin-top:6px}
+  .grid{max-width:1500px;margin:18px auto 60px;padding:0 24px;
+        display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;}
+  @media (max-width:1200px){.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));}}
+  .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
+        border-radius:16px;padding:18px 18px 16px;position:relative;overflow:hidden}
+  .rank{position:absolute;top:14px;right:16px;font-size:11px;color:var(--dim)}
+  .pname{font-size:16px;font-weight:650;display:flex;align-items:center;gap:9px}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .badges{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);
+         color:var(--dim);background:#0f131b}
+  .badge.live{color:var(--good);border-color:#1e5e44}
+  .badge.cache{color:var(--accent);border-color:#27496f}
+  .badge.schedule{color:var(--warn);border-color:#6b4f1f}
+  .detail{color:var(--dim);font-size:12px;margin-top:10px;font-style:italic}
+  .win{margin-top:14px}
+  .win .top{display:flex;justify-content:space-between;align-items:baseline;font-size:13px}
+  .win .lbl{color:var(--txt)}
+  .win .rem{font-weight:680}
+  .bar{height:9px;border-radius:6px;background:#0c1017;margin-top:7px;overflow:hidden;border:1px solid #0a0e15}
+  .fill{height:100%;border-radius:6px;transition:width .5s ease}
+  .reset{display:flex;justify-content:space-between;margin-top:6px;font-size:11.5px;color:var(--dim)}
+  .cd{font-variant-numeric:tabular-nums;color:var(--txt)}
+  .pill{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+  .empty{color:var(--dim);font-size:13px;margin-top:12px}
+  footer{max-width:1500px;margin:0 auto;padding:0 24px 40px;color:var(--dim);font-size:12px}
+  .reload{cursor:pointer;color:var(--accent);text-decoration:none}
+  .err{color:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <h1>AI CLI Usage Monitor</h1>
+  <div class="sub">Remaining subscription quota, ordered by nearest <b>weekly / monthly</b> reset ·
+     <span id="updated">loading…</span> · <a class="reload" onclick="load(true)">refresh</a></div>
+</header>
+<div class="grid" id="grid"></div>
+<footer>
+  Auto-refreshes every 60s. <b>live</b> = pulled from the provider API ·
+  <b>cache</b> = read from the CLI's local snapshot · <b>schedule</b> = reset clock only
+  (provider exposes no usage number).
+</footer>
+
+<script>
+const STATUS_COLOR = {ok:"var(--good)", partial:"var(--warn)", unavailable:"var(--dim)", error:"var(--bad)"};
+const PERIOD_LABEL = {"5h":"5-hour","daily":"daily","weekly":"weekly","monthly":"monthly","unknown":"window"};
+let DATA = null;
+
+function fmtCountdown(sec){
+  if(sec===null||sec===undefined) return "—";
+  if(sec<=0) return "resetting…";
+  const d=Math.floor(sec/86400), h=Math.floor(sec%86400/3600),
+        m=Math.floor(sec%3600/60), s=Math.floor(sec%60);
+  if(d>0) return `${d}d ${h}h ${m}m`;
+  if(h>0) return `${h}h ${m}m ${s}s`;
+  return `${m}m ${s}s`;
+}
+function fmtDate(ts){
+  if(!ts) return "—";
+  const dt=new Date(ts*1000);
+  return dt.toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+function barColor(rem){
+  if(rem===null) return "#3a4356";
+  if(rem<=10) return "var(--bad)";
+  if(rem<=30) return "var(--warn)";
+  return "var(--good)";
+}
+
+function render(){
+  if(!DATA) return;
+  const grid=document.getElementById("grid");
+  grid.innerHTML="";
+  DATA.providers.forEach((p,i)=>{
+    const card=document.createElement("div");
+    card.className="card";
+    const srcClass = p.source==="live"?"live":(p.source==="local-cache"?"cache":"schedule");
+    const srcText  = p.source==="live"?"live":(p.source==="local-cache"?"cache":(p.source||"—"));
+    let wins="";
+    if(p.windows && p.windows.length){
+      p.windows.forEach(w=>{
+        const rem = (w.remaining_percent!==null && w.remaining_percent!==undefined)? w.remaining_percent : null;
+        const width = rem===null? 100 : Math.max(2,Math.min(100,rem));
+        const col = barColor(rem);
+        const remTxt = rem===null? "n/a" : rem.toFixed(0)+"%";
+        const limTxt = (w.limit!=null)? ` · ${w.limit} cap` : "";
+        wins += `
+         <div class="win">
+           <div class="top">
+             <span class="lbl">${w.label} <span class="pill">${PERIOD_LABEL[w.period]||w.period}</span></span>
+             <span class="rem" style="color:${col}">${remTxt} left${limTxt}</span>
+           </div>
+           <div class="bar"><div class="fill" style="width:${width}%;background:${col};${rem===null?'opacity:.25':''}"></div></div>
+           <div class="reset">
+             <span class="cd" data-reset="${w.resets_at||''}">renews in —</span>
+             <span>${fmtDate(w.resets_at)}</span>
+           </div>
+         </div>`;
+      });
+    } else {
+      wins = `<div class="empty">${p.detail||"No data"}</div>`;
+    }
+    card.innerHTML = `
+      <div class="rank">#${i+1} · soonest reset</div>
+      <div class="pname"><span class="dot" style="background:${STATUS_COLOR[p.status]||'#888'}"></span>${p.name}</div>
+      <div class="badges">
+        ${p.plan?`<span class="badge">${p.plan}</span>`:""}
+        <span class="badge ${srcClass}">${srcText}</span>
+        <span class="badge">${p.status}</span>
+      </div>
+      ${p.detail && p.windows && p.windows.length?`<div class="detail">${p.detail}</div>`:""}
+      ${wins}`;
+    grid.appendChild(card);
+  });
+  tick();
+}
+
+function tick(){
+  const now=Date.now()/1000;
+  document.querySelectorAll(".cd").forEach(el=>{
+    const r=parseFloat(el.dataset.reset);
+    el.textContent = r? ("renews in "+fmtCountdown(r-now)) : "no reset clock";
+  });
+}
+
+async function load(force){
+  try{
+    const r=await fetch("/api/usage"+(force?"?force=1":""));
+    DATA=await r.json();
+    const ago=new Date(DATA.generated_at*1000).toLocaleTimeString();
+    document.getElementById("updated").textContent="updated "+ago;
+    render();
+  }catch(e){
+    document.getElementById("updated").innerHTML='<span class="err">fetch failed: '+e+'</span>';
+  }
+}
+load();
+setInterval(tick,1000);
+setInterval(()=>load(false),60000);
+</script>
+</body>
+</html>
