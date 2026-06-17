@@ -11,7 +11,7 @@ Providers:
     - Codex CLI        (live  : chatgpt.com/backend-api/codex/usage; cache fallback)
     - GitHub Copilot   (live  : api.github.com/copilot_internal/v2/token  + fallback)
     - Gemini CLI       (live  : loadCodeAssist -> retrieveUserQuota; daily-reset fallback)
-    - Antigravity CLI  (live  : Code Assist quota via its own token; scan + schedule fallback)
+    - Antigravity CLI  (live  : Code Assist quota via its own token, auto-refreshed; scan + schedule fallback)
 
 Nothing here prints your tokens. Credential files are read locally only to
 authenticate the provider's own usage endpoint, exactly like the CLIs do. For
@@ -58,6 +58,13 @@ GEMINI_API = "https://cloudcode-pa.googleapis.com/v1internal:"  # + loadCodeAssi
 GEMINI_OAUTH_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
 GEMINI_OAUTH_CLIENT_SECRET = "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"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+
+# antigravity-cli's own Google OAuth "installed app" client (consumer login). Like
+# gemini-cli's above, the secret ships inside the CLI (non-confidential) and exists
+# only to let the refresh_token in ~/.gemini/antigravity-cli/antigravity-oauth-token
+# mint fresh access tokens -- the exact exchange `agy` performs on startup.
+ANTIGRAVITY_OAUTH_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+ANTIGRAVITY_OAUTH_CLIENT_SECRET = "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"
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -646,21 +653,19 @@ def _codeassist_quota(token, hint_project, ua):
     return ("live", plan, windows, None)
 
 
-def _refresh_gemini_token(creds, path):
-    """Mint a fresh access token from the stored refresh_token and write it back
-    to `path` -- the same OAuth exchange gemini-cli does on startup.
+def _google_oauth_refresh(client_id, client_secret, refresh_token):
+    """Exchange a Google refresh_token for a fresh token (the startup exchange the
+    CLIs run). Returns the parsed token response dict, or None on failure.
 
-    Google returns a new access_token/id_token but reuses the existing
-    refresh_token, so we merge into `creds` rather than replace it. Returns the
-    new access token, or None if there's no refresh_token or the exchange fails.
+    Google returns a new access_token/id_token/expires_in but reuses the existing
+    refresh_token, so callers merge the result into their stored creds.
     """
-    refresh = creds.get("refresh_token") if isinstance(creds, dict) else None
-    if not refresh:
+    if not refresh_token:
         return None
     body = urllib.parse.urlencode({
-        "client_id": GEMINI_OAUTH_CLIENT_ID,
-        "client_secret": GEMINI_OAUTH_CLIENT_SECRET,
-        "refresh_token": refresh,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
         "grant_type": "refresh_token",
     }).encode("utf-8")
     req = urllib.request.Request(
@@ -668,8 +673,19 @@ def _refresh_gemini_token(creds, path):
         headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            tok = json.loads(resp.read().decode("utf-8", "replace"))
+            return json.loads(resp.read().decode("utf-8", "replace"))
     except Exception:
+        return None
+
+
+def _refresh_gemini_token(creds, path):
+    """Mint a fresh access token from the stored refresh_token and write it back
+    to `path` -- the same OAuth exchange gemini-cli does on startup. Returns the
+    new access token, or None if there's no refresh_token or the exchange fails.
+    """
+    refresh = creds.get("refresh_token") if isinstance(creds, dict) else None
+    tok = _google_oauth_refresh(GEMINI_OAUTH_CLIENT_ID, GEMINI_OAUTH_CLIENT_SECRET, refresh)
+    if not tok:
         return None
     access = tok.get("access_token")
     if not access:
@@ -743,17 +759,51 @@ def fetch_gemini():
 
 
 def _antigravity_token(path):
-    """(access_token, expired) from antigravity-cli's own OAuth token file."""
+    """(creds, access_token, expired) from antigravity-cli's own OAuth token file.
+
+    The token is nested under `token` ({access_token, refresh_token, expiry});
+    the whole `creds` dict is returned so the caller can refresh + write it back.
+    """
     if not os.path.exists(path):
-        return None, True
+        return None, None, True
     try:
-        data = read_json(path)
+        creds = read_json(path)
     except Exception:
-        return None, True
-    token = deep_find(data, {"access_token", "accessToken"})
-    exp = to_epoch(deep_find(data, {"expiry", "expiry_date", "expires_at"}))
+        return None, None, True
+    token = deep_find(creds, {"access_token", "accessToken"})
+    exp = to_epoch(deep_find(creds, {"expiry", "expiry_date", "expires_at"}))
     expired = exp is not None and exp <= now_ts()
-    return token, expired
+    return creds, token, expired
+
+
+def _refresh_antigravity_token(creds, path):
+    """Mint a fresh access token for antigravity-cli from its stored refresh_token
+    and write it back to `path` -- the same OAuth exchange `agy` runs on startup.
+
+    Preserves the file's nested {token:{...}} shape and writes expiry back as the
+    RFC3339 string the CLI uses (not Gemini's ms epoch). Returns the new access
+    token, or None if there's no refresh_token or the exchange fails.
+    """
+    tokobj = creds.get("token") if isinstance(creds, dict) else None
+    refresh = tokobj.get("refresh_token") if isinstance(tokobj, dict) else None
+    tok = _google_oauth_refresh(ANTIGRAVITY_OAUTH_CLIENT_ID,
+                                ANTIGRAVITY_OAUTH_CLIENT_SECRET, refresh)
+    if not tok:
+        return None
+    access = tok.get("access_token")
+    if not access:
+        return None
+    tokobj["access_token"] = access
+    if tok.get("token_type"):
+        tokobj["token_type"] = tok["token_type"]
+    if tok.get("expires_in"):
+        exp = datetime.now(timezone.utc) + timedelta(seconds=int(tok["expires_in"]))
+        tokobj["expiry"] = exp.isoformat()
+    try:
+        write_json_atomic(path, creds)
+    except Exception:
+        pass  # the in-memory token is still usable even if we can't persist it
+    return access
 
 
 def _antigravity_project():
@@ -776,13 +826,30 @@ def fetch_antigravity():
 
     # Prefer a live read with antigravity-cli's own OAuth token. Same Code Assist
     # flow as Gemini, so it handles a GCP/work account *and* a personal login (no
-    # gcp.project). The token can't be refreshed here, so an expired one (or any
-    # endpoint mismatch) just degrades to the cache scan / schedule below.
-    token, expired = _antigravity_token(os.path.join(base, "antigravity-cli", "antigravity-oauth-token"))
+    # gcp.project). The ~1h token is refreshed in-place from its refresh_token
+    # (like `agy` on startup) so an idle CLI no longer drops to the schedule below.
+    tok_path = os.path.join(base, "antigravity-cli", "antigravity-oauth-token")
+    creds, token, expired = _antigravity_token(tok_path)
+
+    # Proactively refresh an expired (or unparseable-but-missing) token before it
+    # 401s us into the fallback.
+    refreshed = False
+    if creds and (expired or not token):
+        new_token = _refresh_antigravity_token(creds, tok_path)
+        if new_token:
+            token, expired, refreshed = new_token, False, True
+
     live_detail = None
     if token and not expired:
         status, plan, windows, live_detail = _codeassist_quota(
             token, _antigravity_project(), "antigravity/usage-monitor")
+        # Token rejected despite a fresh-looking expiry -> force one refresh + retry.
+        if status != "live" and not refreshed and creds:
+            new_token = _refresh_antigravity_token(creds, tok_path)
+            if new_token and new_token != token:
+                refreshed = True
+                status, plan, windows, live_detail = _codeassist_quota(
+                    new_token, _antigravity_project(), "antigravity/usage-monitor")
         if status == "live":
             return result("antigravity", "Antigravity CLI", "ok", plan=plan,
                           source="live", windows=windows)
@@ -806,7 +873,7 @@ def fetch_antigravity():
                                               resets_at=resets)])
 
     if token and expired:
-        detail = "OAuth token expired — run antigravity once to refresh; quota resets ~every 5h"
+        detail = "OAuth token expired and auto-refresh failed — run antigravity once; quota resets ~every 5h"
     elif live_detail:
         detail = f"{live_detail}; quota resets ~every 5h"
     else:
@@ -825,20 +892,21 @@ PROVIDERS = [
     ("antigravity", fetch_antigravity, 60),
 ]
 
-_RANK = {"weekly": 0, "monthly": 0, "daily": 1, "5h": 2, "unknown": 3}
+def effective_reset(res):
+    """The single reset time a provider is ranked by.
 
-
-def primary_reset(res):
-    """Soonest reset among weekly/monthly windows (the user's primary sort key)."""
-    candidates = [w["resets_at"] for w in res["windows"]
-                  if w["resets_at"] and w["period"] in ("weekly", "monthly")]
-    return min(candidates) if candidates else None
-
-
-def any_reset(res):
-    """Soonest reset among all windows (tiebreak for providers w/o weekly/monthly)."""
-    candidates = [w["resets_at"] for w in res["windows"] if w["resets_at"]]
-    return min(candidates) if candidates else None
+    Priority is the weekly/monthly window: when a provider has one we sort by its
+    soonest weekly/monthly reset, even if a shorter 5h/daily window resets sooner.
+    A provider with no weekly/monthly window (e.g. Gemini, which only resets daily)
+    falls back to its soonest reset of any kind, so it still ranks by when it
+    actually frees up instead of sinking below far-off weekly resets.
+    """
+    weekly_monthly = [w["resets_at"] for w in res["windows"]
+                      if w["resets_at"] and w["period"] in ("weekly", "monthly")]
+    if weekly_monthly:
+        return min(weekly_monthly)
+    any_window = [w["resets_at"] for w in res["windows"] if w["resets_at"]]
+    return min(any_window) if any_window else None
 
 
 # ---------------------------------------------------------------------------
@@ -880,16 +948,14 @@ def collect(force=False):
 
     for key, _, _ in PROVIDERS:
         res = out[key]
-        res["primary_reset_at"] = primary_reset(res)
-        res["any_reset_at"] = any_reset(res)
+        res["reset_at"] = effective_reset(res)
         results.append(res)
 
-    # Weekly/monthly resets lead (sorted by soonest); providers without a
-    # weekly/monthly window follow, ordered by their soonest window of any kind.
+    # Rank by soonest reset: the weekly/monthly window when a provider has one,
+    # otherwise its soonest window of any kind (e.g. Gemini's daily reset).
+    # Providers with no reset clock at all sink to the bottom.
     far = float("inf")
-    results.sort(key=lambda r: (r["primary_reset_at"] is None,
-                                r["primary_reset_at"] if r["primary_reset_at"] else far,
-                                r["any_reset_at"] if r["any_reset_at"] else far))
+    results.sort(key=lambda r: r["reset_at"] if r["reset_at"] else far)
     return {"generated_at": now_ts(), "providers": results}
 
 
@@ -912,11 +978,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
   *{box-sizing:border-box}
   body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#16203a 0,var(--bg) 55%);
        color:var(--txt);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;}
-  header{padding:28px 24px 8px;max-width:1100px;margin:0 auto;}
+  header{padding:28px 24px 8px;max-width:1500px;margin:0 auto;}
   h1{margin:0;font-size:22px;letter-spacing:.2px}
   .sub{color:var(--dim);font-size:13px;margin-top:6px}
-  .grid{max-width:1100px;margin:18px auto 60px;padding:0 24px;
-        display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px;}
+  .grid{max-width:1500px;margin:18px auto 60px;padding:0 24px;
+        display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;}
+  @media (max-width:1200px){.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));}}
   .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
         border-radius:16px;padding:18px 18px 16px;position:relative;overflow:hidden}
   .rank{position:absolute;top:14px;right:16px;font-size:11px;color:var(--dim)}
@@ -939,7 +1006,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .cd{font-variant-numeric:tabular-nums;color:var(--txt)}
   .pill{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
   .empty{color:var(--dim);font-size:13px;margin-top:12px}
-  footer{max-width:1100px;margin:0 auto;padding:0 24px 40px;color:var(--dim);font-size:12px}
+  footer{max-width:1500px;margin:0 auto;padding:0 24px 40px;color:var(--dim);font-size:12px}
   .reload{cursor:pointer;color:var(--accent);text-decoration:none}
   .err{color:var(--bad)}
 </style>
