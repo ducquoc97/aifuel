@@ -11,8 +11,7 @@ One file. No dependencies. Runs on **Windows, Linux, and macOS** — in your bro
 ![Platforms: Windows · Linux · macOS](https://img.shields.io/badge/platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-8a94a6)
 ![Single file](https://img.shields.io/badge/install-single%20.py-6ea8fe)
 
-<!-- Drop a dashboard screenshot here for instant marketing punch:
-     ![aifuel dashboard](docs/screenshot.png)  -->
+![aifuel dashboard](docs/aifuel.png)
 
 ---
 
