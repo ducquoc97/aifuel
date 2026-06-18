@@ -260,7 +260,7 @@
 </main>
 
 <script>
-const STATUS_COLOR = {ok:"var(--green)", partial:"var(--orange)", unavailable:"var(--gray)", error:"var(--red)"};
+const STATUS_COLOR = {partial:"var(--orange)", unavailable:"var(--gray)", error:"var(--red)"};
 const PERIOD_LABEL = {"5h":"5-hour","daily":"daily","weekly":"weekly","monthly":"monthly","unknown":"window"};
 const PROVIDER_ICON = {
   claude:      "https://www.anthropic.com/favicon.ico",
@@ -379,7 +379,6 @@ function render(){
       <div class="badges">
         ${p.plan?`<span class="badge">${p.plan}</span>`:""}
         <span class="badge ${srcClass}">${srcText}</span>
-        <span class="badge">${p.status}</span>
       </div>
       ${p.detail && p.windows && p.windows.length?`<div class="detail">${p.detail}</div>`:""}
       ${wins}`;

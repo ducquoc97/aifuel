@@ -11,7 +11,7 @@ Providers:
     - Codex CLI        (live  : chatgpt.com/backend-api/codex/usage; cache fallback)
     - GitHub Copilot   (live  : api.github.com/copilot_internal/v2/token  + fallback)
     - Gemini CLI       (live  : loadCodeAssist -> retrieveUserQuota; daily-reset fallback)
-    - Antigravity CLI  (live  : Code Assist quota via its own token, auto-refreshed; scan + schedule fallback)
+    - Antigravity Starter Quota  (live  : Code Assist quota via its own token, auto-refreshed; scan + schedule fallback)
 
 Nothing here prints your tokens. Credential files are read locally only to
 authenticate the provider's own usage endpoint, exactly like the CLIs do. For
@@ -281,7 +281,8 @@ def fetch_claude():
             up *= 100.0
         windows.append(window(label, period, used_percent=up, resets_at=resets))
 
-    plan = deep_find(data, {"plan", "subscription", "tier"})
+    plan = (deep_find(data, {"plan", "subscription", "tier", "subscriptionType", "subscription_type"})
+            or deep_find(creds, {"subscriptionType", "subscription_type"}))
     if not windows:
         return result("claude", "Claude Code", "partial", plan=plan, source="live",
                       detail="connected but no usage windows in response")
@@ -525,8 +526,10 @@ def fetch_copilot():
             if not has_quota and not ent:
                 continue
             label = name.replace("_", " ").title()
+            if label == "Premium Interactions":
+                label = "Premium Models"
             if snap.get("unlimited"):
-                windows.append(window(label + " (unlimited)", "monthly",
+                windows.append(window(label, "monthly",
                                       remaining_percent=100.0, resets_at=reset_at))
                 continue
             pct = snap.get("percent_remaining")
@@ -896,10 +899,13 @@ def fetch_antigravity():
         if new_token:
             token, expired, refreshed = new_token, False, True
 
+    _PLAN_NAMES = {"antigravity": "Antigravity Starter Quota"}
+
     live_detail = None
     if token and not expired:
         status, plan, windows, live_detail = _codeassist_quota(
             token, _antigravity_project(), "antigravity/usage-monitor")
+        plan = _PLAN_NAMES.get((plan or "").lower(), plan)
         # Token rejected despite a fresh-looking expiry -> force one refresh + retry.
         if status != "live" and not refreshed and creds:
             new_token = _refresh_antigravity_token(creds, tok_path)
@@ -907,6 +913,7 @@ def fetch_antigravity():
                 refreshed = True
                 status, plan, windows, live_detail = _codeassist_quota(
                     new_token, _antigravity_project(), "antigravity/usage-monitor")
+                plan = _PLAN_NAMES.get((plan or "").lower(), plan)
         if status == "live":
             # agy exposes one bucket per model (Gemini, Claude, GPT, ...); rank
             # them tightest-first so the card can preview one per family.
