@@ -36,6 +36,16 @@ if [ ! -f "$TARGET_PY" ]; then
     exit 1
 fi
 
+# Canonicalize, then refuse a path we can't safely single-quote into the launcher
+# (a literal single quote is the only char that can break out of single quotes).
+TARGET_PY=$(CDPATH= cd -- "$SCRIPT_DIR/../src" && pwd -P)/usage_monitor.py
+case $TARGET_PY in
+    *\'*)
+        echo "error: repo path contains a single quote; refusing to write launcher ($TARGET_PY)" >&2
+        exit 1
+        ;;
+esac
+
 # Find a Python 3 interpreter to bake into the launcher.
 PYTHON=
 for cand in python3 python; do
@@ -52,7 +62,7 @@ fi
 mkdir -p "$BIN_DIR"
 cat > "$LAUNCHER" <<EOF
 #!/bin/sh
-exec $PYTHON "$TARGET_PY" "\$@"
+exec $PYTHON '$TARGET_PY' "\$@"
 EOF
 chmod +x "$LAUNCHER"
 

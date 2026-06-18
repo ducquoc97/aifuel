@@ -472,6 +472,14 @@ const MODEL_PREVIEW = 3;
 const MODEL_PROVIDERS = new Set(["gemini","antigravity"]);
 const EXPANDED = new Set();
 
+// Escape any provider-supplied string (model id, plan, detail) before it lands
+// in innerHTML, so a value from a provider API or a local CLI cache file can't
+// inject markup/script into this dashboard.
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
 function fmtCountdown(sec) {
   if (sec === null || sec === undefined) return "—";
   if (sec <= 0) return "resetting…";
@@ -524,12 +532,12 @@ function windowHTML(w, isAnchor) {
    <div class="window">
      <div class="window-head">
        <span class="window-label">
-         <span class="name">${w.label}</span>
-         <span class="period-tag${isAnchor ? ' anchor' : ''}">${PERIOD_LABEL[w.period] || w.period}</span>
+         <span class="name">${esc(w.label)}</span>
+         <span class="period-tag${isAnchor ? ' anchor' : ''}">${esc(PERIOD_LABEL[w.period] || w.period)}</span>
        </span>
        <span class="remaining" style="color:${col}">${remTxt}</span>
      </div>
-     <div class="track" role="progressbar" aria-valuenow="${rem ?? 0}" aria-valuemin="0" aria-valuemax="100" aria-label="${w.label} remaining">
+     <div class="track" role="progressbar" aria-valuenow="${rem ?? 0}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(w.label)} remaining">
        <div class="track-fill" style="width:${width}%;background:${col};${dimmed}"></div>
      </div>
      <div class="window-foot">
@@ -572,7 +580,7 @@ function render() {
       const anchor = anchorPeriod(allW);
       shown.forEach(w => { wins += windowHTML(w, w.period === anchor); });
     } else {
-      wins = `<div class="empty" role="status"><span class="empty-icon" aria-hidden="true">📭</span>${p.detail || "No data available"}</div>`;
+      wins = `<div class="empty" role="status"><span class="empty-icon" aria-hidden="true">📭</span>${esc(p.detail || "No data available")}</div>`;
     }
 
     if (disclosure) {
@@ -588,12 +596,12 @@ function render() {
 
     card.innerHTML = `
       <div class="rank${i === 0 ? ' urgent' : ''}" aria-label="${rankLabel}">${rankLabel}</div>
-      <div class="provider">${iconHTML}${p.name}</div>
+      <div class="provider">${iconHTML}${esc(p.name)}</div>
       <div class="badges">
-        ${p.plan ? `<span class="badge">${p.plan.charAt(0).toUpperCase() + p.plan.slice(1)}</span>` : ""}
-        <span class="badge ${srcClass}">${srcText}</span>
+        ${p.plan ? `<span class="badge">${esc(p.plan.charAt(0).toUpperCase() + p.plan.slice(1))}</span>` : ""}
+        <span class="badge ${srcClass}">${esc(srcText)}</span>
       </div>
-      ${p.detail && p.windows && p.windows.length ? `<div class="detail">${p.detail}</div>` : ""}
+      ${p.detail && p.windows && p.windows.length ? `<div class="detail">${esc(p.detail)}</div>` : ""}
       ${allW.length ? '<hr class="card-divider" aria-hidden="true">' : ""}
       ${wins}`;
 

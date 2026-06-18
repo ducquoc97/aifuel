@@ -39,6 +39,13 @@ $TargetPy = Join-Path $PSScriptRoot '..\src\usage_monitor.py'
 if (-not (Test-Path $TargetPy)) {
     Write-Error "usage_monitor.py not found next to install.ps1 ($TargetPy)"
 }
+# Canonicalize, then refuse chars that can't be safely baked into a .cmd shim:
+# '%' triggers env-var expansion at runtime (even inside quotes) and '"' would
+# break out of the quoting.
+$TargetPy = (Resolve-Path $TargetPy).Path
+if ($TargetPy -match '["%]') {
+    Write-Error 'install path contains an unsupported character (a double-quote or percent sign); cannot generate a safe launcher.'
+}
 
 # Find a Python interpreter to bake into the shim.
 $Python = $null

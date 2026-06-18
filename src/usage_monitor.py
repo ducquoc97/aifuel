@@ -163,10 +163,25 @@ def read_json(path):
 
 
 def write_json_atomic(path, data):
-    """Overwrite `path` with `data` atomically, preserving its file mode."""
+    """Overwrite `path` with `data` atomically, preserving its file mode.
+
+    The temp file is created O_EXCL with mode 0600 so the credentials it briefly
+    holds (access_token / refresh_token / id_token) are never world-readable --
+    not even during the window before it's renamed into place -- and so a
+    pre-planted symlink at the predictable temp name can't be followed. It's then
+    tightened to match the original file's mode.
+    """
     tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     try:
         os.chmod(tmp, os.stat(path).st_mode & 0o777)
     except OSError:
@@ -1144,8 +1159,43 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _request_is_local(self):
+        """Refuse cross-origin / DNS-rebinding requests.
+
+        This server is unauthenticated, so without these guards any website you
+        happen to open could read your usage stats -- or spam `?force=1` to burn
+        your providers' rate limits using this loopback port. Two checks:
+
+          * Host must be a loopback name. A DNS-rebinding page connects to
+            127.0.0.1 but still sends `Host: attacker.com`, so this rejects it.
+            Skipped when the user deliberately bound a non-loopback address.
+          * A programmatic cross-site / same-site request (fetch/XHR) is rejected.
+            Plain navigations (Sec-Fetch-Mode: navigate) and non-browser clients
+            (curl etc., which send no Sec-Fetch-* headers) are allowed.
+        """
+        bound_host = self.server.server_address[0]
+        if bound_host in ("127.0.0.1", "::1", "localhost"):
+            raw = (self.headers.get("Host") or "").strip()
+            if raw.startswith("["):           # [::1]:port
+                host = raw[1:].split("]", 1)[0]
+            elif raw.count(":") == 1:          # 127.0.0.1:port / localhost:port
+                host = raw.rsplit(":", 1)[0]
+            else:                              # bare host, or unbracketed ::1
+                host = raw
+            if host and host not in ("127.0.0.1", "::1", "localhost"):
+                return False
+        site = (self.headers.get("Sec-Fetch-Site") or "").lower()
+        mode = (self.headers.get("Sec-Fetch-Mode") or "").lower()
+        if site in ("cross-site", "same-site") and mode != "navigate":
+            return False
+        return True
+
     def do_GET(self):
-        path = self.path.split("?")[0]
+        if not self._request_is_local():
+            self._send(403, "forbidden: cross-origin request rejected", "text/plain")
+            return
+        parts = urllib.parse.urlsplit(self.path)
+        path = parts.path
         if path == "/":
             try:
                 with open(HTML_PATH, "r", encoding="utf-8") as fh:
@@ -1154,7 +1204,7 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 self._send(500, f"index.html not found: {e}", "text/plain")
         elif path == "/api/usage":
-            force = "force=1" in self.path
+            force = urllib.parse.parse_qs(parts.query).get("force", [""])[0] == "1"
             payload = json.dumps(collect(force=force), default=str)
             self._send(200, payload, "application/json")
         else:
@@ -1187,6 +1237,9 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"aifuel → {url}")
     print("Ordered by nearest weekly/monthly reset.  Ctrl-C to stop.")
+    if args.host not in ("127.0.0.1", "::1", "localhost"):
+        print(f"warning: bound to {args.host} — the dashboard and force-refresh "
+              "are reachable by other machines with no authentication.")
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
