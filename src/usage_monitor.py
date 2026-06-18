@@ -351,13 +351,17 @@ def fetch_codex():
                 w = _codex_window(rl.get("secondary_window"), "Weekly")
                 if w:
                     windows.append(w)
-                # Per-model extra limits (e.g. Codex-Spark) -> one window each.
+                # Per-model extra limits (e.g. Codex-Spark) -> primary + secondary window each.
                 for extra in (data.get("additional_rate_limits") or []):
                     if not isinstance(extra, dict):
                         continue
                     erl = extra.get("rate_limit") or {}
-                    w = _codex_window(erl.get("primary_window"),
-                                      extra.get("limit_name") or "Model")
+                    limit_name = extra.get("limit_name") or "Model"
+                    w = _codex_window(erl.get("primary_window"), limit_name)
+                    if w:
+                        windows.append(w)
+                    w = _codex_window(erl.get("secondary_window"),
+                                      f"{limit_name} Weekly")
                     if w:
                         windows.append(w)
                 if windows:
@@ -623,13 +627,16 @@ def _quota_windows(quota):
         frac = bucket.get("remainingFraction")
         amount = bucket.get("remainingAmount")
         resets = bucket.get("resetTime")
+        reset_epoch = to_epoch(resets)
+        secs_until = (reset_epoch - now_ts()) if reset_epoch else None
+        period, _ = _period_for_seconds(secs_until) if secs_until and secs_until > 0 else ("daily", "Daily")
         if frac is not None:
-            windows.append(window(bucket["modelId"], "daily",
+            windows.append(window(bucket["modelId"], period,
                                   remaining_percent=round(float(frac) * 100, 1),
                                   resets_at=resets))
         elif amount is not None:
             # No total exposed -> show remaining count without a percentage bar.
-            windows.append(window(bucket["modelId"], "daily",
+            windows.append(window(bucket["modelId"], period,
                                   used=None, limit=None, resets_at=resets))
     return windows
 
@@ -1089,11 +1096,10 @@ def render_text(data, color=True):
             label = w["label"]
             if len(label) > width:
                 label = label[: width - 1] + "…"
-            cap = f" · {w['limit']} cap" if w.get("limit") is not None else ""
             secs = (w["resets_at"] - now) if w["resets_at"] else None
             tail = f"↻ {_fmt_countdown(secs)} {w['period']}"
             out.append(f"     {label:<{width}}  {bar}  "
-                       f"{paint(rc, rem_txt)}{paint('grey', cap)}  {paint('grey', tail)}")
+                       f"{paint(rc, rem_txt)}  {paint('grey', tail)}")
     return "\n".join(out)
 
 

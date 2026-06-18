@@ -324,12 +324,11 @@ function windowHTML(w){
   const width = rem===null? 100 : Math.max(2,Math.min(100,rem));
   const col = barColor(rem);
   const remTxt = rem===null? "n/a" : rem.toFixed(0)+"%";
-  const limTxt = (w.limit!=null)? ` · ${w.limit} cap` : "";
   return `
    <div class="window">
      <div class="window-head">
        <span class="window-label"><span class="name">${w.label}</span><span class="period-tag">${PERIOD_LABEL[w.period]||w.period}</span></span>
-       <span class="remaining" style="color:${col}">${remTxt} left${limTxt}</span>
+       <span class="remaining" style="color:${col}">${remTxt} left</span>
      </div>
      <div class="track"><div class="track-fill" style="width:${width}%;background:${col};${rem===null?'opacity:.3':''}"></div></div>
      <div class="window-foot">
