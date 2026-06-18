@@ -171,6 +171,13 @@
     box-shadow: 0 0 0 3px var(--blue-tint), 0 0 0 1px var(--blue);
   }
   .btn svg { width: 13px; height: 13px; flex: none }
+  /* Spin the circular-arrow icon while a refresh is in flight, so the button
+     physically signals that data is reloading. */
+  .btn.loading { cursor: progress }
+  .btn.loading svg {
+    transform-origin: 50% 50%;
+    animation: spin .7s linear infinite;
+  }
 
   /* ---- Page structure ---- */
   main { max-width: var(--maxw); margin: 0 auto; padding: 0 24px }
@@ -428,7 +435,7 @@
   /* ---- Reduced motion ---- */
   @media (prefers-reduced-motion: reduce) {
     .card, .track-fill, .chev, .btn, .disclosure { transition: none }
-    .spinner, .skel { animation: none }
+    .spinner, .skel, .btn.loading svg { animation: none }
   }
 </style>
 </head>
@@ -442,7 +449,7 @@
     </div>
     <div class="toolbar-actions">
       <span class="status-text" id="updated" aria-live="polite">loading…</span>
-      <button class="btn" onclick="load(true, false)" aria-label="Refresh data now">
+      <button class="btn" id="refresh-btn" onclick="load(true, false)" aria-label="Refresh data now">
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
           <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
@@ -724,6 +731,9 @@ async function load(force, initial) {
   streamAbort = ac;
 
   const status = document.getElementById("updated");
+  const refreshBtn = document.getElementById("refresh-btn");
+  refreshBtn.classList.add("loading");   // spin the icon while reloading
+  refreshBtn.setAttribute("aria-busy", "true");
   if (initial) {
     RECEIVED.clear();
     render();               // show skeletons immediately
@@ -768,7 +778,13 @@ async function load(force, initial) {
     if (e.name === "AbortError") return;   // superseded by a newer load()
     status.innerHTML = '<span class="err">fetch failed: ' + esc(String(e)) + '</span>';
   } finally {
-    if (streamAbort === ac) streamAbort = null;
+    // Only the most recent load() clears the spinner; a superseded one leaves it
+    // spinning for the load that replaced it.
+    if (streamAbort === ac) {
+      streamAbort = null;
+      refreshBtn.classList.remove("loading");
+      refreshBtn.removeAttribute("aria-busy");
+    }
   }
 }
 
