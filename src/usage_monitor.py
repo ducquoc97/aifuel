@@ -957,20 +957,30 @@ PROVIDERS = [
 ]
 
 def effective_reset(res):
-    """The single reset time a provider is ranked by.
-
-    Priority is the weekly/monthly window: when a provider has one we sort by its
-    soonest weekly/monthly reset, even if a shorter 5h/daily window resets sooner.
-    A provider with no weekly/monthly window (e.g. Gemini, which only resets daily)
-    falls back to its soonest reset of any kind, so it still ranks by when it
-    actually frees up instead of sinking below far-off weekly resets.
-    """
+    """The single reset time a provider is ranked by (kept for terminal renderer)."""
     weekly_monthly = [w["resets_at"] for w in res["windows"]
                       if w["resets_at"] and w["period"] in ("weekly", "monthly")]
     if weekly_monthly:
         return min(weekly_monthly)
     any_window = [w["resets_at"] for w in res["windows"] if w["resets_at"]]
     return min(any_window) if any_window else None
+
+
+_PERIOD_RANK = {"monthly": 0, "weekly": 1, "daily": 2, "5h": 3, "unknown": 4}
+
+def effective_remaining(res):
+    """Remaining percent for ranking: anchor (longest) window's remaining_percent.
+
+    Returns the remaining_percent of the most important period window so that
+    providers are sorted most-remaining-first. Returns -1 when no quota data
+    is available so those providers sink to the bottom.
+    """
+    windows = sorted(res.get("windows", []),
+                     key=lambda w: _PERIOD_RANK.get(w.get("period", "unknown"), 99))
+    for w in windows:
+        if w.get("remaining_percent") is not None:
+            return w["remaining_percent"]
+    return -1
 
 
 # ---------------------------------------------------------------------------

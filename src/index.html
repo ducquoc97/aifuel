@@ -6,241 +6,418 @@
 <meta name="color-scheme" content="light dark"/>
 <title>aifuel — fuel gauge for your AI coding subscriptions</title>
 <style>
-  /* ===========================================================
-     Apple Human Interface Guidelines — semantic design tokens.
-     Dark is the default appearance; light is adopted automatically
-     via prefers-color-scheme. Values mirror Apple's system palette.
-     =========================================================== */
-  :root{
+  /* ============================================================
+     Apple Human Interface Guidelines — semantic design tokens
+     Type scale, spacing, and color follow the iOS/macOS HIG spec.
+     Dark is the default appearance; light is adopted automatically.
+     ============================================================ */
+  :root {
     color-scheme: dark;
     --maxw: 1440px;
 
     /* Grouped backgrounds (dark) */
-    --bg:           #000000;
-    --bg-elev:      #1c1c1e;   /* secondarySystemGroupedBackground */
-    --bg-elev-2:    #2c2c2e;   /* tertiarySystemGroupedBackground  */
-    --bg-toolbar:   rgba(28,28,30,.72);
+    --bg:          #000000;
+    --bg-elev:     #1c1c1e;
+    --bg-elev-2:   #2c2c2e;
+    --bg-toolbar:  rgba(28,28,30,.76);
 
-    /* Label hierarchy (dark) */
-    --label:        #ffffff;
-    --label-2:      rgba(235,235,245,.60);
-    --label-3:      rgba(235,235,245,.30);
-    --label-4:      rgba(235,235,245,.18);
+    /* Label hierarchy (dark) — HIG spec */
+    --label:    #ffffff;
+    --label-2:  rgba(235,235,245,.60);
+    --label-3:  rgba(235,235,245,.30);
+    --label-4:  rgba(235,235,245,.18);
 
     /* Separators & fills (dark) */
-    --separator:    rgba(84,84,88,.55);
-    --fill-3:       rgba(120,120,128,.24);
-    --fill-4:       rgba(118,118,128,.18);
+    --separator: rgba(84,84,88,.55);
+    --fill-1:    rgba(120,120,128,.36);
+    --fill-3:    rgba(120,120,128,.24);
+    --fill-4:    rgba(118,118,128,.18);
 
-    /* System colors (dark) */
+    /* System colors (dark) — exact HIG values */
     --blue:   #0a84ff;
     --green:  #30d158;
     --orange: #ff9f0a;
     --red:    #ff453a;
+    --yellow: #ffd60a;
     --gray:   #8e8e93;
+    --indigo: #5e5ce6;
 
-    /* Color tints for filled labels (dark) */
+    /* Tinted fills */
     --blue-tint:   rgba(10,132,255,.18);
     --green-tint:  rgba(48,209,88,.18);
     --orange-tint: rgba(255,159,10,.18);
+    --red-tint:    rgba(255,69,58,.18);
+    --yellow-tint: rgba(255,214,10,.14);
 
-    --radius-card: 18px;
-    --shadow: 0 1px 1px rgba(0,0,0,.4);
+    --radius-card: 16px;
+    --radius-sm:   10px;
+    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 0 0 .5px rgba(255,255,255,.04);
+
+    /* 8pt spacing grid */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
   }
-  @media (prefers-color-scheme: light){
-    :root{
+
+  @media (prefers-color-scheme: light) {
+    :root {
       color-scheme: light;
       --bg:         #f2f2f7;
       --bg-elev:    #ffffff;
-      --bg-elev-2:  #ffffff;
-      --bg-toolbar: rgba(249,249,249,.72);
+      --bg-elev-2:  #f2f2f7;
+      --bg-toolbar: rgba(242,242,247,.82);
 
-      --label:      #000000;
-      --label-2:    rgba(60,60,67,.60);
-      --label-3:    rgba(60,60,67,.30);
-      --label-4:    rgba(60,60,67,.18);
+      --label:    #000000;
+      --label-2:  rgba(60,60,67,.60);
+      --label-3:  rgba(60,60,67,.30);
+      --label-4:  rgba(60,60,67,.18);
 
-      --separator:  rgba(60,60,67,.29);
-      --fill-3:     rgba(118,118,128,.12);
-      --fill-4:     rgba(116,116,128,.08);
+      --separator: rgba(60,60,67,.29);
+      --fill-1:    rgba(120,120,128,.20);
+      --fill-3:    rgba(118,118,128,.12);
+      --fill-4:    rgba(116,116,128,.08);
 
       --blue:   #007aff;
       --green:  #34c759;
       --orange: #ff9500;
       --red:    #ff3b30;
-      --gray:   #8e8e93;
+      --yellow: #ffcc00;
+      --indigo: #5856d6;
 
       --blue-tint:   rgba(0,122,255,.12);
       --green-tint:  rgba(52,199,89,.14);
       --orange-tint: rgba(255,149,0,.14);
+      --red-tint:    rgba(255,59,48,.12);
+      --yellow-tint: rgba(255,204,0,.14);
 
-      --shadow: 0 1px 3px rgba(0,0,0,.08), 0 0 0 .5px rgba(0,0,0,.04);
+      --shadow: 0 1px 4px rgba(0,0,0,.08), 0 0 0 .5px rgba(0,0,0,.05);
     }
   }
 
-  *{ box-sizing:border-box }
-  html{ -webkit-text-size-adjust:100% }
-  body{
-    margin:0;
-    background:var(--bg);
-    color:var(--label);
-    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue","Segoe UI",Roboto,sans-serif;
-    font-size:17px; line-height:1.47;
-    -webkit-font-smoothing:antialiased;
-    -moz-osx-font-smoothing:grayscale;
-    font-feature-settings:"ss01","cv01";
+  /* ---- Reset & base ---- */
+  *, *::before, *::after { box-sizing: border-box }
+  html { -webkit-text-size-adjust: 100% }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--label);
+    /* SF Pro with HIG-correct Body spec: 17pt, -0.408pt tracking, 22pt leading */
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+                 "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+    font-size: 17px;
+    line-height: 1.294;        /* 22/17 per HIG Body */
+    letter-spacing: -0.024em;  /* -0.408pt at 17px */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-optical-sizing: auto;
+    font-feature-settings: "ss01", "cv01";
   }
 
-  /* ---- Toolbar: translucent, blurred material that defers to content ---- */
-  .toolbar{
-    position:sticky; top:0; z-index:50;
-    background:var(--bg-toolbar);
-    -webkit-backdrop-filter:saturate(180%) blur(20px);
-    backdrop-filter:saturate(180%) blur(20px);
-    border-bottom:.5px solid var(--separator);
+  /* ---- Toolbar: vibrancy material ---- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--bg-toolbar);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    backdrop-filter: saturate(180%) blur(24px);
+    border-bottom: .5px solid var(--separator);
   }
-  .toolbar-inner{
-    max-width:var(--maxw); margin:0 auto;
-    padding:11px 22px;
-    display:flex; align-items:center; justify-content:space-between; gap:16px;
+  .toolbar-inner {
+    max-width: var(--maxw); margin: 0 auto;
+    padding: 11px 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
   }
-  .brand{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:17px; letter-spacing:-.01em }
-  .brand-mark{ font-size:18px; line-height:1 }
-  .toolbar-actions{ display:flex; align-items:center; gap:14px }
-  .status-text{ color:var(--label-2); font-size:13px; font-variant-numeric:tabular-nums }
-  .status-text .err{ color:var(--red) }
+  .brand {
+    display: flex; align-items: center; gap: var(--space-2);
+    /* Headline: 17px, semibold, -0.408pt */
+    font-size: 17px; font-weight: 600; letter-spacing: -0.024em;
+  }
+  .brand-icon {
+    width: 28px; height: 28px; border-radius: 7px;
+    background: linear-gradient(145deg, #ff9f0a 0%, #ff6b00 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; line-height: 1; flex: none;
+    box-shadow: 0 1px 3px rgba(255,111,0,.35), 0 0 0 .5px rgba(255,255,255,.1);
+  }
+  .toolbar-actions { display: flex; align-items: center; gap: var(--space-3) }
 
-  .btn{
-    appearance:none; border:none; cursor:pointer;
-    display:inline-flex; align-items:center; gap:6px;
-    font:inherit; font-size:13px; font-weight:500;
-    color:var(--blue);
-    background:var(--fill-4);
-    padding:6px 12px; border-radius:980px;
-    transition:background .15s ease, transform .08s ease;
+  /* Footnote: 13px, -0.078pt */
+  .status-text {
+    color: var(--label-2);
+    font-size: 13px;
+    letter-spacing: -0.006em;
+    font-variant-numeric: tabular-nums;
   }
-  .btn:hover{ background:var(--fill-3) }
-  .btn:active{ transform:scale(.97) }
-  .btn:focus-visible{ outline:none; box-shadow:0 0 0 3.5px var(--blue-tint) }
-  .btn svg{ width:13px; height:13px }
+  .status-text .err { color: var(--red) }
 
-  /* ---- Content ---- */
-  main{ max-width:var(--maxw); margin:0 auto; padding:0 22px }
-  .hero{ padding:40px 2px 8px }
-  .large-title{
-    margin:0; font-size:34px; line-height:1.12; font-weight:700; letter-spacing:-.022em;
+  .btn {
+    appearance: none; border: none; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+    font: inherit;
+    /* Footnote: 13px */
+    font-size: 13px; font-weight: 500; letter-spacing: -0.006em;
+    color: var(--blue);
+    background: var(--fill-4);
+    padding: 7px 13px; border-radius: 980px;
+    transition: background .15s ease, transform .1s ease;
   }
-  .hero-sub{
-    margin:8px 0 0; max-width:62ch;
-    color:var(--label-2); font-size:17px; line-height:1.4;
+  .btn:hover { background: var(--fill-3) }
+  .btn:active { transform: scale(.97) }
+  .btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--blue-tint), 0 0 0 1px var(--blue);
+  }
+  .btn svg { width: 13px; height: 13px; flex: none }
+
+  /* ---- Page structure ---- */
+  main { max-width: var(--maxw); margin: 0 auto; padding: 0 24px }
+
+  .hero {
+    padding: 28px 2px 8px;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4);
+  }
+  .hero-text {}
+
+  /* Large Title: 34px, +0.374pt tracking, 41pt leading — HIG spec */
+  .large-title {
+    margin: 0;
+    font-size: 34px;
+    line-height: 1.205;
+    font-weight: 700;
+    letter-spacing: 0.011em;
+  }
+  /* Subhead: 15px, -0.24pt tracking, 20pt leading */
+  .hero-sub {
+    margin: 6px 0 0;
+    max-width: 58ch;
+    color: var(--label-2);
+    font-size: 15px;
+    line-height: 1.333;
+    letter-spacing: -0.016em;
+  }
+  .hero-meta {
+    flex: none;
+    display: flex; align-items: center; gap: var(--space-2);
+    font-size: 13px; color: var(--label-3);
+    letter-spacing: -0.006em;
+    white-space: nowrap;
+  }
+  .hero-meta .dot-sep { margin: 0 2px; opacity: .5 }
+
+  /* ---- Grid ---- */
+  .grid {
+    margin: 16px auto 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+    gap: 12px;
   }
 
-  .grid{
-    margin:26px auto 64px;
-    display:grid; grid-template-columns:repeat(auto-fill,minmax(296px,1fr)); gap:18px;
-    align-items:stretch; /* all cards share the tallest height in the row */
+  /* ---- Card ---- */
+  .card {
+    background: var(--bg-elev);
+    border: .5px solid var(--separator);
+    border-radius: var(--radius-card);
+    padding: var(--space-5) var(--space-5) 18px;
+    position: relative;
+    box-shadow: var(--shadow);
+    transition: transform .2s cubic-bezier(.25,.46,.45,.94),
+                box-shadow .2s cubic-bezier(.25,.46,.45,.94);
+    overflow: hidden;
+  }
+  @media (hover:hover) {
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,.25), 0 0 0 .5px rgba(255,255,255,.06);
+    }
+  }
+  /* First card accent — "resets soonest" visual emphasis */
+  .card.urgent::before {
+    content: "";
+    position: absolute; inset: 0 0 auto 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--orange) 0%, transparent 100%);
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
   }
 
-  .card{
-    background:var(--bg-elev);
-    border:.5px solid var(--separator);
-    border-radius:var(--radius-card);
-    padding:18px 18px 16px;
-    position:relative;
-    box-shadow:var(--shadow);
-    transition:transform .18s ease;
+  /* ---- Rank badge ---- */
+  /* Caption 2: 11px, +0.066pt tracking */
+  .rank {
+    position: absolute; top: 15px; right: 15px;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.006em;
+    color: var(--label-3);
+    background: var(--fill-3);
+    padding: 3px 8px; border-radius: 980px;
+    font-variant-numeric: tabular-nums;
   }
-  @media (hover:hover){ .card:hover{ transform:translateY(-2px) } }
-
-  .rank{
-    position:absolute; top:16px; right:16px;
-    font-size:11px; font-weight:600; color:var(--label-2);
-    background:var(--fill-3); padding:3px 9px; border-radius:980px;
-    font-variant-numeric:tabular-nums; letter-spacing:.01em;
-  }
-  .rank.first{
-    color:var(--orange); background:var(--orange-tint);
-    font-weight:600; font-size:11px;
-    padding:3px 9px; border-radius:980px;
+  .rank.urgent {
+    color: var(--orange); background: var(--orange-tint);
   }
 
-  .provider{ display:flex; align-items:center; gap:9px; font-size:17px; font-weight:600; letter-spacing:-.01em; padding-right:64px }
-  .dot{ width:9px; height:9px; border-radius:50%; flex:none }
-  .provider-icon{
-    width:18px; height:18px; border-radius:5px; object-fit:contain; flex:none;
-    background:#fff; padding:1px; border:.5px solid var(--separator);
+  /* ---- Provider header ---- */
+  /* Headline: 17px, semibold */
+  .provider {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 17px; font-weight: 600;
+    letter-spacing: -0.024em;
+    padding-right: 72px;
+  }
+  .provider-icon {
+    width: 20px; height: 20px;
+    border-radius: 5px;
+    object-fit: contain; flex: none;
+    background: #fff; padding: 1px;
+    border: .5px solid var(--separator);
   }
 
-  .badges{ margin-top:11px; display:flex; gap:6px; flex-wrap:wrap }
-  .badge{
-    font-size:12px; font-weight:500; line-height:1;
-    padding:5px 9px; border-radius:980px;
-    color:var(--label-2); background:var(--fill-4);
-    letter-spacing:.005em;
+  /* ---- Badges ---- */
+  .badges { margin-top: var(--space-3); display: flex; gap: 6px; flex-wrap: wrap }
+  /* Caption 1: 12px, 0pt tracking */
+  .badge {
+    font-size: 12px; font-weight: 500;
+    letter-spacing: 0; line-height: 1;
+    padding: 4px 9px; border-radius: 980px;
+    color: var(--label-2); background: var(--fill-4);
   }
-  .badge.live    { color:var(--green);  background:var(--green-tint) }
-  .badge.cache   { color:var(--blue);   background:var(--blue-tint) }
-  .badge.schedule{ color:var(--orange); background:var(--orange-tint) }
+  .badge.live     { color: var(--green);  background: var(--green-tint) }
+  .badge.cache    { color: var(--blue);   background: var(--blue-tint) }
+  .badge.schedule { color: var(--orange); background: var(--orange-tint) }
 
-  .detail{ color:var(--label-2); font-size:13px; line-height:1.38; margin-top:11px }
-
-  .window{ margin-top:16px }
-  .window-head{ display:flex; justify-content:space-between; align-items:baseline; gap:10px }
-  .window-label{ color:var(--label); font-size:15px; font-weight:500; display:flex; align-items:center; gap:7px; min-width:0 }
-  .window-label .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-  .period-tag{
-    flex:none; font-size:11px; font-weight:500;
-    padding:2px 7px; border-radius:980px;
-    color:var(--label-2); background:var(--fill-4);
+  /* Callout: 16px, -0.32pt tracking */
+  .detail {
+    color: var(--label-2);
+    font-size: 16px; line-height: 1.3125;
+    letter-spacing: -0.02em;
+    margin-top: var(--space-3);
   }
-  .period-tag.anchor{ color:var(--blue); background:var(--blue-tint) }
-  .remaining{ flex:none; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums }
 
-  .track{
-    height:8px; border-radius:980px;
-    background:var(--fill-3);
-    margin-top:9px; overflow:hidden;
+  /* ---- Divider ---- */
+  .card-divider {
+    height: .5px;
+    background: var(--separator);
+    margin: 14px 0;
+    border: none;
   }
-  .track-fill{ height:100%; border-radius:980px; transition:width .5s cubic-bezier(.2,.7,.2,1) }
 
-  .window-foot{
-    display:flex; justify-content:space-between; gap:10px;
-    margin-top:8px; font-size:12px; color:var(--label-3);
-    font-variant-numeric:tabular-nums;
+  /* ---- Window / gauge row ---- */
+  .window { margin-top: 14px }
+  .window:first-child { margin-top: 0 }
+
+  .window-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
   }
-  .window-foot .cd{ color:var(--label-2) }
-
-  .empty{ color:var(--label-3); font-size:14px; margin-top:14px }
-
-  .disclosure{
-    appearance:none; border:none; cursor:pointer;
-    margin-top:16px; width:100%;
-    display:flex; align-items:center; justify-content:center; gap:7px;
-    font:inherit; font-size:13px; font-weight:500; color:var(--blue);
-    background:var(--fill-4); padding:9px; border-radius:10px;
-    transition:background .15s ease;
+  /* Subhead: 15px */
+  .window-label {
+    color: var(--label);
+    font-size: 15px; font-weight: 500;
+    letter-spacing: -0.016em;
+    display: flex; align-items: center; gap: 6px; min-width: 0;
   }
-  .disclosure .chev{ font-size:15px; line-height:0; transition:transform .15s ease }
-  .disclosure.open .chev{ transform:rotate(90deg) }
-  .disclosure:hover{ background:var(--fill-3) }
-  .disclosure:active{ transform:scale(.99) }
-  .disclosure:focus-visible{ outline:none; box-shadow:0 0 0 3.5px var(--blue-tint) }
+  .window-label .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 
-  footer{
-    max-width:var(--maxw); margin:0 auto; padding:24px 24px 56px;
-    border-top:.5px solid var(--separator);
-    color:var(--label-3); font-size:13px; line-height:1.5;
+  /* Caption 2: 11px */
+  .period-tag {
+    flex: none; font-size: 11px; font-weight: 500;
+    letter-spacing: 0.006em;
+    padding: 2px 7px; border-radius: 980px;
+    color: var(--label-3); background: var(--fill-4);
   }
-  footer b{ color:var(--label-2); font-weight:600 }
+  .period-tag.anchor { color: var(--blue); background: var(--blue-tint) }
+
+  /* Remaining: Headline weight, tabular nums */
+  .remaining {
+    flex: none;
+    font-size: 15px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.016em;
+  }
+
+  /* ---- Progress track: 6px, HIG-clean ---- */
+  .track {
+    height: 6px; border-radius: 980px;
+    background: var(--fill-3);
+    margin-top: 8px; overflow: hidden;
+  }
+  .track-fill {
+    height: 100%; border-radius: 980px;
+    /* Spring easing: fast-in, graceful tail */
+    transition: width .6s cubic-bezier(.34,1.2,.64,1);
+  }
+
+  /* ---- Window footer ---- */
+  /* Caption 1: 12px, 0pt tracking */
+  .window-foot {
+    display: flex; justify-content: space-between; gap: 8px;
+    margin-top: 7px;
+    font-size: 12px; letter-spacing: 0;
+    color: var(--label-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .window-foot .cd { color: var(--label-2) }
+
+  .empty {
+    color: var(--label-3);
+    font-size: 15px; letter-spacing: -0.016em;
+    margin-top: var(--space-3);
+    text-align: center;
+    padding: 20px 0 8px;
+  }
+  .empty-icon { font-size: 28px; display: block; margin-bottom: 6px; opacity: .6 }
+
+  /* ---- Disclosure button ---- */
+  .disclosure {
+    appearance: none; border: none; cursor: pointer;
+    margin-top: 14px; width: 100%;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    font: inherit;
+    /* Footnote */
+    font-size: 13px; font-weight: 500; letter-spacing: -0.006em;
+    color: var(--blue);
+    background: var(--fill-4);
+    padding: 9px; border-radius: var(--radius-sm);
+    transition: background .15s ease, transform .1s ease;
+  }
+  .chev { font-size: 14px; line-height: 0; transition: transform .2s cubic-bezier(.25,.46,.45,.94) }
+  .disclosure.open .chev { transform: rotate(90deg) }
+  .disclosure:hover { background: var(--fill-3) }
+  .disclosure:active { transform: scale(.99) }
+  .disclosure:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--blue-tint), 0 0 0 1px var(--blue);
+  }
+
+  /* ---- Footer ---- */
+  footer {
+    max-width: var(--maxw); margin: 0 auto;
+    padding: var(--space-6) 24px 56px;
+    color: var(--label-3);
+    /* Footnote: 13px */
+    font-size: 13px; line-height: 1.384; letter-spacing: -0.006em;
+  }
+  footer b { color: var(--label-2); font-weight: 600 }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px }
+  .legend-item { display: flex; align-items: center; gap: 5px }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex: none }
+
+  /* ---- Reduced motion ---- */
+  @media (prefers-reduced-motion: reduce) {
+    .card, .track-fill, .chev, .btn, .disclosure { transition: none }
+  }
 </style>
 </head>
 <body>
+
 <header class="toolbar">
   <div class="toolbar-inner">
-    <div class="brand"><span class="brand-mark">⛽</span><span>aifuel</span></div>
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">⛽</span>
+      <span>aifuel</span>
+    </div>
     <div class="toolbar-actions">
-      <span class="status-text" id="updated">loading…</span>
-      <button class="btn" onclick="load(true)" aria-label="Refresh now">
+      <span class="status-text" id="updated" aria-live="polite">loading…</span>
+      <button class="btn" onclick="load(true)" aria-label="Refresh data now">
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
           <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
@@ -252,27 +429,34 @@
 </header>
 
 <main>
-  <section class="hero">
-    <h1 class="large-title">Subscription fuel gauge</h1>
-    <p class="hero-sub">Remaining quota across your AI coding providers, ordered by the soonest weekly or monthly reset.</p>
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-text">
+      <h1 class="large-title" id="hero-title">Subscription fuel gauge</h1>
+      <p class="hero-sub">Remaining quota across your AI coding providers, ordered by the soonest weekly or monthly reset.</p>
+    </div>
   </section>
 
-  <div class="grid" id="grid"></div>
+  <div class="grid" id="grid" role="list" aria-label="AI provider usage cards"></div>
 
   <footer>
-    Auto-refreshes every 60 seconds. <b>Live</b> is pulled from the provider API ·
-    <b>Cache</b> is read from the CLI's local snapshot · <b>Schedule</b> is the reset clock only
-    (the provider exposes no usage number).
+    <span>Auto-refreshes every 60 seconds.</span>
+    <div class="legend" aria-label="Source legend">
+      <span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span><b>Live</b> — pulled from provider API</span>
+      <span class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span><b>Cache</b> — read from CLI's local snapshot</span>
+      <span class="legend-item"><span class="legend-dot" style="background:var(--orange)"></span><b>Schedule</b> — reset clock only; no usage number</span>
+    </div>
   </footer>
 </main>
 
 <script>
-const STATUS_COLOR = {partial:"var(--orange)", unavailable:"var(--gray)", error:"var(--red)"};
-const PERIOD_LABEL = {"5h":"5-hour","daily":"daily","weekly":"weekly","monthly":"monthly","unknown":"window"};
+const STATUS_COLOR = { partial:"var(--orange)", unavailable:"var(--gray)", error:"var(--red)" };
+const PERIOD_LABEL = { "5h":"5-hour", daily:"daily", weekly:"weekly", monthly:"monthly", unknown:"window" };
 const PERIOD_ORDER = ["monthly","weekly","daily","5h","unknown"];
-function anchorPeriod(windows){
-  return windows.slice().sort((a,b)=>PERIOD_ORDER.indexOf(a.period)-PERIOD_ORDER.indexOf(b.period))[0]?.period;
+
+function anchorPeriod(windows) {
+  return windows.slice().sort((a,b) => PERIOD_ORDER.indexOf(a.period) - PERIOD_ORDER.indexOf(b.period))[0]?.period;
 }
+
 const PROVIDER_ICON = {
   claude:      "https://www.anthropic.com/favicon.ico",
   codex:       "https://openai.com/favicon.ico",
@@ -280,152 +464,172 @@ const PROVIDER_ICON = {
   gemini:      "https://geminicli.com/favicon.ico",
   antigravity: "https://antigravity.google/favicon.ico",
 };
-let DATA = null;
-const WINDOW_LIMIT = 6;          // collapse generic provider lists longer than this
-const MODEL_PREVIEW = 3;         // model cards preview this many gauges before "Show all models"
-const MODEL_PROVIDERS = new Set(["gemini","antigravity"]);  // per-model cards (vs time-window cards)
-const EXPANDED = new Set();      // provider keys currently showing every model
 
-function fmtCountdown(sec){
-  if(sec===null||sec===undefined) return "—";
-  if(sec<=0) return "resetting…";
-  const d=Math.floor(sec/86400), h=Math.floor(sec%86400/3600),
-        m=Math.floor(sec%3600/60), s=Math.floor(sec%60);
-  if(d>0) return `${d}d ${h}h ${m}m`;
-  if(h>0) return `${h}h ${m}m ${s}s`;
+let DATA = null;
+const WINDOW_LIMIT  = 6;
+const MODEL_PREVIEW = 3;
+const MODEL_PROVIDERS = new Set(["gemini","antigravity"]);
+const EXPANDED = new Set();
+
+function fmtCountdown(sec) {
+  if (sec === null || sec === undefined) return "—";
+  if (sec <= 0) return "resetting…";
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600),
+        m = Math.floor(sec % 3600 / 60), s = Math.floor(sec % 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
   return `${m}m ${s}s`;
 }
-function fmtDate(ts){
-  if(!ts) return "—";
-  const dt=new Date(ts*1000);
-  return dt.toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+
+function fmtDate(ts) {
+  if (!ts) return "—";
+  return new Date(ts * 1000).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
 }
-function barColor(rem){
-  if(rem===null) return "var(--label-4)";
-  if(rem<=10) return "var(--red)";
-  if(rem<=30) return "var(--orange)";
+
+function barColor(rem) {
+  if (rem === null) return "var(--label-4)";
+  if (rem <= 10)    return "var(--red)";
+  if (rem <= 30)    return "var(--orange)";
   return "var(--green)";
 }
 
-// Brand family from a model id: token before the first separator
-// (gemini-3.5-flash -> "gemini", claude-opus-4-6 -> "claude", gpt-oss -> "gpt").
-function modelFamily(label){ return String(label).trim().split(/[-_/.]/)[0].toLowerCase(); }
+function modelFamily(label) {
+  return String(label).trim().split(/[-_/.]/)[0].toLowerCase();
+}
 
-// The preview shown before "Show all models": one (tightest) gauge per family
-// first — so Antigravity leads with gemini / claude / gpt rather than three
-// gemini bars — then top up with the next tightest models to fill `cap` slots.
-// For a single-family card (Gemini) this naturally yields the top `cap` models.
-function familyPreview(models, cap){
-  const seen=new Set(), out=[];
-  for(const m of models){
-    if(out.length>=cap) break;
-    const f=modelFamily(m.label);
-    if(seen.has(f)) continue;
+function familyPreview(models, cap) {
+  const seen = new Set(), out = [];
+  for (const m of models) {
+    if (out.length >= cap) break;
+    const f = modelFamily(m.label);
+    if (seen.has(f)) continue;
     seen.add(f); out.push(m);
   }
-  for(const m of models){
-    if(out.length>=cap) break;
-    if(!out.includes(m)) out.push(m);
+  for (const m of models) {
+    if (out.length >= cap) break;
+    if (!out.includes(m)) out.push(m);
   }
   return out;
 }
 
-function windowHTML(w, isAnchor){
-  const rem = (w.remaining_percent!==null && w.remaining_percent!==undefined)? w.remaining_percent : null;
-  const width = rem===null? 100 : Math.max(2,Math.min(100,rem));
-  const col = barColor(rem);
-  const remTxt = rem===null? "n/a" : rem.toFixed(0)+"%";
+function windowHTML(w, isAnchor) {
+  const rem = (w.remaining_percent !== null && w.remaining_percent !== undefined)
+    ? w.remaining_percent : null;
+  const width  = rem === null ? 100 : Math.max(2, Math.min(100, rem));
+  const col    = barColor(rem);
+  const remTxt = rem === null ? "n/a" : rem.toFixed(0) + "%";
+  const dimmed = rem === null ? 'opacity:.35;' : '';
   return `
    <div class="window">
      <div class="window-head">
-       <span class="window-label"><span class="name">${w.label}</span><span class="period-tag${isAnchor?' anchor':''}">${PERIOD_LABEL[w.period]||w.period}</span></span>
-       <span class="remaining" style="color:${col}">${remTxt} left</span>
+       <span class="window-label">
+         <span class="name">${w.label}</span>
+         <span class="period-tag${isAnchor ? ' anchor' : ''}">${PERIOD_LABEL[w.period] || w.period}</span>
+       </span>
+       <span class="remaining" style="color:${col}">${remTxt}</span>
      </div>
-     <div class="track"><div class="track-fill" style="width:${width}%;background:${col};${rem===null?'opacity:.3':''}"></div></div>
+     <div class="track" role="progressbar" aria-valuenow="${rem ?? 0}" aria-valuemin="0" aria-valuemax="100" aria-label="${w.label} remaining">
+       <div class="track-fill" style="width:${width}%;background:${col};${dimmed}"></div>
+     </div>
      <div class="window-foot">
-       <span class="cd" data-reset="${w.resets_at||''}">renews in —</span>
+       <span class="cd" data-reset="${w.resets_at || ''}">renews in —</span>
        <span>${fmtDate(w.resets_at)}</span>
      </div>
    </div>`;
 }
 
-function render(){
-  if(!DATA) return;
-  const grid=document.getElementById("grid");
-  grid.innerHTML="";
-  DATA.providers.forEach((p,i)=>{
-    const card=document.createElement("div");
-    card.className="card";
-    const srcClass = p.source==="live"?"live":(p.source==="local-cache"?"cache":"schedule");
-    const srcText  = p.source==="live"?"live":(p.source==="local-cache"?"cache":(p.source||"—"));
-    let wins="";
-    const allW = p.windows || [];
+function render() {
+  if (!DATA) return;
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+
+  const last = DATA.providers.length - 1;
+  DATA.providers.forEach((p, i) => {
+    const card = document.createElement("div");
+    card.className = "card" + (i === 0 ? " urgent" : "");
+    card.setAttribute("role", "listitem");
+
+    const srcClass = p.source === "live" ? "live"
+                   : p.source === "local-cache" ? "cache" : "schedule";
+    const srcText  = p.source === "live" ? "Live"
+                   : p.source === "local-cache" ? "Cache" : (p.source ? p.source.charAt(0).toUpperCase() + p.source.slice(1) : "—");
+
+    const allW     = p.windows || [];
     const expanded = EXPANDED.has(p.key);
-
-    // Model cards (Gemini, Antigravity) preview a few gauges and hide the rest
-    // behind "Show all N models"; Antigravity's preview is one per family so it
-    // leads with gemini / claude / gpt. Other cards use the generic collapse.
     const isModels = MODEL_PROVIDERS.has(p.key);
-    const noun = isModels ? "models" : "windows";
-    const preview = isModels ? familyPreview(allW, MODEL_PREVIEW)
-                             : allW.slice(0, WINDOW_LIMIT);
+    const noun     = isModels ? "models" : "windows";
+    const preview  = isModels ? familyPreview(allW, MODEL_PREVIEW) : allW.slice(0, WINDOW_LIMIT);
 
-    let shown = allW, disclosure=null;
-    if(allW.length > preview.length){
+    let shown = allW, disclosure = null;
+    if (allW.length > preview.length) {
       shown = expanded ? allW : preview;
       disclosure = expanded ? "Show less" : `Show all ${allW.length} ${noun}`;
     }
 
-    if(allW.length){
-      const anchor=anchorPeriod(allW);
-      shown.forEach(w=>{ wins += windowHTML(w, w.period===anchor); });
+    let wins = "";
+    if (allW.length) {
+      const anchor = anchorPeriod(allW);
+      shown.forEach(w => { wins += windowHTML(w, w.period === anchor); });
     } else {
-      wins = `<div class="empty">${p.detail||"No data"}</div>`;
+      wins = `<div class="empty" role="status"><span class="empty-icon" aria-hidden="true">📭</span>${p.detail || "No data available"}</div>`;
     }
-    if(disclosure){
-      wins += `<button class="disclosure${expanded?' open':''}" onclick="toggleExpand('${p.key}')"><span class="chev">›</span>${disclosure}</button>`;
+
+    if (disclosure) {
+      wins += `<button class="disclosure${expanded ? ' open' : ''}" onclick="toggleExpand('${p.key}')" aria-expanded="${expanded}">
+        <span class="chev" aria-hidden="true">›</span>${disclosure}
+      </button>`;
     }
+
+    const rankLabel = i === 0 ? "resets soonest" : `#${i + 1}`;
+    const iconHTML  = PROVIDER_ICON[p.key]
+      ? `<img class="provider-icon" src="${PROVIDER_ICON[p.key]}" width="20" height="20" alt="" onerror="this.style.display='none'">`
+      : "";
+
     card.innerHTML = `
-      <div class="rank${i===0?' first':''}">${i===0?"resets soonest":"#"+(i+1)}</div>
-      <div class="provider">${PROVIDER_ICON[p.key]?`<img class="provider-icon" src="${PROVIDER_ICON[p.key]}" width="18" height="18" onerror="this.style.display='none'">`:""}${p.name}</div>
+      <div class="rank${i === 0 ? ' urgent' : ''}" aria-label="${rankLabel}">${rankLabel}</div>
+      <div class="provider">${iconHTML}${p.name}</div>
       <div class="badges">
-        ${p.plan?`<span class="badge">${p.plan.charAt(0).toUpperCase()+p.plan.slice(1)}</span>`:""}
+        ${p.plan ? `<span class="badge">${p.plan.charAt(0).toUpperCase() + p.plan.slice(1)}</span>` : ""}
         <span class="badge ${srcClass}">${srcText}</span>
       </div>
-      ${p.detail && p.windows && p.windows.length?`<div class="detail">${p.detail}</div>`:""}
+      ${p.detail && p.windows && p.windows.length ? `<div class="detail">${p.detail}</div>` : ""}
+      ${allW.length ? '<hr class="card-divider" aria-hidden="true">' : ""}
       ${wins}`;
+
     grid.appendChild(card);
   });
+
   tick();
 }
 
-function toggleExpand(key){
+function toggleExpand(key) {
   EXPANDED.has(key) ? EXPANDED.delete(key) : EXPANDED.add(key);
   render();
 }
 
-function tick(){
-  const now=Date.now()/1000;
-  document.querySelectorAll(".cd").forEach(el=>{
-    const r=parseFloat(el.dataset.reset);
-    el.textContent = r? ("renews in "+fmtCountdown(r-now)) : "no reset clock";
+function tick() {
+  const now = Date.now() / 1000;
+  document.querySelectorAll(".cd").forEach(el => {
+    const r = parseFloat(el.dataset.reset);
+    el.textContent = r ? ("renews in " + fmtCountdown(r - now)) : "no reset clock";
   });
 }
 
-async function load(force){
-  try{
-    const r=await fetch("/api/usage"+(force?"?force=1":""));
-    DATA=await r.json();
-    const ago=new Date(DATA.generated_at*1000).toLocaleTimeString();
-    document.getElementById("updated").textContent="Updated "+ago;
+async function load(force) {
+  try {
+    const r = await fetch("/api/usage" + (force ? "?force=1" : ""));
+    DATA = await r.json();
+    const ago = new Date(DATA.generated_at * 1000).toLocaleTimeString();
+    document.getElementById("updated").textContent = "Updated " + ago;
     render();
-  }catch(e){
-    document.getElementById("updated").innerHTML='<span class="err">fetch failed: '+e+'</span>';
+  } catch (e) {
+    document.getElementById("updated").innerHTML = '<span class="err">fetch failed: ' + e + '</span>';
   }
 }
+
 load();
-setInterval(tick,1000);
-setInterval(()=>load(false),60000);
+setInterval(tick, 1000);
+setInterval(() => load(false), 60000);
 </script>
 </body>
 </html>
