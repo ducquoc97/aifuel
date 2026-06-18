@@ -81,6 +81,7 @@ GEMINI_API = "https://cloudcode-pa.googleapis.com/v1internal:"  # + loadCodeAssi
 # gemini-cli's public installed-app client. Source: google-gemini/gemini-cli
 # packages/core/src/code_assist/oauth2.ts. Refreshes the token stored in
 # ~/.gemini/oauth_creds.json.
+# These id and secret are getting from original repo https://github.com/google-gemini/gemini-cli/blob/4d3dcdce1f03f6048bc65383b795ab4701da950b/packages/core/src/code_assist/oauth2.ts#L76
 GEMINI_CLI_PUBLIC_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
 GEMINI_CLI_PUBLIC_CLIENT_SECRET = "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"  # public, embedded in the CLI -- see note above
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
