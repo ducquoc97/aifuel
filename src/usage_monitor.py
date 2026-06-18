@@ -36,6 +36,7 @@ import re
 import sys
 import time
 import glob
+import queue
 import argparse
 import threading
 import webbrowser
@@ -1055,6 +1056,28 @@ def collect(force=False):
     return {"generated_at": now_ts(), "providers": results}
 
 
+def collect_stream(force=False):
+    """Yield each provider result the moment it finishes, in ready-first order.
+
+    Unlike collect(), this never blocks on the slowest provider: it fans the
+    fetches out across threads and hands each result back through a queue as soon
+    as it lands, so the dashboard can paint each card incrementally. Ranking is
+    left to the client, which re-sorts what it has on every arrival.
+    """
+    q = queue.Queue()
+
+    def run(key, fn, ttl):
+        res = get_provider(key, fn, ttl, force=force)
+        res["reset_at"] = effective_reset(res)
+        q.put(res)
+
+    for key, fn, ttl in PROVIDERS:
+        threading.Thread(target=run, args=(key, fn, ttl), daemon=True).start()
+
+    for _ in PROVIDERS:
+        yield q.get()
+
+
 # ---------------------------------------------------------------------------
 # Terminal renderer (--text)
 # ---------------------------------------------------------------------------
@@ -1207,8 +1230,34 @@ class Handler(BaseHTTPRequestHandler):
             force = urllib.parse.parse_qs(parts.query).get("force", [""])[0] == "1"
             payload = json.dumps(collect(force=force), default=str)
             self._send(200, payload, "application/json")
+        elif path == "/api/usage/stream":
+            self._stream_usage(parts)
         else:
             self._send(404, "not found", "text/plain")
+
+    def _stream_usage(self, parts):
+        """Stream provider results as newline-delimited JSON so the dashboard can
+        render each card as soon as that provider responds. The first line names
+        the providers to expect (for loading placeholders); each subsequent line
+        carries one provider result; a final line marks completion."""
+        force = urllib.parse.parse_qs(parts.query).get("force", [""])[0] == "1"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")  # don't let a proxy buffer the stream
+        self.end_headers()
+
+        def emit(obj):
+            self.wfile.write((json.dumps(obj, default=str) + "\n").encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            emit({"providers_expected": [key for key, _, _ in PROVIDERS]})
+            for res in collect_stream(force=force):
+                emit({"provider": res})
+            emit({"done": True, "generated_at": now_ts()})
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client navigated away mid-stream; provider threads still warm the cache
 
 
 def main():

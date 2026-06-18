@@ -402,9 +402,33 @@
   .legend-item { display: flex; align-items: center; gap: 5px }
   .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex: none }
 
+  /* ---- Loading skeleton + spinner ---- */
+  .card.skeleton { pointer-events: none }
+  .card.skeleton .provider { padding-right: 0 }
+  .spinner {
+    margin-left: auto; flex: none;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 2px solid var(--fill-1);
+    border-top-color: var(--blue);
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg) } }
+
+  .skel {
+    background: linear-gradient(100deg,
+      var(--fill-4) 30%, var(--fill-1) 50%, var(--fill-4) 70%);
+    background-size: 200% 100%;
+    animation: shimmer 1.3s ease-in-out infinite;
+  }
+  @keyframes shimmer { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+  .skel-badge { height: 20px; width: 72px; border-radius: 980px; margin-top: var(--space-3) }
+  .skel-line  { height: 12px; border-radius: 6px; margin-top: 14px }
+  .skel-line.short { width: 55% }
+
   /* ---- Reduced motion ---- */
   @media (prefers-reduced-motion: reduce) {
     .card, .track-fill, .chev, .btn, .disclosure { transition: none }
+    .spinner, .skel { animation: none }
   }
 </style>
 </head>
@@ -418,7 +442,7 @@
     </div>
     <div class="toolbar-actions">
       <span class="status-text" id="updated" aria-live="polite">loading…</span>
-      <button class="btn" onclick="load(true)" aria-label="Refresh data now">
+      <button class="btn" onclick="load(true, false)" aria-label="Refresh data now">
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
           <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
@@ -466,11 +490,53 @@ const PROVIDER_ICON = {
   antigravity: "https://antigravity.google/favicon.ico",
 };
 
-let DATA = null;
+// Display names for the loading placeholders, shown before a provider's own
+// result (which carries the canonical name) has streamed in.
+const PROVIDER_NAME = {
+  claude:      "Claude Code",
+  codex:       "Codex CLI",
+  copilot:     "GitHub Copilot",
+  gemini:      "Gemini CLI",
+  antigravity: "Antigravity CLI",
+};
+
+// Incremental stream state: providers fill in one at a time, so we keep what has
+// arrived (RECEIVED), the full set still expected (EXPECTED, for skeletons), and
+// the generated_at from the final stream line.
+const RECEIVED = new Map();   // key -> provider result
+let EXPECTED = Object.keys(PROVIDER_NAME);
+let GENERATED_AT = null;
+let streamAbort = null;
+
 const WINDOW_LIMIT  = 6;
 const MODEL_PREVIEW = 3;
 const MODEL_PROVIDERS = new Set(["gemini","antigravity"]);
 const EXPANDED = new Set();
+
+// Mirror of the server's provider ranking so cards stay correctly ordered as
+// they stream in, without waiting for the whole set. (usage_monitor.collect)
+const PERIOD_RANK = { monthly:0, weekly:1, daily:2, "5h":3, unknown:4 };
+
+function effectiveRemaining(res) {
+  const ws = (res.windows || []).slice().sort(
+    (a, b) => (PERIOD_RANK[a.period] ?? 99) - (PERIOD_RANK[b.period] ?? 99));
+  for (const w of ws) {
+    if (w.remaining_percent !== null && w.remaining_percent !== undefined)
+      return w.remaining_percent;
+  }
+  return -1;
+}
+
+function sortProviders(list) {
+  return list.slice().sort((a, b) => {
+    const ae = effectiveRemaining(a) <= 0 ? 1 : 0;
+    const be = effectiveRemaining(b) <= 0 ? 1 : 0;
+    if (ae !== be) return ae - be;
+    const ar = a.reset_at != null ? a.reset_at : Infinity;
+    const br = b.reset_at != null ? b.reset_at : Infinity;
+    return ar - br;
+  });
+}
 
 // Escape any provider-supplied string (model id, plan, detail) before it lands
 // in innerHTML, so a value from a provider API or a local CLI cache file can't
@@ -547,66 +613,91 @@ function windowHTML(w, isAnchor) {
    </div>`;
 }
 
+function iconHTMLFor(key) {
+  return PROVIDER_ICON[key]
+    ? `<img class="provider-icon" src="${PROVIDER_ICON[key]}" width="20" height="20" alt="" onerror="this.style.display='none'">`
+    : "";
+}
+
+function providerCard(p, i) {
+  const card = document.createElement("div");
+  card.className = "card" + (i === 0 ? " urgent" : "");
+  card.setAttribute("role", "listitem");
+
+  const srcClass = p.source === "live" ? "live"
+                 : p.source === "local-cache" ? "cache" : "schedule";
+  const srcText  = p.source === "live" ? "Live"
+                 : p.source === "local-cache" ? "Cache" : (p.source ? p.source.charAt(0).toUpperCase() + p.source.slice(1) : "—");
+
+  const allW     = p.windows || [];
+  const expanded = EXPANDED.has(p.key);
+  const isModels = MODEL_PROVIDERS.has(p.key);
+  const noun     = isModels ? "models" : "windows";
+  const preview  = isModels ? familyPreview(allW, MODEL_PREVIEW) : allW.slice(0, WINDOW_LIMIT);
+
+  let shown = allW, disclosure = null;
+  if (allW.length > preview.length) {
+    shown = expanded ? allW : preview;
+    disclosure = expanded ? "Show less" : `Show all ${allW.length} ${noun}`;
+  }
+
+  let wins = "";
+  if (allW.length) {
+    const anchor = anchorPeriod(allW);
+    shown.forEach(w => { wins += windowHTML(w, w.period === anchor); });
+  } else {
+    wins = `<div class="empty" role="status"><span class="empty-icon" aria-hidden="true">📭</span>${esc(p.detail || "No data available")}</div>`;
+  }
+
+  if (disclosure) {
+    wins += `<button class="disclosure${expanded ? ' open' : ''}" onclick="toggleExpand('${p.key}')" aria-expanded="${expanded}">
+      <span class="chev" aria-hidden="true">›</span>${disclosure}
+    </button>`;
+  }
+
+  const rankLabel = i === 0 ? "resets soonest" : `#${i + 1}`;
+
+  card.innerHTML = `
+    <div class="rank${i === 0 ? ' urgent' : ''}" aria-label="${rankLabel}">${rankLabel}</div>
+    <div class="provider">${iconHTMLFor(p.key)}${esc(p.name)}</div>
+    <div class="badges">
+      ${p.plan ? `<span class="badge">${esc(p.plan.charAt(0).toUpperCase() + p.plan.slice(1))}</span>` : ""}
+      <span class="badge ${srcClass}">${esc(srcText)}</span>
+    </div>
+    ${p.detail && p.windows && p.windows.length ? `<div class="detail">${esc(p.detail)}</div>` : ""}
+    ${allW.length ? '<hr class="card-divider" aria-hidden="true">' : ""}
+    ${wins}`;
+  return card;
+}
+
+function skeletonCard(key) {
+  const card = document.createElement("div");
+  card.className = "card skeleton";
+  card.setAttribute("role", "listitem");
+  card.setAttribute("aria-busy", "true");
+  const name = PROVIDER_NAME[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+  card.innerHTML = `
+    <div class="provider">${iconHTMLFor(key)}<span class="name">${esc(name)}</span>
+      <span class="spinner" role="status" aria-label="Loading ${esc(name)}"></span></div>
+    <div class="badges"><span class="skel skel-badge"></span></div>
+    <hr class="card-divider" aria-hidden="true">
+    <div class="skel skel-line"></div>
+    <div class="skel skel-line"></div>
+    <div class="skel skel-line short"></div>`;
+  return card;
+}
+
+// Render whatever has arrived so far: ranked real cards first, loading skeletons
+// for providers still in flight. Called on every stream message.
 function render() {
-  if (!DATA) return;
   const grid = document.getElementById("grid");
   grid.innerHTML = "";
 
-  const last = DATA.providers.length - 1;
-  DATA.providers.forEach((p, i) => {
-    const card = document.createElement("div");
-    card.className = "card" + (i === 0 ? " urgent" : "");
-    card.setAttribute("role", "listitem");
+  const arrived = sortProviders([...RECEIVED.values()]);
+  arrived.forEach((p, i) => grid.appendChild(providerCard(p, i)));
 
-    const srcClass = p.source === "live" ? "live"
-                   : p.source === "local-cache" ? "cache" : "schedule";
-    const srcText  = p.source === "live" ? "Live"
-                   : p.source === "local-cache" ? "Cache" : (p.source ? p.source.charAt(0).toUpperCase() + p.source.slice(1) : "—");
-
-    const allW     = p.windows || [];
-    const expanded = EXPANDED.has(p.key);
-    const isModels = MODEL_PROVIDERS.has(p.key);
-    const noun     = isModels ? "models" : "windows";
-    const preview  = isModels ? familyPreview(allW, MODEL_PREVIEW) : allW.slice(0, WINDOW_LIMIT);
-
-    let shown = allW, disclosure = null;
-    if (allW.length > preview.length) {
-      shown = expanded ? allW : preview;
-      disclosure = expanded ? "Show less" : `Show all ${allW.length} ${noun}`;
-    }
-
-    let wins = "";
-    if (allW.length) {
-      const anchor = anchorPeriod(allW);
-      shown.forEach(w => { wins += windowHTML(w, w.period === anchor); });
-    } else {
-      wins = `<div class="empty" role="status"><span class="empty-icon" aria-hidden="true">📭</span>${esc(p.detail || "No data available")}</div>`;
-    }
-
-    if (disclosure) {
-      wins += `<button class="disclosure${expanded ? ' open' : ''}" onclick="toggleExpand('${p.key}')" aria-expanded="${expanded}">
-        <span class="chev" aria-hidden="true">›</span>${disclosure}
-      </button>`;
-    }
-
-    const rankLabel = i === 0 ? "resets soonest" : `#${i + 1}`;
-    const iconHTML  = PROVIDER_ICON[p.key]
-      ? `<img class="provider-icon" src="${PROVIDER_ICON[p.key]}" width="20" height="20" alt="" onerror="this.style.display='none'">`
-      : "";
-
-    card.innerHTML = `
-      <div class="rank${i === 0 ? ' urgent' : ''}" aria-label="${rankLabel}">${rankLabel}</div>
-      <div class="provider">${iconHTML}${esc(p.name)}</div>
-      <div class="badges">
-        ${p.plan ? `<span class="badge">${esc(p.plan.charAt(0).toUpperCase() + p.plan.slice(1))}</span>` : ""}
-        <span class="badge ${srcClass}">${esc(srcText)}</span>
-      </div>
-      ${p.detail && p.windows && p.windows.length ? `<div class="detail">${esc(p.detail)}</div>` : ""}
-      ${allW.length ? '<hr class="card-divider" aria-hidden="true">' : ""}
-      ${wins}`;
-
-    grid.appendChild(card);
-  });
+  EXPECTED.filter(k => !RECEIVED.has(k))
+          .forEach(k => grid.appendChild(skeletonCard(k)));
 
   tick();
 }
@@ -624,21 +715,66 @@ function tick() {
   });
 }
 
-async function load(force) {
+// Stream the per-provider results and paint each card as it arrives, instead of
+// blocking on the slowest provider. On the first open we clear to skeletons; a
+// background refresh keeps the existing cards and updates them in place.
+async function load(force, initial) {
+  if (streamAbort) streamAbort.abort();
+  const ac = new AbortController();
+  streamAbort = ac;
+
+  const status = document.getElementById("updated");
+  if (initial) {
+    RECEIVED.clear();
+    render();               // show skeletons immediately
+    status.textContent = "Loading…";
+  }
+
   try {
-    const r = await fetch("/api/usage" + (force ? "?force=1" : ""));
-    DATA = await r.json();
-    const ago = new Date(DATA.generated_at * 1000).toLocaleTimeString();
-    document.getElementById("updated").textContent = "Updated " + ago;
-    render();
+    const r = await fetch("/api/usage/stream" + (force ? "?force=1" : ""),
+                          { signal: ac.signal });
+    if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", got = 0;
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const msg = JSON.parse(line);
+        if (msg.providers_expected) {
+          EXPECTED = msg.providers_expected;
+          if (initial) render();
+        } else if (msg.provider) {
+          RECEIVED.set(msg.provider.key, msg.provider);
+          got++;
+          render();
+          status.textContent = `Loading ${got}/${EXPECTED.length}…`;
+        } else if (msg.done) {
+          GENERATED_AT = msg.generated_at;
+          status.textContent = "Updated " +
+            new Date(GENERATED_AT * 1000).toLocaleTimeString();
+        }
+      }
+    }
   } catch (e) {
-    document.getElementById("updated").innerHTML = '<span class="err">fetch failed: ' + e + '</span>';
+    if (e.name === "AbortError") return;   // superseded by a newer load()
+    status.innerHTML = '<span class="err">fetch failed: ' + esc(String(e)) + '</span>';
+  } finally {
+    if (streamAbort === ac) streamAbort = null;
   }
 }
 
-load();
+load(false, true);
 setInterval(tick, 1000);
-setInterval(() => load(false), 60000);
+setInterval(() => load(false, false), 60000);
 </script>
 </body>
 </html>
