@@ -957,7 +957,7 @@ PROVIDERS = [
 ]
 
 def effective_reset(res):
-    """The single reset time a provider is ranked by (kept for terminal renderer)."""
+    """Reset timestamp used as the secondary provider sort key."""
     weekly_monthly = [w["resets_at"] for w in res["windows"]
                       if w["resets_at"] and w["period"] in ("weekly", "monthly")]
     if weekly_monthly:
@@ -969,11 +969,11 @@ def effective_reset(res):
 _PERIOD_RANK = {"monthly": 0, "weekly": 1, "daily": 2, "5h": 3, "unknown": 4}
 
 def effective_remaining(res):
-    """Remaining percent for ranking: anchor (longest) window's remaining_percent.
+    """Anchor remaining percent used to decide whether a provider has fuel.
 
-    Returns the remaining_percent of the most important period window so that
-    providers are sorted most-remaining-first. Returns -1 when no quota data
-    is available so those providers sink to the bottom.
+    The provider sort does not order by this exact percentage. It only checks
+    whether the anchor window is <= 0 so empty/unknown providers sink below
+    providers with measurable quota.
     """
     windows = sorted(res.get("windows", []),
                      key=lambda w: _PERIOD_RANK.get(w.get("period", "unknown"), 99))
@@ -1025,11 +1025,10 @@ def collect(force=False):
         res["reset_at"] = effective_reset(res)
         results.append(res)
 
-    # Rank by soonest reset: the weekly/monthly window when a provider has one,
-    # otherwise its soonest window of any kind (e.g. Gemini's daily reset).
-    # Providers with no fuel left (effective remaining <= 0, e.g. antigravity's
-    # starter buckets that always read 0%) sink to the bottom regardless of
-    # reset; a provider that later reports real quota ranks normally again.
+    # Rank providers with measurable fuel first, then by reset time. The reset is
+    # the weekly/monthly window when present, otherwise the soonest reset of any
+    # kind (e.g. Gemini's daily reset). Empty/unknown providers sink regardless
+    # of reset, but rank normally again once they report positive quota.
     far = float("inf")
     results.sort(key=lambda r: (effective_remaining(r) <= 0,
                                 r["reset_at"] if r["reset_at"] else far))
