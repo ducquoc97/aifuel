@@ -617,7 +617,7 @@ def _onboard_project(token, tier_id, ua):
 _HIDDEN_MODEL_RE = re.compile(r"^tab_|^chat_\d+$")
 
 
-def _quota_windows(quota):
+def _quota_windows(quota, period_override=None):
     """Map retrieveUserQuota buckets -> per-model windows (the CLI /model bars)."""
     windows = []
     for bucket in (quota.get("buckets") or []) if isinstance(quota, dict) else []:
@@ -629,8 +629,11 @@ def _quota_windows(quota):
         amount = bucket.get("remainingAmount")
         resets = bucket.get("resetTime")
         reset_epoch = to_epoch(resets)
-        secs_until = (reset_epoch - now_ts()) if reset_epoch else None
-        period, _ = _period_for_seconds(secs_until) if secs_until and secs_until > 0 else ("daily", "Daily")
+        if period_override:
+            period = period_override
+        else:
+            secs_until = (reset_epoch - now_ts()) if reset_epoch else None
+            period, _ = _period_for_seconds(secs_until) if secs_until and secs_until > 0 else ("daily", "Daily")
         if frac is not None:
             windows.append(window(bucket["modelId"], period,
                                   remaining_percent=round(float(frac) * 100, 1),
@@ -652,7 +655,7 @@ def _rank_models(windows):
         m["resets_at"] is None, m["resets_at"] or 0))
 
 
-def _codeassist_quota(token, hint_project, ua):
+def _codeassist_quota(token, hint_project, ua, period_override=None):
     """Shared loadCodeAssist -> retrieveUserQuota flow for Code Assist OAuth tokens.
 
     Returns ``(status, plan, windows, detail)`` where status is "live" (windows
@@ -702,7 +705,7 @@ def _codeassist_quota(token, hint_project, ua):
     except Exception as e:
         return ("fallback", plan, [], f"retrieveUserQuota unreachable ({e.__class__.__name__})")
 
-    windows = _quota_windows(quota)
+    windows = _quota_windows(quota, period_override=period_override)
     if not windows:
         return ("fallback", plan, [], "Quota returned no model buckets")
     return ("live", plan, windows, None)
@@ -798,7 +801,8 @@ def fetch_gemini():
     # Only meaningful for the user-supplied (Standard/Enterprise) case; the helper
     # ignores it for personal logins.
     env_project = os.environ.get("GOOGLE_CLOUD_PROJECT") or _gemini_project_from_config()
-    status, plan, windows, detail = _codeassist_quota(token, env_project, "gemini-cli/usage-monitor")
+    status, plan, windows, detail = _codeassist_quota(
+        token, env_project, "gemini-cli/usage-monitor", period_override="daily")
 
     # If we didn't already refresh and the token was rejected (stale expiry_date),
     # force one refresh and retry before degrading to the reset clock.
@@ -806,7 +810,7 @@ def fetch_gemini():
         new_token = _refresh_gemini_token(creds, cred)
         if new_token and new_token != token:
             status, plan, windows, detail = _codeassist_quota(
-                new_token, env_project, "gemini-cli/usage-monitor")
+                new_token, env_project, "gemini-cli/usage-monitor", period_override="daily")
 
     if status == "live":
         # Rank the per-model buckets tightest-first; the card previews the top
