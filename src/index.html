@@ -154,8 +154,14 @@
 
   .rank{
     position:absolute; top:16px; right:16px;
-    font-size:12px; color:var(--label-3);
+    font-size:11px; font-weight:600; color:var(--label-2);
+    background:var(--fill-3); padding:3px 9px; border-radius:980px;
     font-variant-numeric:tabular-nums; letter-spacing:.01em;
+  }
+  .rank.first{
+    color:var(--orange); background:var(--orange-tint);
+    font-weight:600; font-size:11px;
+    padding:3px 9px; border-radius:980px;
   }
 
   .provider{ display:flex; align-items:center; gap:9px; font-size:17px; font-weight:600; letter-spacing:-.01em; padding-right:64px }
@@ -187,6 +193,7 @@
     padding:2px 7px; border-radius:980px;
     color:var(--label-2); background:var(--fill-4);
   }
+  .period-tag.anchor{ color:var(--blue); background:var(--blue-tint) }
   .remaining{ flex:none; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums }
 
   .track{
@@ -262,6 +269,10 @@
 <script>
 const STATUS_COLOR = {partial:"var(--orange)", unavailable:"var(--gray)", error:"var(--red)"};
 const PERIOD_LABEL = {"5h":"5-hour","daily":"daily","weekly":"weekly","monthly":"monthly","unknown":"window"};
+const PERIOD_ORDER = ["monthly","weekly","daily","5h","unknown"];
+function anchorPeriod(windows){
+  return windows.slice().sort((a,b)=>PERIOD_ORDER.indexOf(a.period)-PERIOD_ORDER.indexOf(b.period))[0]?.period;
+}
 const PROVIDER_ICON = {
   claude:      "https://www.anthropic.com/favicon.ico",
   codex:       "https://openai.com/favicon.ico",
@@ -319,7 +330,7 @@ function familyPreview(models, cap){
   return out;
 }
 
-function windowHTML(w){
+function windowHTML(w, isAnchor){
   const rem = (w.remaining_percent!==null && w.remaining_percent!==undefined)? w.remaining_percent : null;
   const width = rem===null? 100 : Math.max(2,Math.min(100,rem));
   const col = barColor(rem);
@@ -327,7 +338,7 @@ function windowHTML(w){
   return `
    <div class="window">
      <div class="window-head">
-       <span class="window-label"><span class="name">${w.label}</span><span class="period-tag">${PERIOD_LABEL[w.period]||w.period}</span></span>
+       <span class="window-label"><span class="name">${w.label}</span><span class="period-tag${isAnchor?' anchor':''}">${PERIOD_LABEL[w.period]||w.period}</span></span>
        <span class="remaining" style="color:${col}">${remTxt} left</span>
      </div>
      <div class="track"><div class="track-fill" style="width:${width}%;background:${col};${rem===null?'opacity:.3':''}"></div></div>
@@ -366,7 +377,8 @@ function render(){
     }
 
     if(allW.length){
-      shown.forEach(w=>{ wins += windowHTML(w); });
+      const anchor=anchorPeriod(allW);
+      shown.forEach(w=>{ wins += windowHTML(w, w.period===anchor); });
     } else {
       wins = `<div class="empty">${p.detail||"No data"}</div>`;
     }
@@ -374,10 +386,10 @@ function render(){
       wins += `<button class="disclosure${expanded?' open':''}" onclick="toggleExpand('${p.key}')"><span class="chev">›</span>${disclosure}</button>`;
     }
     card.innerHTML = `
-      <div class="rank">${i===0?"resets soonest":"#"+(i+1)}</div>
-      <div class="provider"><span class="dot" style="background:${STATUS_COLOR[p.status]||'var(--gray)'}"></span>${PROVIDER_ICON[p.key]?`<img class="provider-icon" src="${PROVIDER_ICON[p.key]}" width="18" height="18" onerror="this.style.display='none'">`:""}${p.name}</div>
+      <div class="rank${i===0?' first':''}">${i===0?"resets soonest":"#"+(i+1)}</div>
+      <div class="provider">${PROVIDER_ICON[p.key]?`<img class="provider-icon" src="${PROVIDER_ICON[p.key]}" width="18" height="18" onerror="this.style.display='none'">`:""}${p.name}</div>
       <div class="badges">
-        ${p.plan?`<span class="badge">${p.plan}</span>`:""}
+        ${p.plan?`<span class="badge">${p.plan.charAt(0).toUpperCase()+p.plan.slice(1)}</span>`:""}
         <span class="badge ${srcClass}">${srcText}</span>
       </div>
       ${p.detail && p.windows && p.windows.length?`<div class="detail">${p.detail}</div>`:""}

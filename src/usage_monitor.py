@@ -507,8 +507,6 @@ def fetch_copilot():
                                       resets_at=next_month_first_utc())])
 
     plan = data.get("copilot_plan") or deep_find(data, {"plan"})
-    if account:
-        plan = f"{plan} · {account}" if plan else account
     reset_at = (to_epoch(data.get("quota_reset_date_utc"))
                 or to_epoch(data.get("quota_reset_date"))
                 or to_epoch(deep_find(data, {"limited_user_reset_date", "reset_date"}))
