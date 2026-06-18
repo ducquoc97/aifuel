@@ -1027,9 +1027,12 @@ def collect(force=False):
 
     # Rank by soonest reset: the weekly/monthly window when a provider has one,
     # otherwise its soonest window of any kind (e.g. Gemini's daily reset).
-    # Providers with no reset clock at all sink to the bottom.
+    # Providers with no fuel left (effective remaining <= 0, e.g. antigravity's
+    # starter buckets that always read 0%) sink to the bottom regardless of
+    # reset; a provider that later reports real quota ranks normally again.
     far = float("inf")
-    results.sort(key=lambda r: r["reset_at"] if r["reset_at"] else far)
+    results.sort(key=lambda r: (effective_remaining(r) <= 0,
+                                r["reset_at"] if r["reset_at"] else far))
     return {"generated_at": now_ts(), "providers": results}
 
 
