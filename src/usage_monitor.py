@@ -244,6 +244,19 @@ def result(key, name, status="ok", plan=None, source=None, detail=None, windows=
     }
 
 
+def percent_value(value) -> float | None:
+    """Normalize a provider percentage or 0..1 fraction to a percent."""
+    if value is None:
+        return None
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pct <= 1.0:
+        pct *= 100.0
+    return pct
+
+
 def next_month_first_utc() -> float:
     n = datetime.now(timezone.utc)
     year, month = (n.year + 1, 1) if n.month == 12 else (n.year, n.month + 1)
@@ -264,6 +277,19 @@ def next_midnight_pacific() -> float:
 # ---------------------------------------------------------------------------
 # Providers
 # ---------------------------------------------------------------------------
+
+_CLAUDE_RATE_LIMIT_CLAIMS = {
+    # Claude Code surfaces this as the "session limit" in its own messaging.
+    "five_hour": ("Session limit", "5h"),
+    "5_hour": ("Session limit", "5h"),
+    "5h": ("Session limit", "5h"),
+    "seven_day": ("Weekly limit", "weekly"),
+    "weekly": ("Weekly limit", "weekly"),
+    "7d": ("Weekly limit", "weekly"),
+    "seven_day_opus": ("Opus weekly limit", "weekly"),
+    "seven_day_sonnet": ("Sonnet weekly limit", "weekly"),
+    "overage": ("Usage credits", "monthly"),
+}
 
 def _claude_oauth_refresh(refresh_token):
     """Exchange Claude Code's stored refresh token for a fresh OAuth token."""
@@ -375,25 +401,22 @@ def fetch_claude():
     for k, v in data.items():
         if not isinstance(v, dict):
             continue
-        util = v.get("utilization")
-        if util is None:
-            util = v.get("used_percent")
-        resets = v.get("resets_at") or v.get("reset_at") or v.get("resets")
-        if util is None and resets is None:
+        claim = k.lower()
+        if claim not in _CLAUDE_RATE_LIMIT_CLAIMS:
             continue
-        kl = k.lower()
-        if "five" in kl or "5h" in kl or "5_hour" in kl or "hour" in kl:
-            label, period = "5-hour", "5h"
-        elif "seven" in kl or "week" in kl or "7" in kl:
-            label, period = ("Weekly (Opus)" if "opus" in kl else "Weekly"), "weekly"
-        elif "month" in kl:
-            label, period = "Monthly", "monthly"
-        else:
-            label, period = k.replace("_", " ").title(), "unknown"
-        up = float(util) if util is not None else None
-        if up is not None and up <= 1.0:  # fraction -> percent
-            up *= 100.0
-        windows.append(window(label, period, used_percent=up, resets_at=resets))
+        used = percent_value(v.get("utilization"))
+        if used is None:
+            used = percent_value(v.get("used_percent"))
+        remaining = percent_value(v.get("remaining_percent"))
+        if remaining is None:
+            remaining = percent_value(v.get("remaining"))
+        resets = (v.get("resets_at") or v.get("resetsAt") or v.get("reset_at")
+                  or v.get("resetAt") or v.get("resets"))
+        if used is None and remaining is None and resets is None:
+            continue
+        label, period = _CLAUDE_RATE_LIMIT_CLAIMS[claim]
+        windows.append(window(label, period, used_percent=used,
+                              remaining_percent=remaining, resets_at=resets))
 
     plan = (deep_find(data, {"plan", "subscription", "tier", "subscriptionType", "subscription_type"})
             or deep_find(creds, {"subscriptionType", "subscription_type"}))

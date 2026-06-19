@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import tempfile
 import urllib.error
 from pathlib import Path
 from unittest import TestCase, main, mock
@@ -106,10 +107,46 @@ class ClaudeRefreshTests(TestCase):
         self.assertEqual(http_get.call_count, 2)
         self.assertEqual(http_get.call_args.kwargs["headers"]["Authorization"], "Bearer new-access")
 
+    def test_fetch_claude_parses_known_usage_claims_as_used_utilization(self):
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": "access",
+                "expiresAt": 9_999_999_999_999,
+                "subscriptionType": "team",
+            }
+        }
+        usage_payload = {
+            "five_hour": {"utilization": 0.04, "resets_at": 1_000},
+            "seven_day": {"utilization": 0, "resets_at": 2_000},
+            "unexpected_hourly_metadata": {"utilization": 0.9, "resets_at": 3_000},
+        }
+
+        with mock.patch.object(usage_monitor.os.path, "exists", return_value=True), \
+             mock.patch.object(usage_monitor, "read_json", return_value=creds), \
+             mock.patch.object(usage_monitor, "now_ts", return_value=100), \
+             mock.patch.object(usage_monitor, "http_get", return_value=(usage_payload, None)):
+            res = usage_monitor.fetch_claude()
+
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["plan"], "team")
+        self.assertEqual(
+            [(w["label"], w["period"], w["used_percent"], w["remaining_percent"])
+             for w in res["windows"]],
+            [
+                ("Session limit", "5h", 4.0, 96.0),
+                ("Weekly limit", "weekly", 0.0, 100.0),
+            ],
+        )
+
 
 class ProviderCacheTests(TestCase):
     def setUp(self):
         usage_monitor._cache.clear()
+        self.snapshot_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.snapshot_dir.cleanup)
+        patcher = mock.patch.object(usage_monitor, "SNAPSHOT_DIR", self.snapshot_dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         usage_monitor._cache.clear()
@@ -122,7 +159,8 @@ class ProviderCacheTests(TestCase):
             calls += 1
             return usage_monitor.result("claude", "Claude Code", "error", detail="boom")
 
-        with mock.patch.object(usage_monitor, "now_ts", side_effect=[0, 10, 16, 16]):
+        with mock.patch.object(usage_monitor, "read_snapshot", return_value=None), \
+             mock.patch.object(usage_monitor, "now_ts", side_effect=[0, 10, 16, 16]):
             usage_monitor.get_provider("claude", fetch, 180)
             usage_monitor.get_provider("claude", fetch, 180)
             usage_monitor.get_provider("claude", fetch, 180)

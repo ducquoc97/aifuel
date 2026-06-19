@@ -597,9 +597,12 @@ function familyPreview(models, cap) {
 function windowHTML(w, isAnchor) {
   const rem = (w.remaining_percent !== null && w.remaining_percent !== undefined)
     ? w.remaining_percent : null;
+  const used = (w.used_percent !== null && w.used_percent !== undefined)
+    ? w.used_percent : null;
   const width  = rem === null ? 100 : Math.max(2, Math.min(100, rem));
   const col    = barColor(rem);
-  const remTxt = rem === null ? "n/a" : rem.toFixed(0) + "%";
+  const remTxt = rem === null ? "n/a" : rem.toFixed(0) + "% left";
+  const usedTxt = used === null || rem === null ? "" : `${used.toFixed(0)}% used · `;
   const dimmed = rem === null ? 'opacity:.35;' : '';
   return `
    <div class="window">
@@ -615,7 +618,7 @@ function windowHTML(w, isAnchor) {
      </div>
      <div class="window-foot">
        <span class="cd" data-reset="${w.resets_at || ''}">renews in —</span>
-       <span>${fmtDate(w.resets_at)}</span>
+       <span>${usedTxt}${fmtDate(w.resets_at)}</span>
      </div>
    </div>`;
 }
