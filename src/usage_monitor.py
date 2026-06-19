@@ -15,9 +15,9 @@ Providers:
 
 Nothing here prints your tokens. Credential files are read locally only to
 authenticate the provider's own usage endpoint, exactly like the CLIs do. For
-Gemini, an expired access token is refreshed against Google's OAuth endpoint from
-its stored refresh_token and written back to ~/.gemini/oauth_creds.json -- the
-same exchange the CLI performs on startup.
+Claude and Gemini, an expired OAuth token is refreshed from the stored
+refresh_token and written back to the CLI's own credentials file -- the same
+exchange the CLI performs on startup.
 
 Usage:
     python3 usage_monitor.py            # serve dashboard at http://127.0.0.1:8787
@@ -49,10 +49,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HOME = os.path.expanduser("~")
 HTTP_TIMEOUT = 12  # seconds
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+SNAPSHOT_DIR = os.path.join(HOME, ".cache", "aifuel")
 
 # Live usage endpoints (read-only; authenticated with the CLI's own local token).
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/codex/usage"
 GEMINI_API = "https://cloudcode-pa.googleapis.com/v1internal:"  # + loadCodeAssist | retrieveUserQuota
+CLAUDE_OAUTH_TOKEN_URI = "https://platform.claude.com/v1/oauth/token"
 
 # ---------------------------------------------------------------------------
 # Public OAuth clients of the upstream CLIs (NOT our secrets, NOT a leak)
@@ -92,6 +94,9 @@ GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 # ~/.gemini/antigravity-cli/antigravity-oauth-token.
 ANTIGRAVITY_CLI_PUBLIC_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
 ANTIGRAVITY_CLI_PUBLIC_CLIENT_SECRET = "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"  # public, embedded in the CLI -- see note above
+
+# Claude Code's public OAuth client id, embedded in the distributed CLI binary.
+CLAUDE_CLI_PUBLIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -190,6 +195,25 @@ def write_json_atomic(path, data):
     os.replace(tmp, path)
 
 
+def read_snapshot(key):
+    try:
+        res = read_json(os.path.join(SNAPSHOT_DIR, f"{key}.json"))
+    except Exception:
+        return None
+    reset = effective_reset(res) if isinstance(res, dict) else None
+    return res if reset is not None and reset > now_ts() - 300 else None
+
+
+def write_snapshot(key, res):
+    if effective_reset(res) is None:
+        return
+    try:
+        os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+        write_json_atomic(os.path.join(SNAPSHOT_DIR, f"{key}.json"), res)
+    except Exception:
+        pass
+
+
 def window(label, period, used_percent=None, remaining_percent=None,
            used=None, limit=None, resets_at=None):
     if remaining_percent is None and used_percent is not None:
@@ -241,6 +265,54 @@ def next_midnight_pacific() -> float:
 # Providers
 # ---------------------------------------------------------------------------
 
+def _claude_oauth_refresh(refresh_token):
+    """Exchange Claude Code's stored refresh token for a fresh OAuth token."""
+    if not refresh_token:
+        return None
+    body = urllib.parse.urlencode({
+        "client_id": CLAUDE_CLI_PUBLIC_CLIENT_ID,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        CLAUDE_OAUTH_TOKEN_URI, data=body,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": "claude-cli/usage-monitor",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        return None
+
+
+def _refresh_claude_token(creds, path):
+    """Refresh Claude Code's OAuth token and persist the rotated token set."""
+    oauth = creds.get("claudeAiOauth") if isinstance(creds, dict) else None
+    if not isinstance(oauth, dict):
+        return None
+    tok = _claude_oauth_refresh(oauth.get("refreshToken"))
+    access = tok.get("access_token") if isinstance(tok, dict) else None
+    refresh = tok.get("refresh_token") if isinstance(tok, dict) else None
+    expires_in = tok.get("expires_in") if isinstance(tok, dict) else None
+    if not access or not refresh or not expires_in:
+        return None
+    oauth["accessToken"] = access
+    oauth["refreshToken"] = refresh
+    oauth["expiresAt"] = int(now_ts() * 1000) + int(expires_in) * 1000
+    if tok.get("scope"):
+        oauth["scopes"] = str(tok["scope"]).split()
+    try:
+        write_json_atomic(path, creds)
+    except Exception:
+        pass  # the in-memory token is still usable even if we can't persist it
+    return access
+
+
 def fetch_claude():
     cred_path = os.path.join(HOME, ".claude", ".credentials.json")
     if not os.path.exists(cred_path):
@@ -252,22 +324,47 @@ def fetch_claude():
         return result("claude", "Claude Code", "error", detail=f"creds unreadable: {e}")
 
     token = deep_find(creds, {"accessToken", "access_token"})
+    expiry = to_epoch(deep_find(creds, {"expiresAt", "expires_at", "expiry_date"}))
+    refreshed = False
+    if expiry is not None and expiry <= now_ts() + 60:
+        new_token = _refresh_claude_token(creds, cred_path)
+        if new_token:
+            token, refreshed = new_token, True
     if not token:
         return result("claude", "Claude Code", "unavailable",
                       detail="No access token in credentials")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "anthropic-beta": "oauth-2025-04-20",
-        "anthropic-version": "2023-06-01",
-        "User-Agent": "claude-cli/usage-monitor (external)",
-        "Accept": "application/json",
-    }
+    def usage_headers(access_token):
+        return {
+            "Authorization": f"Bearer {access_token}",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01",
+            "User-Agent": "claude-cli/usage-monitor (external)",
+            "Accept": "application/json",
+        }
+
     try:
-        data, _ = http_get("https://api.anthropic.com/api/oauth/usage", headers=headers)
+        data, _ = http_get("https://api.anthropic.com/api/oauth/usage", headers=usage_headers(token))
     except urllib.error.HTTPError as e:
-        hint = " (429 = polled too fast; wait a few min)" if e.code == 429 else ""
-        return result("claude", "Claude Code", "error", detail=f"HTTP {e.code}{hint}")
+        if e.code == 401 and not refreshed:
+            new_token = _refresh_claude_token(creds, cred_path)
+            if new_token and new_token != token:
+                token, refreshed = new_token, True
+                try:
+                    data, _ = http_get("https://api.anthropic.com/api/oauth/usage",
+                                       headers=usage_headers(token))
+                except urllib.error.HTTPError as retry:
+                    hint = " (429 = polled too fast; wait a few min)" if retry.code == 429 else ""
+                    return result("claude", "Claude Code", "error",
+                                  detail=f"HTTP {retry.code}{hint}")
+                except Exception as retry:
+                    return result("claude", "Claude Code", "error", detail=str(retry))
+            else:
+                return result("claude", "Claude Code", "error",
+                              detail="OAuth token expired and auto-refresh failed")
+        else:
+            hint = " (429 = polled too fast; wait a few min)" if e.code == 429 else ""
+            return result("claude", "Claude Code", "error", detail=f"HTTP {e.code}{hint}")
     except Exception as e:
         return result("claude", "Claude Code", "error", detail=str(e))
 
@@ -1012,6 +1109,11 @@ _cache = {}            # key -> (expires_at, result)
 _cache_lock = threading.Lock()
 
 
+def cache_ttl(ttl, res):
+    """Keep reset-less results short-lived so transient misses heal quickly."""
+    return ttl if effective_reset(res) is not None else min(ttl, 15)
+
+
 def get_provider(key, fn, ttl, force=False):
     with _cache_lock:
         hit = _cache.get(key)
@@ -1021,8 +1123,14 @@ def get_provider(key, fn, ttl, force=False):
         res = fn()
     except Exception as e:
         res = result(key, key.title(), "error", detail=f"{e.__class__.__name__}: {e}")
+    if effective_reset(res) is None:
+        fallback = hit[1] if hit and effective_reset(hit[1]) is not None else read_snapshot(key)
+        if fallback is not None:
+            res = fallback
+    else:
+        write_snapshot(key, res)
     with _cache_lock:
-        _cache[key] = (now_ts() + ttl, res)
+        _cache[key] = (now_ts() + cache_ttl(ttl, res), res)
     return res
 
 

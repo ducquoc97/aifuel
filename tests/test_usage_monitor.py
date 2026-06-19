@@ -1,4 +1,6 @@
 import importlib.util
+import io
+import urllib.error
 from pathlib import Path
 from unittest import TestCase, main, mock
 
@@ -25,6 +27,156 @@ class QuotaWindowTests(TestCase):
 
         self.assertEqual(inferred["period"], "5h")
         self.assertEqual(daily["period"], "daily")
+
+
+class ClaudeRefreshTests(TestCase):
+    def test_refresh_claude_token_rotates_refresh_token_and_expiry(self):
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": "old-access",
+                "refreshToken": "old-refresh",
+                "expiresAt": 1,
+                "scopes": ["old"],
+            }
+        }
+        path = "/tmp/claude-creds.json"
+
+        with mock.patch.object(usage_monitor, "_claude_oauth_refresh", return_value={
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_in": 3600,
+            "scope": "user:profile user:inference",
+        }), mock.patch.object(usage_monitor, "now_ts", return_value=100), \
+             mock.patch.object(usage_monitor, "write_json_atomic") as write_json:
+            token = usage_monitor._refresh_claude_token(creds, path)
+
+        self.assertEqual(token, "new-access")
+        self.assertEqual(creds["claudeAiOauth"]["accessToken"], "new-access")
+        self.assertEqual(creds["claudeAiOauth"]["refreshToken"], "new-refresh")
+        self.assertEqual(creds["claudeAiOauth"]["expiresAt"], 3_700_000)
+        self.assertEqual(creds["claudeAiOauth"]["scopes"], ["user:profile", "user:inference"])
+        write_json.assert_called_once_with(path, creds)
+
+    def test_fetch_claude_refreshes_expired_token_before_usage_call(self):
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": "old-access",
+                "refreshToken": "old-refresh",
+                "expiresAt": 0,
+                "subscriptionType": "team",
+            }
+        }
+        usage_payload = {"weekly": {"used_percent": 10, "resets_at": 1_000}}
+
+        with mock.patch.object(usage_monitor.os.path, "exists", return_value=True), \
+             mock.patch.object(usage_monitor, "read_json", return_value=creds), \
+             mock.patch.object(usage_monitor, "now_ts", return_value=100), \
+             mock.patch.object(usage_monitor, "_refresh_claude_token", return_value="new-access") as refresh, \
+             mock.patch.object(usage_monitor, "http_get", return_value=(usage_payload, None)) as http_get:
+            res = usage_monitor.fetch_claude()
+
+        self.assertEqual(res["status"], "ok")
+        refresh.assert_called_once()
+        self.assertEqual(http_get.call_args.kwargs["headers"]["Authorization"], "Bearer new-access")
+
+    def test_fetch_claude_retries_after_401_with_refreshed_token(self):
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": "old-access",
+                "refreshToken": "old-refresh",
+                "expiresAt": 9_999_999_999_999,
+                "subscriptionType": "team",
+            }
+        }
+        usage_payload = {"weekly": {"used_percent": 10, "resets_at": 1_000}}
+        err = urllib.error.HTTPError(
+            "https://api.anthropic.com/api/oauth/usage", 401, "Unauthorized", hdrs=None,
+            fp=io.BytesIO(b'{"error":"unauthorized"}'),
+        )
+
+        with mock.patch.object(usage_monitor.os.path, "exists", return_value=True), \
+             mock.patch.object(usage_monitor, "read_json", return_value=creds), \
+             mock.patch.object(usage_monitor, "now_ts", return_value=100), \
+             mock.patch.object(usage_monitor, "_refresh_claude_token", return_value="new-access") as refresh, \
+             mock.patch.object(usage_monitor, "http_get", side_effect=[err, (usage_payload, None)]) as http_get:
+            res = usage_monitor.fetch_claude()
+
+        self.assertEqual(res["status"], "ok")
+        refresh.assert_called_once()
+        self.assertEqual(http_get.call_count, 2)
+        self.assertEqual(http_get.call_args.kwargs["headers"]["Authorization"], "Bearer new-access")
+
+
+class ProviderCacheTests(TestCase):
+    def setUp(self):
+        usage_monitor._cache.clear()
+
+    def tearDown(self):
+        usage_monitor._cache.clear()
+
+    def test_resetless_results_are_retried_quickly(self):
+        calls = 0
+
+        def fetch():
+            nonlocal calls
+            calls += 1
+            return usage_monitor.result("claude", "Claude Code", "error", detail="boom")
+
+        with mock.patch.object(usage_monitor, "now_ts", side_effect=[0, 10, 16, 16]):
+            usage_monitor.get_provider("claude", fetch, 180)
+            usage_monitor.get_provider("claude", fetch, 180)
+            usage_monitor.get_provider("claude", fetch, 180)
+
+        self.assertEqual(calls, 2)
+
+    def test_results_with_reset_keep_full_ttl(self):
+        calls = 0
+
+        def fetch():
+            nonlocal calls
+            calls += 1
+            return usage_monitor.result(
+                "claude", "Claude Code", "ok",
+                windows=[usage_monitor.window("Weekly", "weekly", resets_at=1_000)],
+            )
+
+        with mock.patch.object(usage_monitor, "now_ts", side_effect=[0, 100]):
+            usage_monitor.get_provider("claude", fetch, 180)
+            usage_monitor.get_provider("claude", fetch, 180)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(usage_monitor._cache["claude"][1]["windows"][0]["resets_at"], 1_000)
+
+    def test_resetless_refresh_keeps_last_good_result(self):
+        good = usage_monitor.result(
+            "claude", "Claude Code", "ok",
+            windows=[usage_monitor.window("Weekly", "weekly", resets_at=1_000)],
+        )
+        usage_monitor._cache["claude"] = (0, good)
+
+        with mock.patch.object(usage_monitor, "now_ts", return_value=100):
+            res = usage_monitor.get_provider(
+                "claude",
+                lambda: usage_monitor.result("claude", "Claude Code", "error", detail="boom"),
+                180,
+            )
+
+        self.assertIs(res, good)
+
+    def test_resetless_refresh_uses_disk_snapshot_without_memory_cache(self):
+        snap = usage_monitor.result(
+            "claude", "Claude Code", "ok",
+            windows=[usage_monitor.window("Weekly", "weekly", resets_at=1_000)],
+        )
+
+        with mock.patch.object(usage_monitor, "read_snapshot", return_value=snap):
+            res = usage_monitor.get_provider(
+                "claude",
+                lambda: usage_monitor.result("claude", "Claude Code", "error", detail="boom"),
+                180,
+            )
+
+        self.assertIs(res, snap)
 
 
 if __name__ == "__main__":
