@@ -595,5 +595,35 @@ class ProviderCacheTests(TestCase):
         self.assertIsNone(res["source"])
 
 
+class CLITests(TestCase):
+    def test_dashboard_mode_opens_browser_by_default(self):
+        server = mock.Mock()
+        server.serve_forever.side_effect = KeyboardInterrupt
+        timer = mock.Mock()
+
+        with mock.patch.object(sys, "argv", ["aifuel"]), \
+             mock.patch.object(aifuel_cli, "ThreadingHTTPServer", return_value=server), \
+             mock.patch.object(aifuel_cli.threading, "Timer", return_value=timer) as timer_cls, \
+             mock.patch.object(aifuel_cli.webbrowser, "open") as browser_open:
+            aifuel_cli.main()
+            timer_cls.assert_called_once()
+            self.assertEqual(timer_cls.call_args.args[0], 0.6)
+            timer_cls.call_args.args[1]()
+            browser_open.assert_called_once_with("http://127.0.0.1:8787")
+
+        timer.start.assert_called_once_with()
+
+    def test_no_browser_disables_browser_launch(self):
+        server = mock.Mock()
+        server.serve_forever.side_effect = KeyboardInterrupt
+
+        with mock.patch.object(sys, "argv", ["aifuel", "--no-browser"]), \
+             mock.patch.object(aifuel_cli, "ThreadingHTTPServer", return_value=server), \
+             mock.patch.object(aifuel_cli.threading, "Timer") as timer_cls:
+            aifuel_cli.main()
+
+        timer_cls.assert_not_called()
+
+
 if __name__ == "__main__":
     main()

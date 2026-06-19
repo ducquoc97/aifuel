@@ -28,8 +28,8 @@ You can't manage a limit you can't see. Most quota trackers are **macOS menu-bar
 ## Quick start
 
 ```bash
-python3 src/aifuel.py          # dashboard at http://127.0.0.1:8787
-python3 src/aifuel.py --open   # …and open the browser
+python3 src/aifuel.py          # dashboard + browser at http://127.0.0.1:8787
+python3 src/aifuel.py --no-browser   # serve without opening the browser
 python3 src/aifuel.py --text   # compact colored terminal summary
 python3 src/aifuel.py --json   # raw usage JSON, then exit
 python3 src/aifuel.py --port 9000
@@ -41,7 +41,7 @@ The CLI entrypoint lives at `src/aifuel.py`; provider handlers live under `src/a
 
 ## Install as a global `aifuel` command
 
-The installers drop a tiny `aifuel` launcher on your `PATH` that forwards to this repo's `aifuel.py`, so every flag passes straight through (`--json`, `--text`, `--open`, …).
+The installers drop a tiny `aifuel` launcher on your `PATH` that forwards to this repo's `aifuel.py`, so every flag passes straight through (`--json`, `--text`, `--no-browser`, …).
 
 **Linux / macOS** (and Windows via WSL or Git Bash):
 

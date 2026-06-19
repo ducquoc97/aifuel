@@ -15,11 +15,11 @@ Providers:
     - Antigravity CLI  (handler: aifuel.providers.antigravity)
 
 Usage:
-    python3 src/aifuel.py            # serve dashboard at http://127.0.0.1:8787
+    python3 src/aifuel.py            # serve dashboard + open browser at http://127.0.0.1:8787
     python3 src/aifuel.py --json     # print the usage JSON and exit
     python3 src/aifuel.py --text     # print a compact colored terminal summary and exit
     python3 src/aifuel.py --port N   # use a different port
-    python3 src/aifuel.py --open     # also open the browser
+    python3 src/aifuel.py --no-browser  # serve without opening the browser
 """
 from __future__ import annotations
 
@@ -314,7 +314,8 @@ def main():
     ap.add_argument("--text", action="store_true",
                     help="print a compact colored summary to the terminal and exit")
     ap.add_argument("--no-color", action="store_true", help="disable --text colors")
-    ap.add_argument("--open", action="store_true", help="open browser on start")
+    ap.add_argument("--no-browser", action="store_true",
+                    help="serve dashboard without opening a browser")
     args = ap.parse_args()
 
     if args.json:
@@ -335,7 +336,7 @@ def main():
     if args.host not in ("127.0.0.1", "::1", "localhost"):
         print(f"warning: bound to {args.host} — the dashboard and force-refresh "
               "are reachable by other machines with no authentication.")
-    if args.open:
+    if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
