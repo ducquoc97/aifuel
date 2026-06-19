@@ -94,12 +94,7 @@ def get_provider(key, fn, ttl, force=False):
         res = fn()
     except Exception as e:
         res = shared.result(key, key.title(), "error", detail=f"{e.__class__.__name__}: {e}")
-    if shared.effective_reset(res) is None:
-        fallback = hit[1] if hit and shared.has_fresh_reset(hit[1]) else shared.read_snapshot(key)
-        if fallback is not None:
-            res = dict(fallback)
-            res["source"] = "local-cache"
-    else:
+    if shared.effective_reset(res) is not None:
         shared.write_snapshot(key, res)
     with _cache_lock:
         _cache[key] = (shared.now_ts() + cache_ttl(ttl, res), res)
@@ -156,7 +151,7 @@ _ANSI = {
     "reset": "\033[0m", "bold": "\033[1m",
     "green": "\033[32m", "yellow": "\033[33m", "red": "\033[31m", "grey": "\033[90m",
 }
-_STATUS_COLOR = {"ok": "green", "partial": "yellow", "unavailable": "grey", "error": "red"}
+_STATUS_COLOR = {"ok": "green", "error": "red"}
 
 
 def _fmt_countdown(secs):
@@ -201,9 +196,7 @@ def render_text(data, color=True):
            + paint("grey", f"   updated {updated} · ranked by soonest reset")]
 
     for i, p in enumerate(providers, 1):
-        src = ("live" if p["source"] == "live"
-               else "cache" if p["source"] == "local-cache"
-               else p["source"] or "—")
+        src = "live" if p["source"] == "live" else None
         meta = " · ".join(x for x in (p.get("plan"), src, p["status"]) if x)
         dot = paint(_STATUS_COLOR.get(p["status"], "grey"), "●")
         out.append("")

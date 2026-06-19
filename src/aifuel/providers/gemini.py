@@ -207,19 +207,11 @@ def _refresh_gemini_token(creds, path):
     return access
 
 
-def _gemini_schedule(plan, detail):
-    """Fallback: tier name + daily reset clock (no per-model quota available)."""
-    return shared.result("gemini", "Gemini CLI", "partial", plan=plan, source="schedule",
-                         detail=detail,
-                         windows=[shared.window("Daily", "daily",
-                                                resets_at=shared.next_midnight_pacific())])
-
-
 def fetch_gemini():
     """Live: loadCodeAssist (tier + project) -> retrieveUserQuota (per-model bars)."""
     cred = os.path.join(shared.HOME, ".gemini", "oauth_creds.json")
     if not os.path.exists(cred):
-        return shared.result("gemini", "Gemini CLI", "unavailable",
+        return shared.result("gemini", "Gemini CLI", "error",
                              detail="No ~/.gemini/oauth_creds.json")
     try:
         creds = shared.read_json(cred)
@@ -227,7 +219,7 @@ def fetch_gemini():
         creds = None
     token = shared.deep_find(creds, {"access_token", "accessToken"}) if creds else None
     if not token:
-        return shared.result("gemini", "Gemini CLI", "unavailable",
+        return shared.result("gemini", "Gemini CLI", "error",
                              detail="No access token in oauth_creds.json")
 
     # Proactively refresh the cached token when it's expired (or within a minute
@@ -255,4 +247,4 @@ def fetch_gemini():
     if status == "live":
         return shared.result("gemini", "Gemini CLI", "ok", plan=plan, source="live",
                              windows=_rank_models(windows))
-    return _gemini_schedule(plan, f"{detail}; showing daily reset window")
+    return shared.result("gemini", "Gemini CLI", "error", plan=plan, detail=detail)

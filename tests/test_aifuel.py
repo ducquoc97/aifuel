@@ -17,7 +17,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from aifuel import shared
-from aifuel.providers import antigravity, claude, gemini
+from aifuel.providers import antigravity, claude, codex, copilot, gemini
 
 
 SPEC = importlib.util.spec_from_file_location("aifuel_cli", SRC / "aifuel.py")
@@ -262,6 +262,124 @@ class ClaudeRefreshTests(TestCase):
             ],
         )
 
+    def test_fetch_claude_errors_when_response_has_no_usage_windows(self):
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": "access",
+                "expiresAt": 9_999_999_999_999,
+                "subscriptionType": "team",
+            }
+        }
+
+        with mock.patch.object(claude.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=creds), \
+             mock.patch.object(shared, "now_ts", return_value=100), \
+             mock.patch.object(shared, "http_get", return_value=({"ignored": {}}, None)):
+            res = claude.fetch_claude()
+
+        self.assertEqual(res["status"], "error")
+        self.assertIsNone(res["source"])
+        self.assertIn("no usage windows", res["detail"])
+
+
+class CodexFetchTests(TestCase):
+    def test_fetch_codex_returns_live_usage(self):
+        auth = {"access_token": "token", "account_id": "acct"}
+        payload = {
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18_000,
+                    "used_percent": 25,
+                    "reset_after_seconds": 60,
+                },
+                "secondary_window": {
+                    "limit_window_seconds": 604_800,
+                    "used_percent": 10,
+                    "reset_after_seconds": 3600,
+                },
+            },
+            "additional_rate_limits": [{
+                "limit_name": "Codex-Spark",
+                "rate_limit": {
+                    "primary_window": {
+                        "limit_window_seconds": 86_400,
+                        "used_percent": 5,
+                        "reset_after_seconds": 120,
+                    },
+                },
+            }],
+        }
+
+        with mock.patch.object(codex.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=auth), \
+             mock.patch.object(shared, "now_ts", return_value=100), \
+             mock.patch.object(shared, "http_get", return_value=(payload, None)):
+            res = codex.fetch_codex()
+
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["source"], "live")
+        self.assertEqual(res["plan"], "pro")
+        self.assertEqual(
+            [(w["label"], w["period"], w["used_percent"], w["resets_at"]) for w in res["windows"]],
+            [
+                ("5-hour", "5h", 25, 160),
+                ("Weekly", "weekly", 10, 3700),
+                ("Codex-Spark", "daily", 5, 220),
+            ],
+        )
+
+    def test_fetch_codex_requires_live_auth(self):
+        with mock.patch.object(codex.os.path, "exists", return_value=False):
+            res = codex.fetch_codex()
+
+        self.assertEqual(res["status"], "error")
+        self.assertIsNone(res["source"])
+        self.assertIn("missing access_token", res["detail"])
+
+    def test_fetch_codex_returns_error_on_http_failure(self):
+        auth = {"access_token": "token", "account_id": "acct"}
+        err = urllib.error.HTTPError(
+            shared.CODEX_USAGE_URL, 401, "Unauthorized", hdrs=None, fp=io.BytesIO(b"{}"),
+        )
+
+        with mock.patch.object(codex.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=auth), \
+             mock.patch.object(shared, "http_get", side_effect=err):
+            res = codex.fetch_codex()
+
+        self.assertEqual(res["status"], "error")
+        self.assertIsNone(res["source"])
+        self.assertIn("HTTP 401", res["detail"])
+
+
+class CopilotFetchTests(TestCase):
+    def test_fetch_copilot_errors_when_live_usage_unreachable(self):
+        with mock.patch.object(copilot, "_copilot_token", return_value=("token", None)), \
+             mock.patch.object(shared, "http_get", side_effect=Exception("boom")):
+            res = copilot.fetch_copilot()
+
+        self.assertEqual(res["status"], "error")
+        self.assertIsNone(res["source"])
+        self.assertIn("live usage endpoint unreachable", res["detail"])
+
+
+class GeminiFetchTests(TestCase):
+    def test_fetch_gemini_errors_when_live_quota_fails(self):
+        creds = {"access_token": "token", "refresh_token": "refresh"}
+
+        with mock.patch.object(gemini.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=creds), \
+             mock.patch.object(gemini, "_codeassist_quota",
+                               return_value=("fallback", "Gemini Code Assist", [], "retrieveUserQuota HTTP 403")), \
+             mock.patch.object(gemini, "_refresh_gemini_token", return_value=None):
+            res = gemini.fetch_gemini()
+
+        self.assertEqual(res["status"], "error")
+        self.assertIsNone(res["source"])
+        self.assertEqual(res["plan"], "Gemini Code Assist")
+        self.assertIn("retrieveUserQuota HTTP 403", res["detail"])
+
 
 class AntigravityMacFallbackTests(TestCase):
     def _write_state_db(self, path, auth_status):
@@ -361,6 +479,24 @@ class AntigravityMacFallbackTests(TestCase):
         self.assertEqual(res["windows"], windows)
         quota.assert_called_once_with("keychain-token", None, "antigravity/usage-monitor")
 
+    def test_fetch_antigravity_errors_without_live_quota(self):
+        with mock.patch.object(antigravity, "_antigravity_keychain_creds",
+                               return_value=({"token": {"access_token": "keychain-token"}}, "keychain-token", False)), \
+             mock.patch.object(antigravity, "_antigravity_app_token",
+                               return_value=None), \
+             mock.patch.object(antigravity, "_antigravity_token",
+                               return_value=(None, None, True)), \
+             mock.patch.object(antigravity, "_antigravity_project", return_value=None), \
+             mock.patch.object(antigravity.gemini, "_codeassist_quota",
+                               return_value=("fallback", "antigravity", [], "retrieveUserQuota HTTP 403")), \
+             mock.patch.object(antigravity.os.path, "isdir", return_value=False):
+            res = antigravity.fetch_antigravity()
+
+        self.assertEqual(res["status"], "error")
+        self.assertIsNone(res["source"])
+        self.assertEqual(res["plan"], "Antigravity Starter Quota")
+        self.assertIn("retrieveUserQuota HTTP 403", res["detail"])
+
 
 class ProviderCacheTests(TestCase):
     def setUp(self):
@@ -408,22 +544,23 @@ class ProviderCacheTests(TestCase):
         self.assertEqual(calls, 1)
         self.assertEqual(aifuel_cli._cache["claude"][1]["windows"][0]["resets_at"], 1_000)
 
-    def test_resetless_refresh_keeps_last_good_result(self):
+    def test_resetless_refresh_does_not_reuse_fresh_memory_result(self):
         good = shared.result(
             "claude", "Claude Code", "ok",
             windows=[shared.window("Weekly", "weekly", resets_at=1_000)],
         )
+        error = shared.result("claude", "Claude Code", "error", detail="boom")
         aifuel_cli._cache["claude"] = (0, good)
 
         with mock.patch.object(aifuel_cli.shared, "now_ts", return_value=100):
             res = aifuel_cli.get_provider(
                 "claude",
-                lambda: shared.result("claude", "Claude Code", "error", detail="boom"),
+                lambda: error,
                 180,
             )
 
-        self.assertEqual(res["source"], "local-cache")
-        self.assertEqual(res["windows"], good["windows"])
+        self.assertIs(res, error)
+        self.assertIsNone(res["source"])
 
     def test_resetless_refresh_does_not_reuse_stale_memory_result(self):
         stale = shared.result(
@@ -440,21 +577,22 @@ class ProviderCacheTests(TestCase):
         self.assertIs(res, error)
         self.assertIs(aifuel_cli._cache["claude"][1], error)
 
-    def test_resetless_refresh_uses_disk_snapshot_without_memory_cache(self):
+    def test_resetless_refresh_does_not_reuse_disk_snapshot(self):
         snap = shared.result(
             "claude", "Claude Code", "ok",
             windows=[shared.window("Weekly", "weekly", resets_at=1_000)],
         )
+        error = shared.result("claude", "Claude Code", "error", detail="boom")
 
         with mock.patch.object(aifuel_cli.shared, "read_snapshot", return_value=snap):
             res = aifuel_cli.get_provider(
                 "claude",
-                lambda: shared.result("claude", "Claude Code", "error", detail="boom"),
+                lambda: error,
                 180,
             )
 
-        self.assertEqual(res["source"], "local-cache")
-        self.assertEqual(res["windows"], snap["windows"])
+        self.assertIs(res, error)
+        self.assertIsNone(res["source"])
 
 
 if __name__ == "__main__":

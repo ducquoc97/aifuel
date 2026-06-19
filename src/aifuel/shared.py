@@ -297,9 +297,9 @@ def result(key, name, status="ok", plan=None, source=None, detail=None, windows=
     return {
         "key": key,
         "name": name,
-        "status": status,        # "ok" | "partial" | "unavailable" | "error"
+        "status": status,        # "ok" | "error"
         "plan": plan,
-        "source": source,        # "live" | "local-cache" | "schedule" | None
+        "source": source,        # "live" | None
         "detail": detail,
         "windows": windows,
     }

@@ -317,8 +317,7 @@
     color: var(--label-2); background: var(--fill-4);
   }
   .badge.live     { color: var(--green);  background: var(--green-tint) }
-  .badge.cache    { color: var(--blue);   background: var(--blue-tint) }
-  .badge.schedule { color: var(--orange); background: var(--orange-tint) }
+  .badge.error    { color: var(--red);    background: var(--red-tint) }
 
   /* Callout: 16px, -0.32pt tracking */
   .detail {
@@ -506,14 +505,12 @@
     <span id="footer-auto-refresh" hidden>Auto-refreshes every 5 minutes.</span>
     <div class="legend" aria-label="Source legend">
       <span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span><b>Live</b> — pulled from provider API</span>
-      <span class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span><b>Cache</b> — read from CLI's local snapshot</span>
-      <span class="legend-item"><span class="legend-dot" style="background:var(--orange)"></span><b>Schedule</b> — reset clock only; no usage number</span>
+      <span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span><b>Error</b> — live usage unavailable or unusable</span>
     </div>
   </footer>
 </main>
 
 <script>
-const STATUS_COLOR = { partial:"var(--orange)", unavailable:"var(--gray)", error:"var(--red)" };
 const PERIOD_LABEL = { "5h":"5-hour", daily:"daily", weekly:"weekly", monthly:"monthly", unknown:"window" };
 const PERIOD_ORDER = ["monthly","weekly","daily","5h","unknown"];
 
@@ -666,10 +663,8 @@ function providerCard(p, i) {
   card.className = "card" + (i === 0 ? " urgent" : "");
   card.setAttribute("role", "listitem");
 
-  const srcClass = p.source === "live" ? "live"
-                 : p.source === "local-cache" ? "cache" : "schedule";
-  const srcText  = p.source === "live" ? "Live"
-                 : p.source === "local-cache" ? "Cache" : (p.source ? p.source.charAt(0).toUpperCase() + p.source.slice(1) : "—");
+  const srcClass = p.source === "live" ? "live" : "error";
+  const srcText  = p.source === "live" ? "Live" : "Error";
 
   const allW     = p.windows || [];
   const expanded = EXPANDED.has(p.key);

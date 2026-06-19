@@ -72,13 +72,13 @@ Both need only `python3` — no packaging, no dependencies. The launcher points 
 
 | Provider          | Source        | How                                                                 |
 |-------------------|---------------|---------------------------------------------------------------------|
-| Claude Code       | **live**      | `GET api.anthropic.com/api/oauth/usage` (token from `~/.claude/.credentials.json`) |
-| Codex CLI         | **live** / cache | `GET chatgpt.com/backend-api/codex/usage` (token from `~/.codex/auth.json`); falls back to last `rate_limits` session snapshot |
-| GitHub Copilot    | **live** / schedule | `api.github.com/copilot_internal/v2/token` quota snapshots (token from `~/.config/gh/hosts.yml`) |
-| Gemini CLI        | **live** / schedule | `:loadCodeAssist` → `:retrieveUserQuota` for real per-model bars (needs `GOOGLE_CLOUD_PROJECT` for Standard/Enterprise); falls back to a daily reset clock if no project |
-| Antigravity CLI   | **live** / schedule | Code Assist quota via its own auto-refreshed token; falls back to scanning `~/.gemini/antigravity*` and a ~5h reset clock |
+| Claude Code       | **live**      | `GET api.anthropic.com/api/oauth/usage` (token from `~/.claude/.credentials.json`); non-live responses are surfaced as errors |
+| Codex CLI         | **live**      | `GET chatgpt.com/backend-api/codex/usage` (token from `~/.codex/auth.json`); non-live responses are surfaced as errors |
+| GitHub Copilot    | **live**      | `api.github.com/copilot_internal/user` or `api.github.com/copilot_internal/v2/token` (token from `~/.copilot/config.json`, `~/.config/gh/hosts.yml`, or env); non-live responses are surfaced as errors |
+| Gemini CLI        | **live**      | `:loadCodeAssist` → `:retrieveUserQuota` for real per-model bars (needs working OAuth and any required project); non-live responses are surfaced as errors |
+| Antigravity CLI   | **live**      | Code Assist quota via its live OAuth token sources; non-live responses are surfaced as errors |
 
-**Source legend:** `live` = pulled from the provider API · `cache` = read from the CLI's own local snapshot · `schedule` = reset countdown only (the provider exposes no usage number for individual plans yet).
+**Source legend:** `live` = pulled from the provider API. Any provider that cannot return live usage is shown as an error.
 
 ## Output modes
 

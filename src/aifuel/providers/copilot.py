@@ -50,7 +50,7 @@ def _copilot_token():
 def fetch_copilot():
     token, _account = _copilot_token()
     if not token:
-        return shared.result("copilot", "GitHub Copilot", "unavailable",
+        return shared.result("copilot", "GitHub Copilot", "error",
                              detail="No GitHub/Copilot token found")
 
     headers = {
@@ -71,10 +71,8 @@ def fetch_copilot():
             continue
 
     if not isinstance(data, dict):
-        return shared.result("copilot", "GitHub Copilot", "partial", source="schedule",
-                             detail="Copilot usage endpoint unreachable; monthly reset only",
-                             windows=[shared.window("Premium requests", "monthly",
-                                                    resets_at=shared.next_month_first_utc())])
+        return shared.result("copilot", "GitHub Copilot", "error",
+                             detail="Copilot live usage endpoint unreachable")
 
     plan = data.get("copilot_plan") or shared.deep_find(data, {"plan"})
     reset_at = (shared.to_epoch(data.get("quota_reset_date_utc"))
@@ -111,10 +109,7 @@ def fetch_copilot():
                                          used=used, limit=ent, resets_at=reset_at))
 
     if not windows:
-        return shared.result("copilot", "GitHub Copilot", "partial", plan=plan,
-                             source="schedule",
-                             detail="No quota snapshot for this account; monthly reset only",
-                             windows=[shared.window("Premium requests", "monthly",
-                                                    resets_at=reset_at)])
+        return shared.result("copilot", "GitHub Copilot", "error", plan=plan,
+                             detail="Copilot live usage returned no quota snapshots")
     return shared.result("copilot", "GitHub Copilot", "ok", plan=plan, source="live",
                          windows=windows)

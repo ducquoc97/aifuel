@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import glob
 import json
 import os
 import sqlite3
@@ -136,7 +135,7 @@ def fetch_antigravity():
                or keychain_creds is not None
                or desktop_token is not None)
     if not present:
-        return shared.result("antigravity", "Antigravity CLI", "unavailable",
+        return shared.result("antigravity", "Antigravity CLI", "error",
                              detail="No ~/.gemini/antigravity* directory")
 
     tok_path = os.path.join(base, "antigravity-cli", "antigravity-oauth-token")
@@ -151,6 +150,7 @@ def fetch_antigravity():
     plan_names = {"antigravity": "Antigravity Starter Quota"}
 
     live_detail = None
+    plan = None
     project = _antigravity_project()
     if keychain_creds and (keychain_expired or not keychain_token):
         new_token = _refresh_antigravity_token(keychain_creds, _write_antigravity_keychain_creds)
@@ -189,32 +189,10 @@ def fetch_antigravity():
                                  source="live",
                                  windows=gemini._rank_models(windows))
 
-    for d in dirs:
-        for path in glob.glob(os.path.join(d, "**", "*.json"), recursive=True)[:400]:
-            try:
-                if os.path.getsize(path) > 200_000:
-                    continue
-                obj = shared.read_json(path)
-            except Exception:
-                continue
-            up = shared.deep_find(obj, {"used_percent", "usedPercent"})
-            resets = shared.deep_find(obj, {"resets_at", "reset_at", "quota_reset_date"})
-            if up is not None or resets is not None:
-                return shared.result("antigravity", "Antigravity CLI", "ok",
-                                     source="local-cache",
-                                     windows=[shared.window(
-                                         "Usage", "weekly",
-                                         used_percent=float(up) if up is not None else None,
-                                         resets_at=resets,
-                                     )])
-
     if token and expired:
-        detail = "OAuth token expired and auto-refresh failed — run antigravity once; quota resets ~every 5h"
+        detail = "OAuth token expired and auto-refresh failed — run antigravity once"
     elif live_detail:
-        detail = f"{live_detail}; quota resets ~every 5h"
+        detail = live_detail
     else:
-        detail = "No public/local usage data yet; quota resets ~every 5h"
-    return shared.result("antigravity", "Antigravity CLI", "partial", source="schedule",
-                         detail=detail,
-                         windows=[shared.window("Model quota", "5h",
-                                                resets_at=shared.now_ts() + 5 * 3600)])
+        detail = "Antigravity live usage unavailable"
+    return shared.result("antigravity", "Antigravity CLI", "error", plan=plan, detail=detail)

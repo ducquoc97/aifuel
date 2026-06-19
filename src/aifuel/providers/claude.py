@@ -76,7 +76,7 @@ def _refresh_claude_token(creds, path):
 def fetch_claude():
     cred_path = os.path.join(shared.HOME, ".claude", ".credentials.json")
     if not os.path.exists(cred_path):
-        return shared.result("claude", "Claude Code", "unavailable",
+        return shared.result("claude", "Claude Code", "error",
                              detail="No ~/.claude/.credentials.json")
     try:
         creds = shared.read_json(cred_path)
@@ -91,7 +91,7 @@ def fetch_claude():
         if new_token:
             token, refreshed = new_token, True
     if not token:
-        return shared.result("claude", "Claude Code", "unavailable",
+        return shared.result("claude", "Claude Code", "error",
                              detail="No access token in credentials")
 
     def usage_headers(access_token):
@@ -164,6 +164,6 @@ def fetch_claude():
     plan = (shared.deep_find(data, {"plan", "subscription", "tier", "subscriptionType", "subscription_type"})
             or shared.deep_find(creds, {"subscriptionType", "subscription_type"}))
     if not windows:
-        return shared.result("claude", "Claude Code", "partial", plan=plan, source="live",
+        return shared.result("claude", "Claude Code", "error", plan=plan,
                              detail="connected but no usage windows in response")
     return shared.result("claude", "Claude Code", "ok", plan=plan, source="live", windows=windows)
