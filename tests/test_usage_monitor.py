@@ -1,5 +1,9 @@
 import importlib.util
+import base64
 import io
+import json
+import sqlite3
+import ssl
 import tempfile
 import urllib.error
 from pathlib import Path
@@ -28,6 +32,40 @@ class QuotaWindowTests(TestCase):
 
         self.assertEqual(inferred["period"], "5h")
         self.assertEqual(daily["period"], "daily")
+
+
+class TLSFallbackTests(TestCase):
+    def tearDown(self):
+        usage_monitor._TLS_FALLBACK_CONTEXT = False
+
+    def test_urlopen_uses_fallback_context_when_default_ca_missing(self):
+        req = object()
+        ctx = object()
+
+        with mock.patch.object(usage_monitor, "_fallback_ssl_context", return_value=ctx), \
+             mock.patch.object(usage_monitor, "_default_ca_available", return_value=False), \
+             mock.patch.object(usage_monitor.urllib.request, "urlopen", return_value="ok") as urlopen:
+            out = usage_monitor._urlopen(req, timeout=7)
+
+        self.assertEqual(out, "ok")
+        urlopen.assert_called_once_with(req, timeout=7, context=ctx)
+
+    def test_urlopen_retries_cert_verify_error_with_fallback_context(self):
+        req = object()
+        ctx = object()
+        err = urllib.error.URLError(ssl.SSLError("certificate verify failed"))
+
+        with mock.patch.object(usage_monitor, "_fallback_ssl_context", return_value=ctx), \
+             mock.patch.object(usage_monitor, "_default_ca_available", return_value=True), \
+             mock.patch.object(usage_monitor.urllib.request, "urlopen",
+                               side_effect=[err, "ok"]) as urlopen:
+            out = usage_monitor._urlopen(req, timeout=9)
+
+        self.assertEqual(out, "ok")
+        self.assertEqual(urlopen.call_args_list, [
+            mock.call(req, timeout=9),
+            mock.call(req, timeout=9, context=ctx),
+        ])
 
 
 class ClaudeRefreshTests(TestCase):
@@ -214,6 +252,105 @@ class ClaudeRefreshTests(TestCase):
                 ("Current week (Sonnet only)", 3.0, 97.0),
             ],
         )
+
+
+class AntigravityMacFallbackTests(TestCase):
+    def _write_state_db(self, path, auth_status):
+        con = sqlite3.connect(path)
+        try:
+            con.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)")
+            con.execute(
+                "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
+                ("antigravityAuthStatus", json.dumps(auth_status)),
+            )
+            con.commit()
+        finally:
+            con.close()
+
+    def test_antigravity_app_token_reads_state_db(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "state.vscdb"
+            self._write_state_db(db_path, {
+                "name": "Quoc",
+                "email": "quoc@example.com",
+                "apiKey": "desktop-token",
+            })
+
+            with mock.patch.object(usage_monitor, "_antigravity_app_state_dbs",
+                                   return_value=[str(db_path)]):
+                token = usage_monitor._antigravity_app_token()
+
+        self.assertEqual(token, "desktop-token")
+
+    def test_fetch_antigravity_uses_desktop_token_when_cli_token_missing(self):
+        windows = [usage_monitor.window(
+            "Gemini 3.5 Flash", "5h", remaining_percent=62, resets_at=1_000,
+        )]
+
+        with mock.patch.object(usage_monitor, "_antigravity_app_token",
+                               return_value="desktop-token"), \
+             mock.patch.object(usage_monitor, "_antigravity_keychain_creds",
+                               return_value=(None, None, True)), \
+             mock.patch.object(usage_monitor, "_antigravity_token",
+                               return_value=(None, None, True)), \
+             mock.patch.object(usage_monitor, "_antigravity_project", return_value=None), \
+             mock.patch.object(usage_monitor, "_codeassist_quota",
+                               return_value=("live", "antigravity", windows, None)) as quota, \
+             mock.patch.object(usage_monitor, "_rank_models", side_effect=lambda w: w), \
+             mock.patch.object(usage_monitor.os.path, "isdir", return_value=False):
+            res = usage_monitor.fetch_antigravity()
+
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["source"], "live")
+        self.assertEqual(res["plan"], "Antigravity Starter Quota")
+        self.assertEqual(res["windows"], windows)
+        quota.assert_called_once_with("desktop-token", None, "antigravity/usage-monitor")
+
+    def test_antigravity_keychain_creds_decodes_go_keyring_secret(self):
+        payload = {
+            "auth_method": "consumer",
+            "token": {
+                "access_token": "keychain-token",
+                "refresh_token": "refresh-token",
+                "token_type": "Bearer",
+                "expiry": "2099-01-01T00:00:00+00:00",
+            },
+        }
+        secret = "go-keyring-base64:" + base64.b64encode(
+            json.dumps(payload).encode("utf-8")
+        ).decode("ascii")
+
+        with mock.patch.object(usage_monitor, "read_keychain_secret", return_value=secret), \
+             mock.patch.object(usage_monitor, "now_ts", return_value=100):
+            creds, token, expired = usage_monitor._antigravity_keychain_creds()
+
+        self.assertEqual(creds["auth_method"], "consumer")
+        self.assertEqual(token, "keychain-token")
+        self.assertFalse(expired)
+
+    def test_fetch_antigravity_uses_keychain_token_before_desktop_fallback(self):
+        windows = [usage_monitor.window(
+            "Gemini 3.5 Flash", "5h", remaining_percent=62, resets_at=1_000,
+        )]
+
+        with mock.patch.object(usage_monitor, "_antigravity_keychain_creds",
+                               return_value=({"token": {"access_token": "keychain-token"}}, "keychain-token", False)), \
+             mock.patch.object(usage_monitor, "_antigravity_app_token",
+                               return_value="desktop-token"), \
+             mock.patch.object(usage_monitor, "_antigravity_token",
+                               return_value=(None, None, True)), \
+             mock.patch.object(usage_monitor, "_antigravity_project", return_value=None), \
+             mock.patch.object(usage_monitor, "_codeassist_quota",
+                               return_value=("live", "antigravity", windows, None)) as quota, \
+             mock.patch.object(usage_monitor, "_rank_models", side_effect=lambda w: w), \
+             mock.patch.object(usage_monitor.os.path, "isdir", return_value=False):
+            res = usage_monitor.fetch_antigravity()
+
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["source"], "live")
+        self.assertEqual(res["plan"], "Antigravity Starter Quota")
+        self.assertEqual(res["windows"], windows)
+        quota.assert_called_once_with("keychain-token", None, "antigravity/usage-monitor")
 
 
 class ProviderCacheTests(TestCase):

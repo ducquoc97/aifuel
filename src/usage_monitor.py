@@ -33,10 +33,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
+import base64
 import sys
 import time
 import glob
 import queue
+import sqlite3
+import subprocess
 import argparse
 import threading
 import webbrowser
@@ -50,6 +54,7 @@ HOME = os.path.expanduser("~")
 HTTP_TIMEOUT = 12  # seconds
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 SNAPSHOT_DIR = os.path.join(HOME, ".cache", "aifuel")
+_TLS_FALLBACK_CONTEXT = False
 
 # Live usage endpoints (read-only; authenticated with the CLI's own local token).
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/codex/usage"
@@ -94,6 +99,8 @@ GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 # ~/.gemini/antigravity-cli/antigravity-oauth-token.
 ANTIGRAVITY_CLI_PUBLIC_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
 ANTIGRAVITY_CLI_PUBLIC_CLIENT_SECRET = "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"  # public, embedded in the CLI -- see note above
+ANTIGRAVITY_KEYCHAIN_SERVICE = "gemini"
+ANTIGRAVITY_KEYCHAIN_ACCOUNT = "antigravity"
 
 # Claude Code's public OAuth client id, embedded in the distributed CLI binary.
 CLAUDE_CLI_PUBLIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
@@ -130,6 +137,99 @@ def to_epoch(value) -> float | None:
     return None
 
 
+def _default_ca_paths():
+    paths = ssl.get_default_verify_paths()
+    out = []
+    if paths.openssl_cafile_env:
+        env_file = os.environ.get(paths.openssl_cafile_env)
+        if env_file:
+            out.append(env_file)
+    if paths.cafile:
+        out.append(paths.cafile)
+    return {os.path.realpath(p) for p in out if p}
+
+
+def _default_ca_available():
+    paths = ssl.get_default_verify_paths()
+    if paths.openssl_cafile_env:
+        env_file = os.environ.get(paths.openssl_cafile_env)
+        if env_file and os.path.isfile(env_file):
+            return True
+    if paths.openssl_capath_env:
+        env_dir = os.environ.get(paths.openssl_capath_env)
+        if env_dir and os.path.isdir(env_dir):
+            return True
+    if paths.cafile and os.path.isfile(paths.cafile):
+        return True
+    if paths.capath and os.path.isdir(paths.capath):
+        return True
+    return False
+
+
+def _ca_bundle_candidates():
+    candidates = []
+    if sys.platform == "darwin":
+        candidates.extend([
+            "/etc/ssl/cert.pem",
+            "/private/etc/ssl/cert.pem",
+            "/usr/local/etc/openssl@3/cert.pem",
+            "/opt/homebrew/etc/openssl@3/cert.pem",
+        ])
+    elif sys.platform.startswith("linux"):
+        candidates.extend([
+            "/etc/ssl/certs/ca-certificates.crt",
+            "/etc/ssl/cert.pem",
+            "/etc/pki/tls/cert.pem",
+            "/etc/pki/tls/certs/ca-bundle.crt",
+            "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+        ])
+    seen = _default_ca_paths()
+    for path in candidates:
+        real = os.path.realpath(path)
+        if real in seen or real in (None, ""):
+            continue
+        seen.add(real)
+        if os.path.isfile(path):
+            yield path
+
+
+def _fallback_ssl_context():
+    global _TLS_FALLBACK_CONTEXT
+    if _TLS_FALLBACK_CONTEXT is not False:
+        return _TLS_FALLBACK_CONTEXT
+    for path in _ca_bundle_candidates():
+        try:
+            _TLS_FALLBACK_CONTEXT = ssl.create_default_context(cafile=path)
+            return _TLS_FALLBACK_CONTEXT
+        except ssl.SSLError:
+            continue
+    _TLS_FALLBACK_CONTEXT = None
+    return None
+
+
+def _is_cert_verify_error(err):
+    reason = getattr(err, "reason", None)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return True
+    if isinstance(reason, ssl.SSLError):
+        text = str(reason).lower()
+        return ("certificate verify failed" in text
+                or "unable to get local issuer certificate" in text)
+    return False
+
+
+def _urlopen(req, timeout=HTTP_TIMEOUT):
+    ctx = _fallback_ssl_context()
+    if ctx is not None and not _default_ca_available():
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.URLError as e:
+        if ctx is not None and _is_cert_verify_error(e):
+            return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        raise
+
+
 def deep_find(obj, keys):
     """Depth-first search for the first value under any of `keys`."""
     if isinstance(obj, dict):
@@ -155,7 +255,7 @@ def http_get(url, headers=None, data=None, method=None):
         body = json.dumps(data).encode("utf-8")
         headers.setdefault("Content-Type", "application/json")
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+    with _urlopen(req, timeout=HTTP_TIMEOUT) as resp:
         raw = resp.read().decode("utf-8", "replace")
     try:
         return json.loads(raw), None
@@ -193,6 +293,61 @@ def write_json_atomic(path, data):
     except OSError:
         pass
     os.replace(tmp, path)
+
+
+def read_sqlite_item(path, key):
+    """Read a VS Code/Electron ItemTable value as text."""
+    con = sqlite3.connect(path)
+    try:
+        row = con.execute(
+            "SELECT CAST(value AS TEXT) FROM ItemTable WHERE key = ?",
+            (key,),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        con.close()
+
+
+def read_keychain_secret(service, account):
+    """Read a macOS generic-password secret as a string."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        return subprocess.check_output(
+            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def decode_go_keyring_secret(raw):
+    """Decode go-keyring's macOS payload wrapper to a JSON object."""
+    if not raw:
+        return None
+    if raw.startswith("go-keyring-base64:"):
+        raw = base64.b64decode(raw.split(":", 1)[1]).decode("utf-8")
+    return json.loads(raw)
+
+
+def encode_go_keyring_secret(data):
+    raw = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    return "go-keyring-base64:" + base64.b64encode(raw).decode("ascii")
+
+
+def write_keychain_secret(service, account, secret):
+    """Write a macOS generic-password secret in place."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        subprocess.check_output(
+            ["security", "add-generic-password", "-U", "-s", service,
+             "-a", account, "-w", secret],
+            text=True, stderr=subprocess.DEVNULL,
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        return False
 
 
 def has_fresh_reset(res):
@@ -313,7 +468,7 @@ def _claude_oauth_refresh(refresh_token, client_id=None):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        with _urlopen(req, timeout=HTTP_TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
     except Exception:
         return None
@@ -877,7 +1032,7 @@ def _google_oauth_refresh(client_id, client_secret, refresh_token):
         GOOGLE_TOKEN_URI, data=body,
         headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        with _urlopen(req, timeout=HTTP_TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
     except Exception:
         return None
@@ -1009,7 +1164,10 @@ def _refresh_antigravity_token(creds, path):
         exp = datetime.now(timezone.utc) + timedelta(seconds=int(tok["expires_in"]))
         tokobj["expiry"] = exp.isoformat()
     try:
-        write_json_atomic(path, creds)
+        if callable(path):
+            path(creds)
+        elif path:
+            write_json_atomic(path, creds)
     except Exception:
         pass  # the in-memory token is still usable even if we can't persist it
     return access
@@ -1025,10 +1183,70 @@ def _antigravity_project():
     return gcp.get("project") if isinstance(gcp, dict) else None
 
 
+def _antigravity_keychain_creds():
+    """Current agy auth from the macOS keychain (service=gemini, acct=antigravity)."""
+    raw = read_keychain_secret(ANTIGRAVITY_KEYCHAIN_SERVICE, ANTIGRAVITY_KEYCHAIN_ACCOUNT)
+    if not raw:
+        return None, None, True
+    try:
+        creds = decode_go_keyring_secret(raw)
+    except (ValueError, TypeError, json.JSONDecodeError, OSError):
+        return None, None, True
+    token = deep_find(creds, {"access_token", "accessToken"})
+    exp = to_epoch(deep_find(creds, {"expiry", "expiry_date", "expires_at"}))
+    expired = exp is not None and exp <= now_ts()
+    return creds, token, expired
+
+
+def _write_antigravity_keychain_creds(creds):
+    secret = encode_go_keyring_secret(creds)
+    if not write_keychain_secret(ANTIGRAVITY_KEYCHAIN_SERVICE,
+                                 ANTIGRAVITY_KEYCHAIN_ACCOUNT, secret):
+        raise OSError("failed to update antigravity keychain token")
+
+
+def _antigravity_app_state_dbs():
+    """Current Antigravity desktop-app state stores that may hold auth on disk."""
+    paths = []
+    if sys.platform == "darwin":
+        paths.append(os.path.join(
+            HOME, "Library", "Application Support", "Antigravity",
+            "User", "globalStorage", "state.vscdb"))
+    elif sys.platform == "win32":
+        appdata = os.environ.get("APPDATA") or os.path.join(HOME, "AppData", "Roaming")
+        paths.append(os.path.join(appdata, "Antigravity", "User", "globalStorage", "state.vscdb"))
+    else:
+        paths.extend([
+            os.path.join(HOME, ".config", "Antigravity", "User", "globalStorage", "state.vscdb"),
+            os.path.join(HOME, ".config", "antigravity", "User", "globalStorage", "state.vscdb"),
+        ])
+    return paths
+
+
+def _antigravity_app_token():
+    """Fallback live token from the desktop app's persisted auth status."""
+    for path in _antigravity_app_state_dbs():
+        if not os.path.exists(path):
+            continue
+        try:
+            raw = read_sqlite_item(path, "antigravityAuthStatus")
+            status = json.loads(raw) if raw else None
+        except (OSError, sqlite3.Error, json.JSONDecodeError, TypeError, ValueError):
+            continue
+        token = status.get("apiKey") if isinstance(status, dict) else None
+        if isinstance(token, str) and token.strip():
+            return token.strip()
+    return None
+
+
 def fetch_antigravity():
     base = os.path.join(HOME, ".gemini")
     dirs = [os.path.join(base, "antigravity"), os.path.join(base, "antigravity-cli")]
-    present = any(os.path.isdir(d) for d in dirs)
+    keychain_creds, keychain_token, keychain_expired = _antigravity_keychain_creds()
+    desktop_token = _antigravity_app_token()
+    present = (any(os.path.isdir(d) for d in dirs)
+               or keychain_creds is not None
+               or desktop_token is not None)
     if not present:
         return result("antigravity", "Antigravity CLI", "unavailable",
                       detail="No ~/.gemini/antigravity* directory")
@@ -1051,17 +1269,35 @@ def fetch_antigravity():
     _PLAN_NAMES = {"antigravity": "Antigravity Starter Quota"}
 
     live_detail = None
+    project = _antigravity_project()
+    if keychain_creds and (keychain_expired or not keychain_token):
+        new_token = _refresh_antigravity_token(keychain_creds, _write_antigravity_keychain_creds)
+        if new_token:
+            keychain_token, keychain_expired = new_token, False
+
+    tokens_to_try = []
     if token and not expired:
+        tokens_to_try.append(("file", token, creds, lambda: _refresh_antigravity_token(creds, tok_path)))
+    if keychain_token and not keychain_expired and keychain_token != token:
+        tokens_to_try.append(("keychain", keychain_token, keychain_creds,
+                              lambda: _refresh_antigravity_token(
+                                  keychain_creds, _write_antigravity_keychain_creds)))
+    if desktop_token and desktop_token != token:
+        tokens_to_try.append(("desktop", desktop_token, None, None))
+    for source_name, auth_token, source_creds, refresh in tokens_to_try:
         status, plan, windows, live_detail = _codeassist_quota(
-            token, _antigravity_project(), "antigravity/usage-monitor")
+            auth_token, project, "antigravity/usage-monitor")
         plan = _PLAN_NAMES.get((plan or "").lower(), plan)
         # Token rejected despite a fresh-looking expiry -> force one refresh + retry.
-        if status != "live" and not refreshed and creds:
-            new_token = _refresh_antigravity_token(creds, tok_path)
+        if (status != "live" and live_detail and "OAuth token expired" in live_detail
+                and refresh
+                and ((source_name != "file") or (not refreshed and source_creds))):
+            new_token = refresh()
             if new_token and new_token != token:
-                refreshed = True
+                if source_name == "file":
+                    refreshed = True
                 status, plan, windows, live_detail = _codeassist_quota(
-                    new_token, _antigravity_project(), "antigravity/usage-monitor")
+                    new_token, project, "antigravity/usage-monitor")
                 plan = _PLAN_NAMES.get((plan or "").lower(), plan)
         if status == "live":
             # agy exposes one bucket per model (Gemini, Claude, GPT, ...); rank
