@@ -471,7 +471,7 @@
   <div class="grid" id="grid" role="list" aria-label="AI provider usage cards"></div>
 
   <footer>
-    <span>Auto-refreshes every 60 seconds.</span>
+    <span>Auto-refreshes every 5 minutes.</span>
     <div class="legend" aria-label="Source legend">
       <span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span><b>Live</b> — pulled from provider API</span>
       <span class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span><b>Cache</b> — read from CLI's local snapshot</span>
@@ -793,7 +793,7 @@ async function load(force, initial) {
 
 load(false, true);
 setInterval(tick, 1000);
-setInterval(() => load(false, false), 60000);
+setInterval(() => load(false, false), 300000);
 </script>
 </body>
 </html>
