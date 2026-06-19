@@ -31,6 +31,40 @@ class QuotaWindowTests(TestCase):
 
 
 class ClaudeRefreshTests(TestCase):
+    def test_refresh_claude_token_uses_stored_client_id(self):
+        creds = {
+            "claudeAiOauth": {
+                "refreshToken": "old-refresh",
+                "clientId": "custom-client",
+            }
+        }
+
+        with mock.patch.object(usage_monitor, "_claude_oauth_refresh", return_value={
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_in": 3600,
+        }) as refresh, mock.patch.object(usage_monitor, "now_ts", return_value=100), \
+             mock.patch.object(usage_monitor, "write_json_atomic"):
+            usage_monitor._refresh_claude_token(creds, "/tmp/claude-creds.json")
+
+        refresh.assert_called_once_with("old-refresh", "custom-client")
+
+    def test_refresh_claude_token_falls_back_to_default_client_id(self):
+        creds = {"claudeAiOauth": {"refreshToken": "old-refresh"}}
+
+        with mock.patch.object(usage_monitor, "_claude_oauth_refresh", return_value={
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_in": 3600,
+        }) as refresh, mock.patch.object(usage_monitor, "now_ts", return_value=100), \
+             mock.patch.object(usage_monitor, "write_json_atomic"):
+            usage_monitor._refresh_claude_token(creds, "/tmp/claude-creds.json")
+
+        refresh.assert_called_once_with(
+            "old-refresh",
+            usage_monitor.CLAUDE_CLI_PUBLIC_CLIENT_ID,
+        )
+
     def test_refresh_claude_token_rotates_refresh_token_and_expiry(self):
         creds = {
             "claudeAiOauth": {
@@ -200,6 +234,21 @@ class ProviderCacheTests(TestCase):
             )
 
         self.assertIs(res, good)
+
+    def test_resetless_refresh_does_not_reuse_stale_memory_result(self):
+        stale = usage_monitor.result(
+            "claude", "Claude Code", "ok",
+            windows=[usage_monitor.window("Weekly", "weekly", resets_at=1_000)],
+        )
+        error = usage_monitor.result("claude", "Claude Code", "error", detail="boom")
+        usage_monitor._cache["claude"] = (0, stale)
+
+        with mock.patch.object(usage_monitor, "read_snapshot", return_value=None), \
+             mock.patch.object(usage_monitor, "now_ts", return_value=1_400):
+            res = usage_monitor.get_provider("claude", lambda: error, 180)
+
+        self.assertIs(res, error)
+        self.assertIs(usage_monitor._cache["claude"][1], error)
 
     def test_resetless_refresh_uses_disk_snapshot_without_memory_cache(self):
         snap = usage_monitor.result(

@@ -195,13 +195,17 @@ def write_json_atomic(path, data):
     os.replace(tmp, path)
 
 
+def has_fresh_reset(res):
+    reset = effective_reset(res) if isinstance(res, dict) else None
+    return reset is not None and reset > now_ts() - 300
+
+
 def read_snapshot(key):
     try:
         res = read_json(os.path.join(SNAPSHOT_DIR, f"{key}.json"))
     except Exception:
         return None
-    reset = effective_reset(res) if isinstance(res, dict) else None
-    return res if reset is not None and reset > now_ts() - 300 else None
+    return res if has_fresh_reset(res) else None
 
 
 def write_snapshot(key, res):
@@ -291,12 +295,12 @@ _CLAUDE_RATE_LIMIT_CLAIMS = {
     "overage": ("Usage credits", "monthly"),
 }
 
-def _claude_oauth_refresh(refresh_token):
+def _claude_oauth_refresh(refresh_token, client_id=None):
     """Exchange Claude Code's stored refresh token for a fresh OAuth token."""
     if not refresh_token:
         return None
     body = urllib.parse.urlencode({
-        "client_id": CLAUDE_CLI_PUBLIC_CLIENT_ID,
+        "client_id": client_id or CLAUDE_CLI_PUBLIC_CLIENT_ID,
         "refresh_token": refresh_token,
         "grant_type": "refresh_token",
     }).encode("utf-8")
@@ -321,7 +325,10 @@ def _refresh_claude_token(creds, path):
     oauth = creds.get("claudeAiOauth") if isinstance(creds, dict) else None
     if not isinstance(oauth, dict):
         return None
-    tok = _claude_oauth_refresh(oauth.get("refreshToken"))
+    tok = _claude_oauth_refresh(
+        oauth.get("refreshToken"),
+        oauth.get("clientId") or CLAUDE_CLI_PUBLIC_CLIENT_ID,
+    )
     access = tok.get("access_token") if isinstance(tok, dict) else None
     refresh = tok.get("refresh_token") if isinstance(tok, dict) else None
     expires_in = tok.get("expires_in") if isinstance(tok, dict) else None
@@ -1147,7 +1154,7 @@ def get_provider(key, fn, ttl, force=False):
     except Exception as e:
         res = result(key, key.title(), "error", detail=f"{e.__class__.__name__}: {e}")
     if effective_reset(res) is None:
-        fallback = hit[1] if hit and effective_reset(hit[1]) is not None else read_snapshot(key)
+        fallback = hit[1] if hit and has_fresh_reset(hit[1]) else read_snapshot(key)
         if fallback is not None:
             res = fallback
     else:
