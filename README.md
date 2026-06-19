@@ -29,6 +29,7 @@ You can't manage a limit you can't see. Most quota trackers are **macOS menu-bar
 
 ```bash
 git clone --depth=1 https://github.com/ducquoc97/aifuel.git
+cd aifuel
 python3 src/aifuel.py          # dashboard + browser at http://127.0.0.1:8787
 python3 src/aifuel.py --no-browser   # serve without opening the browser
 python3 src/aifuel.py --text   # compact colored terminal summary
