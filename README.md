@@ -4,12 +4,12 @@
 
 You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity… so which one runs out first? `aifuel` reads each provider's own usage endpoint and shows the **quota you have left** — in one dashboard, ranked by whichever weekly / monthly window **resets soonest**, with a live countdown to every refill.
 
-One file. No dependencies. Runs on **Windows, Linux, and macOS** — in your browser, your terminal, or as JSON.
+Stdlib-only. No dependencies. Runs on **Windows, Linux, and macOS** — in your browser, your terminal, or as JSON.
 
 ![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-3776ab)
 ![Dependencies: none](https://img.shields.io/badge/dependencies-none-3ddc97)
 ![Platforms: Windows · Linux · macOS](https://img.shields.io/badge/platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-8a94a6)
-![Single file](https://img.shields.io/badge/install-single%20.py-6ea8fe)
+![Providers modularized](https://img.shields.io/badge/providers-modular-6ea8fe)
 
 ![aifuel dashboard](docs/aifuel.png)
 
@@ -20,7 +20,7 @@ One file. No dependencies. Runs on **Windows, Linux, and macOS** — in your bro
 You can't manage a limit you can't see. Most quota trackers are **macOS menu-bar apps** (nothing for Windows/Linux) or **terminal-only CLIs you have to compile or `npm`/`cargo install`** first. `aifuel` is all three things at once:
 
 - 🖥️ **Cross-platform *and* visual.** A real auto-refreshing dashboard on Windows, Linux **and** macOS — not just a Mac menu bar.
-- 📦 **Zero-install.** A single, stdlib-only Python file. No `npm`, no `cargo build`, no app bundle, no virtualenv. `git clone` and run.
+- 📦 **Zero-install.** A small, stdlib-only Python app. No `npm`, no `cargo build`, no app bundle, no virtualenv. `git clone` and run.
 - ⏳ **Ranked by what runs out first.** Sorted by soonest reset, with a per-window countdown and renew date, so you see the cliff *before* you hit it mid-task.
 - 🔋 **Shows what's *left*, not what you spent.** Remaining quota — not a cost/billing report.
 - 🔒 **Local-only and honest.** Reads each CLI's own credentials to call that provider's usage endpoint, exactly like the CLI does. Nothing is printed, logged, or sent anywhere else.
@@ -28,18 +28,20 @@ You can't manage a limit you can't see. Most quota trackers are **macOS menu-bar
 ## Quick start
 
 ```bash
-python3 src/usage_monitor.py          # dashboard at http://127.0.0.1:8787
-python3 src/usage_monitor.py --open   # …and open the browser
-python3 src/usage_monitor.py --text   # compact colored terminal summary
-python3 src/usage_monitor.py --json   # raw usage JSON, then exit
-python3 src/usage_monitor.py --port 9000
+python3 src/aifuel.py          # dashboard at http://127.0.0.1:8787
+python3 src/aifuel.py --open   # …and open the browser
+python3 src/aifuel.py --text   # compact colored terminal summary
+python3 src/aifuel.py --json   # raw usage JSON, then exit
+python3 src/aifuel.py --port 9000
 ```
 
 The only thing you need is `python3`. That's the entire dependency list.
 
+The CLI entrypoint lives at `src/aifuel.py`; provider handlers live under `src/aifuel/providers/`.
+
 ## Install as a global `aifuel` command
 
-The installers drop a tiny `aifuel` launcher on your `PATH` that forwards to this repo's `usage_monitor.py`, so every flag passes straight through (`--json`, `--text`, `--open`, …).
+The installers drop a tiny `aifuel` launcher on your `PATH` that forwards to this repo's `aifuel.py`, so every flag passes straight through (`--json`, `--text`, `--open`, …).
 
 **Linux / macOS** (and Windows via WSL or Git Bash):
 

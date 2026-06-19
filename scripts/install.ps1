@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-  Install (or remove) `aifuel` — a global launcher for usage_monitor.py — on Windows.
+  Install (or remove) `aifuel` — a global launcher for aifuel.py — on Windows.
 
 .DESCRIPTION
   Drops an `aifuel.cmd` shim in a bin dir (default ~\.local\bin) that forwards to
-  this repo's usage_monitor.py, and puts that dir on your user PATH. After install:
-    aifuel          -> python usage_monitor.py        (web dashboard)
-    aifuel --json   -> python usage_monitor.py --json
+  this repo's aifuel.py, and puts that dir on your user PATH. After install:
+    aifuel          -> python aifuel.py        (web dashboard)
+    aifuel --json   -> python aifuel.py --json
     aifuel --text   -> ... and every other flag passes through.
 
 .EXAMPLE
@@ -34,10 +34,10 @@ if ($Uninstall) {
     return
 }
 
-# usage_monitor.py lives in src/ (one level up from scripts/).
-$TargetPy = Join-Path $PSScriptRoot '..\src\usage_monitor.py'
+# aifuel.py lives in src/ (one level up from scripts/).
+$TargetPy = Join-Path $PSScriptRoot '..\src\aifuel.py'
 if (-not (Test-Path $TargetPy)) {
-    Write-Error "usage_monitor.py not found next to install.ps1 ($TargetPy)"
+    Write-Error "aifuel.py not found next to install.ps1 ($TargetPy)"
 }
 # Canonicalize, then refuse chars that can't be safely baked into a .cmd shim:
 # '%' triggers env-var expansion at runtime (even inside quotes) and '"' would

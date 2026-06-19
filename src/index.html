@@ -553,7 +553,7 @@ const MODEL_PROVIDERS = new Set(["gemini","antigravity"]);
 const EXPANDED = new Set();
 
 // Mirror of the server's provider ranking so cards stay correctly ordered as
-// they stream in, without waiting for the whole set. (usage_monitor.collect)
+// they stream in, without waiting for the whole set. (aifuel.collect)
 const PERIOD_RANK = { monthly:0, weekly:1, daily:2, "5h":3, unknown:4 };
 
 function effectiveRemaining(res) {

@@ -1,13 +1,13 @@
 #!/bin/sh
-# Install (or remove) `aifuel` — a global launcher for usage_monitor.py.
+# Install (or remove) `aifuel` — a global launcher for aifuel.py.
 #
 #   ./install.sh              # install `aifuel` into a bin dir on your PATH
 #   ./install.sh --uninstall  # remove it
 #   BIN_DIR=/usr/local/bin ./install.sh   # override the target dir
 #
-# The launcher just forwards to this repo's usage_monitor.py, so:
-#   aifuel            -> python3 usage_monitor.py        (web dashboard)
-#   aifuel --json     -> python3 usage_monitor.py --json
+# The launcher just forwards to this repo's aifuel.py, so:
+#   aifuel            -> python3 aifuel.py        (web dashboard)
+#   aifuel --json     -> python3 aifuel.py --json
 #   aifuel --text     -> ... and every other flag passes through.
 set -eu
 
@@ -15,7 +15,7 @@ CMD=aifuel
 
 # Absolute path to the repo root (one level up from scripts/).
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-TARGET_PY="$SCRIPT_DIR/../src/usage_monitor.py"
+TARGET_PY="$SCRIPT_DIR/../src/aifuel.py"
 
 # Pick an install dir: explicit BIN_DIR, else ~/.local/bin (created if needed).
 BIN_DIR=${BIN_DIR:-"$HOME/.local/bin"}
@@ -32,13 +32,13 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 if [ ! -f "$TARGET_PY" ]; then
-    echo "error: usage_monitor.py not found next to install.sh ($TARGET_PY)" >&2
+    echo "error: aifuel.py not found next to install.sh ($TARGET_PY)" >&2
     exit 1
 fi
 
 # Canonicalize, then refuse a path we can't safely single-quote into the launcher
 # (a literal single quote is the only char that can break out of single quotes).
-TARGET_PY=$(CDPATH= cd -- "$SCRIPT_DIR/../src" && pwd -P)/usage_monitor.py
+TARGET_PY=$(CDPATH= cd -- "$SCRIPT_DIR/../src" && pwd -P)/aifuel.py
 case $TARGET_PY in
     *\'*)
         echo "error: repo path contains a single quote; refusing to write launcher ($TARGET_PY)" >&2
