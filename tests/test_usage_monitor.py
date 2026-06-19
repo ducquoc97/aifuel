@@ -167,8 +167,51 @@ class ClaudeRefreshTests(TestCase):
             [(w["label"], w["period"], w["used_percent"], w["remaining_percent"])
              for w in res["windows"]],
             [
-                ("Session limit", "5h", 4.0, 96.0),
-                ("Weekly limit", "weekly", 0.0, 100.0),
+                ("Current session", "5h", 4.0, 96.0),
+                ("Current week (all models)", "weekly", 0.0, 100.0),
+            ],
+        )
+
+    def test_fetch_claude_prefers_explicit_used_percentage_fields(self):
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": "access",
+                "expiresAt": 9_999_999_999_999,
+                "subscriptionType": "team",
+            }
+        }
+        usage_payload = {
+            "five_hour": {
+                "utilization": 0.04,
+                "used_percentage": 60,
+                "remaining_percentage": 40,
+                "resets_at": 1_000,
+            },
+            "seven_day": {
+                "utilization": 0,
+                "used_percentage": 8,
+                "remaining_percentage": 92,
+                "resets_at": 2_000,
+            },
+            "seven_day_sonnet": {
+                "used_percentage": 3,
+                "remaining_percentage": 97,
+                "resets_at": 2_000,
+            },
+        }
+
+        with mock.patch.object(usage_monitor.os.path, "exists", return_value=True), \
+             mock.patch.object(usage_monitor, "read_json", return_value=creds), \
+             mock.patch.object(usage_monitor, "now_ts", return_value=100), \
+             mock.patch.object(usage_monitor, "http_get", return_value=(usage_payload, None)):
+            res = usage_monitor.fetch_claude()
+
+        self.assertEqual(
+            [(w["label"], w["used_percent"], w["remaining_percent"]) for w in res["windows"]],
+            [
+                ("Current session", 60.0, 40.0),
+                ("Current week (all models)", 8.0, 92.0),
+                ("Current week (Sonnet only)", 3.0, 97.0),
             ],
         )
 
@@ -233,7 +276,8 @@ class ProviderCacheTests(TestCase):
                 180,
             )
 
-        self.assertIs(res, good)
+        self.assertEqual(res["source"], "local-cache")
+        self.assertEqual(res["windows"], good["windows"])
 
     def test_resetless_refresh_does_not_reuse_stale_memory_result(self):
         stale = usage_monitor.result(
@@ -263,7 +307,8 @@ class ProviderCacheTests(TestCase):
                 180,
             )
 
-        self.assertIs(res, snap)
+        self.assertEqual(res["source"], "local-cache")
+        self.assertEqual(res["windows"], snap["windows"])
 
 
 if __name__ == "__main__":

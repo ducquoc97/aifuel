@@ -283,15 +283,14 @@ def next_midnight_pacific() -> float:
 # ---------------------------------------------------------------------------
 
 _CLAUDE_RATE_LIMIT_CLAIMS = {
-    # Claude Code surfaces this as the "session limit" in its own messaging.
-    "five_hour": ("Session limit", "5h"),
-    "5_hour": ("Session limit", "5h"),
-    "5h": ("Session limit", "5h"),
-    "seven_day": ("Weekly limit", "weekly"),
-    "weekly": ("Weekly limit", "weekly"),
-    "7d": ("Weekly limit", "weekly"),
-    "seven_day_opus": ("Opus weekly limit", "weekly"),
-    "seven_day_sonnet": ("Sonnet weekly limit", "weekly"),
+    "five_hour": ("Current session", "5h"),
+    "5_hour": ("Current session", "5h"),
+    "5h": ("Current session", "5h"),
+    "seven_day": ("Current week (all models)", "weekly"),
+    "weekly": ("Current week (all models)", "weekly"),
+    "7d": ("Current week (all models)", "weekly"),
+    "seven_day_opus": ("Current week (Opus only)", "weekly"),
+    "seven_day_sonnet": ("Current week (Sonnet only)", "weekly"),
     "overage": ("Usage credits", "monthly"),
 }
 
@@ -411,10 +410,14 @@ def fetch_claude():
         claim = k.lower()
         if claim not in _CLAUDE_RATE_LIMIT_CLAIMS:
             continue
-        used = percent_value(v.get("utilization"))
+        used = percent_value(v.get("used_percentage"))
         if used is None:
             used = percent_value(v.get("used_percent"))
-        remaining = percent_value(v.get("remaining_percent"))
+        if used is None:
+            used = percent_value(v.get("utilization"))
+        remaining = percent_value(v.get("remaining_percentage"))
+        if remaining is None:
+            remaining = percent_value(v.get("remaining_percent"))
         if remaining is None:
             remaining = percent_value(v.get("remaining"))
         resets = (v.get("resets_at") or v.get("resetsAt") or v.get("reset_at")
@@ -1156,7 +1159,8 @@ def get_provider(key, fn, ttl, force=False):
     if effective_reset(res) is None:
         fallback = hit[1] if hit and has_fresh_reset(hit[1]) else read_snapshot(key)
         if fallback is not None:
-            res = fallback
+            res = dict(fallback)
+            res["source"] = "local-cache"
     else:
         write_snapshot(key, res)
     with _cache_lock:
