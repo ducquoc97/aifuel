@@ -7,8 +7,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 from .. import shared
+from .base import BaseProvider
 
 
 def _gemini_project_from_config():
@@ -215,44 +217,57 @@ def _refresh_gemini_token(creds, path):
     return access
 
 
+class GeminiProvider(BaseProvider):
+    @property
+    def key(self) -> str:
+        return "gemini"
+
+    @property
+    def name(self) -> str:
+        return "Gemini CLI"
+
+    def fetch(self) -> dict[str, Any]:
+        """Live: loadCodeAssist (tier + project) -> retrieveUserQuota (per-model bars)."""
+        cred = os.path.join(shared.HOME, ".gemini", "oauth_creds.json")
+        if not os.path.exists(cred):
+            return shared.result(self.key, self.name, "error",
+                                 detail="No ~/.gemini/oauth_creds.json")
+        try:
+            creds = shared.read_json(cred)
+        except Exception:
+            creds = None
+        token = shared.deep_find(creds, {"access_token", "accessToken"}) if creds else None
+        if not token:
+            return shared.result(self.key, self.name, "error",
+                                 detail="No access token in oauth_creds.json")
+
+        # Proactively refresh the cached token when it's expired (or within a minute
+        # of it) instead of letting loadCodeAssist 401 us into the fallback.
+        refreshed = False
+        expiry = shared.to_epoch(creds.get("expiry_date"))
+        if expiry is not None and expiry <= shared.now_ts() + 60:
+            new_token = _refresh_gemini_token(creds, cred)
+            if new_token:
+                token, refreshed = new_token, True
+
+        env_project = (
+            os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or _gemini_project_from_config()
+        )
+        status, plan, windows, detail = _codeassist_quota(
+            token, env_project, "gemini-cli/usage-monitor", period_override="daily")
+
+        if status != "live" and not refreshed and creds.get("refresh_token"):
+            new_token = _refresh_gemini_token(creds, cred)
+            if new_token and new_token != token:
+                status, plan, windows, detail = _codeassist_quota(
+                    new_token, env_project, "gemini-cli/usage-monitor", period_override="daily")
+
+        if status == "live":
+            return shared.result(self.key, self.name, "ok", plan=plan, source="live",
+                                 windows=_rank_models(windows))
+        return shared.result(self.key, self.name, "error", plan=plan, detail=detail)
+
+
 def fetch_gemini():
-    """Live: loadCodeAssist (tier + project) -> retrieveUserQuota (per-model bars)."""
-    cred = os.path.join(shared.HOME, ".gemini", "oauth_creds.json")
-    if not os.path.exists(cred):
-        return shared.result("gemini", "Gemini CLI", "error",
-                             detail="No ~/.gemini/oauth_creds.json")
-    try:
-        creds = shared.read_json(cred)
-    except Exception:
-        creds = None
-    token = shared.deep_find(creds, {"access_token", "accessToken"}) if creds else None
-    if not token:
-        return shared.result("gemini", "Gemini CLI", "error",
-                             detail="No access token in oauth_creds.json")
-
-    # Proactively refresh the cached token when it's expired (or within a minute
-    # of it) instead of letting loadCodeAssist 401 us into the fallback.
-    refreshed = False
-    expiry = shared.to_epoch(creds.get("expiry_date"))
-    if expiry is not None and expiry <= shared.now_ts() + 60:
-        new_token = _refresh_gemini_token(creds, cred)
-        if new_token:
-            token, refreshed = new_token, True
-
-    env_project = (
-        os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or _gemini_project_from_config()
-    )
-    status, plan, windows, detail = _codeassist_quota(
-        token, env_project, "gemini-cli/usage-monitor", period_override="daily")
-
-    if status != "live" and not refreshed and creds.get("refresh_token"):
-        new_token = _refresh_gemini_token(creds, cred)
-        if new_token and new_token != token:
-            status, plan, windows, detail = _codeassist_quota(
-                new_token, env_project, "gemini-cli/usage-monitor", period_override="daily")
-
-    if status == "live":
-        return shared.result("gemini", "Gemini CLI", "ok", plan=plan, source="live",
-                             windows=_rank_models(windows))
-    return shared.result("gemini", "Gemini CLI", "error", plan=plan, detail=detail)
+    return GeminiProvider().fetch()

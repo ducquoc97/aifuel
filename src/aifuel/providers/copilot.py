@@ -5,8 +5,10 @@ import os
 import re
 import sys
 import urllib.error
+from typing import Any
 
 from .. import shared
+from .base import BaseProvider
 
 
 def _copilot_token():
@@ -48,76 +50,89 @@ def _copilot_token():
     return env, None
 
 
+class CopilotProvider(BaseProvider):
+    @property
+    def key(self) -> str:
+        return "copilot"
+
+    @property
+    def name(self) -> str:
+        return "GitHub Copilot"
+
+    def fetch(self) -> dict[str, Any]:
+        token, _account = _copilot_token()
+        if not token:
+            return shared.result(self.key, self.name, "error",
+                                 detail="No GitHub/Copilot token found")
+
+        headers = {
+            "Authorization": f"token {token}",
+            "User-Agent": "GithubCopilot/1.250.0",
+            "Editor-Version": "vscode/1.99.0",
+            "Editor-Plugin-Version": "copilot/1.250.0",
+            "Accept": "application/json",
+        }
+        data = None
+        last_err_code = None
+        for url in ("https://api.github.com/copilot_internal/user",
+                    "https://api.github.com/copilot_internal/v2/token"):
+            try:
+                data, _ = shared.http_get(url, headers=headers)
+                if isinstance(data, dict):
+                    break
+            except urllib.error.HTTPError as e:
+                last_err_code = e.code
+                continue
+            except Exception:
+                continue
+
+        if not isinstance(data, dict):
+            if last_err_code == 401:
+                return shared.result(self.key, self.name, "error",
+                                     detail="Token expired/unauthorized — sign in using the GitHub or Copilot CLI")
+            return shared.result(self.key, self.name, "error",
+                                 detail="Copilot live usage endpoint unreachable")
+
+        plan = data.get("copilot_plan") or shared.deep_find(data, {"plan"})
+        reset_at = (shared.to_epoch(data.get("quota_reset_date_utc"))
+                    or shared.to_epoch(data.get("quota_reset_date"))
+                    or shared.to_epoch(shared.deep_find(data, {"limited_user_reset_date", "reset_date"}))
+                    or shared.next_month_first_utc())
+
+        windows = []
+        snaps = data.get("quota_snapshots")
+        if isinstance(snaps, dict):
+            for name, snap in snaps.items():
+                if not isinstance(snap, dict):
+                    continue
+                ent = snap.get("entitlement")
+                has_quota = snap.get("has_quota", True)
+                # Skip buckets this account doesn't actually have (e.g. premium on free).
+                if not has_quota and not ent:
+                    continue
+                label = name.replace("_", " ").title()
+                if label == "Premium Interactions":
+                    label = "Premium Models"
+                if snap.get("unlimited"):
+                    windows.append(shared.window(label, "monthly",
+                                                 remaining_percent=100.0, resets_at=reset_at))
+                    continue
+                pct = snap.get("percent_remaining")
+                rem = snap.get("remaining")
+                if rem is None:
+                    rem = snap.get("quota_remaining")
+                rp = float(pct) if pct is not None else (
+                    round(rem / ent * 100, 1) if (rem is not None and ent) else None)
+                used = round(ent - rem) if (ent is not None and rem is not None) else None
+                windows.append(shared.window(label, "monthly", remaining_percent=rp,
+                                             used=used, limit=ent, resets_at=reset_at))
+
+        if not windows:
+            return shared.result(self.key, self.name, "error", plan=plan,
+                                 detail="Copilot live usage returned no quota snapshots")
+        return shared.result(self.key, self.name, "ok", plan=plan, source="live",
+                             windows=windows)
+
+
 def fetch_copilot():
-    token, _account = _copilot_token()
-    if not token:
-        return shared.result("copilot", "GitHub Copilot", "error",
-                             detail="No GitHub/Copilot token found")
-
-    headers = {
-        "Authorization": f"token {token}",
-        "User-Agent": "GithubCopilot/1.250.0",
-        "Editor-Version": "vscode/1.99.0",
-        "Editor-Plugin-Version": "copilot/1.250.0",
-        "Accept": "application/json",
-    }
-    data = None
-    last_err_code = None
-    for url in ("https://api.github.com/copilot_internal/user",
-                "https://api.github.com/copilot_internal/v2/token"):
-        try:
-            data, _ = shared.http_get(url, headers=headers)
-            if isinstance(data, dict):
-                break
-        except urllib.error.HTTPError as e:
-            last_err_code = e.code
-            continue
-        except Exception:
-            continue
-
-    if not isinstance(data, dict):
-        if last_err_code == 401:
-            return shared.result("copilot", "GitHub Copilot", "error",
-                                 detail="Token expired/unauthorized — sign in using the GitHub or Copilot CLI")
-        return shared.result("copilot", "GitHub Copilot", "error",
-                             detail="Copilot live usage endpoint unreachable")
-
-    plan = data.get("copilot_plan") or shared.deep_find(data, {"plan"})
-    reset_at = (shared.to_epoch(data.get("quota_reset_date_utc"))
-                or shared.to_epoch(data.get("quota_reset_date"))
-                or shared.to_epoch(shared.deep_find(data, {"limited_user_reset_date", "reset_date"}))
-                or shared.next_month_first_utc())
-
-    windows = []
-    snaps = data.get("quota_snapshots")
-    if isinstance(snaps, dict):
-        for name, snap in snaps.items():
-            if not isinstance(snap, dict):
-                continue
-            ent = snap.get("entitlement")
-            has_quota = snap.get("has_quota", True)
-            # Skip buckets this account doesn't actually have (e.g. premium on free).
-            if not has_quota and not ent:
-                continue
-            label = name.replace("_", " ").title()
-            if label == "Premium Interactions":
-                label = "Premium Models"
-            if snap.get("unlimited"):
-                windows.append(shared.window(label, "monthly",
-                                             remaining_percent=100.0, resets_at=reset_at))
-                continue
-            pct = snap.get("percent_remaining")
-            rem = snap.get("remaining")
-            if rem is None:
-                rem = snap.get("quota_remaining")
-            rp = float(pct) if pct is not None else (
-                round(rem / ent * 100, 1) if (rem is not None and ent) else None)
-            used = round(ent - rem) if (ent is not None and rem is not None) else None
-            windows.append(shared.window(label, "monthly", remaining_percent=rp,
-                                         used=used, limit=ent, resets_at=reset_at))
-
-    if not windows:
-        return shared.result("copilot", "GitHub Copilot", "error", plan=plan,
-                             detail="Copilot live usage returned no quota snapshots")
-    return shared.result("copilot", "GitHub Copilot", "ok", plan=plan, source="live",
-                         windows=windows)
+    return CopilotProvider().fetch()

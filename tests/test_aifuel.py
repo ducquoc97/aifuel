@@ -17,7 +17,19 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from aifuel import shared
-from aifuel.providers import antigravity, claude, codex, copilot, gemini
+from aifuel.providers import (
+    BaseProvider,
+    ClaudeProvider,
+    CodexProvider,
+    CopilotProvider,
+    GeminiProvider,
+    AntigravityProvider,
+    antigravity,
+    claude,
+    codex,
+    copilot,
+    gemini,
+)
 
 
 SPEC = importlib.util.spec_from_file_location("aifuel_cli", SRC / "aifuel.py")
@@ -721,6 +733,25 @@ class CLITests(TestCase):
             aifuel_cli.main()
 
         timer_cls.assert_not_called()
+
+
+class ProviderClassTests(TestCase):
+    def test_base_provider_abstract(self):
+        with self.assertRaises(TypeError):
+            BaseProvider()  # Can't instantiate ABC with abstract methods
+
+    def test_provider_classes_key_and_name(self):
+        providers = [
+            (ClaudeProvider(), "claude", "Claude Code"),
+            (CodexProvider(), "codex", "Codex CLI"),
+            (CopilotProvider(), "copilot", "GitHub Copilot"),
+            (GeminiProvider(), "gemini", "Gemini CLI"),
+            (AntigravityProvider(), "antigravity", "Antigravity CLI"),
+        ]
+        for p, expected_key, expected_name in providers:
+            self.assertIsInstance(p, BaseProvider)
+            self.assertEqual(p.key, expected_key)
+            self.assertEqual(p.name, expected_name)
 
 
 if __name__ == "__main__":

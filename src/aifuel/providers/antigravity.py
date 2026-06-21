@@ -5,9 +5,11 @@ import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from .. import shared
 from . import gemini
+from .base import BaseProvider
 
 
 def _antigravity_token(path):
@@ -126,73 +128,86 @@ def _antigravity_app_token():
     return None
 
 
+class AntigravityProvider(BaseProvider):
+    @property
+    def key(self) -> str:
+        return "antigravity"
+
+    @property
+    def name(self) -> str:
+        return "Antigravity CLI"
+
+    def fetch(self) -> dict[str, Any]:
+        base = os.path.join(shared.HOME, ".gemini")
+        dirs = [os.path.join(base, "antigravity"), os.path.join(base, "antigravity-cli")]
+        keychain_creds, keychain_token, keychain_expired = _antigravity_keychain_creds()
+        desktop_token = _antigravity_app_token()
+        present = (any(os.path.isdir(d) for d in dirs)
+                   or keychain_creds is not None
+                   or desktop_token is not None)
+        if not present:
+            return shared.result(self.key, self.name, "error",
+                                 detail="No ~/.gemini/antigravity* directory")
+
+        tok_path = os.path.join(base, "antigravity-cli", "antigravity-oauth-token")
+        creds, token, expired = _antigravity_token(tok_path)
+
+        refreshed = False
+        if creds and (expired or not token):
+            new_token = _refresh_antigravity_token(creds, tok_path)
+            if new_token:
+                token, expired, refreshed = new_token, False, True
+
+        plan_names = {"antigravity": "Antigravity Starter Quota"}
+
+        live_detail = None
+        plan = None
+        project = _antigravity_project()
+        if keychain_creds and (keychain_expired or not keychain_token):
+            new_token = _refresh_antigravity_token(keychain_creds, _write_antigravity_keychain_creds)
+            if new_token:
+                keychain_token, keychain_expired = new_token, False
+
+        tokens_to_try = []
+        if token and not expired:
+            tokens_to_try.append(("file", token, creds, lambda: _refresh_antigravity_token(creds, tok_path)))
+        if keychain_token and not keychain_expired and keychain_token != token:
+            tokens_to_try.append((
+                "keychain",
+                keychain_token,
+                keychain_creds,
+                lambda: _refresh_antigravity_token(
+                    keychain_creds, _write_antigravity_keychain_creds),
+            ))
+        if desktop_token and desktop_token != token:
+            tokens_to_try.append(("desktop", desktop_token, None, None))
+        for source_name, auth_token, source_creds, refresh in tokens_to_try:
+            status, plan, windows, live_detail = gemini._codeassist_quota(
+                auth_token, project, "antigravity/usage-monitor")
+            plan = plan_names.get((plan or "").lower(), plan)
+            if (status != "live" and live_detail and "OAuth token expired" in live_detail
+                    and refresh
+                    and ((source_name != "file") or (not refreshed and source_creds))):
+                new_token = refresh()
+                if new_token and new_token != token:
+                    if source_name == "file":
+                        refreshed = True
+                    status, plan, windows, live_detail = gemini._codeassist_quota(
+                        new_token, project, "antigravity/usage-monitor")
+                    plan = plan_names.get((plan or "").lower(), plan)
+            if status == "live":
+                return shared.result(self.key, self.name, "ok", plan=plan,
+                                     source="live",
+                                     windows=gemini._rank_models(windows))
+
+        if token and expired:
+            detail = "OAuth token expired and auto-refresh failed — run antigravity once"
+        elif live_detail:
+            detail = live_detail
+        else:
+            detail = "Antigravity live usage unavailable"
+        return shared.result(self.key, self.name, "error", plan=plan, detail=detail)
+
+
 def fetch_antigravity():
-    base = os.path.join(shared.HOME, ".gemini")
-    dirs = [os.path.join(base, "antigravity"), os.path.join(base, "antigravity-cli")]
-    keychain_creds, keychain_token, keychain_expired = _antigravity_keychain_creds()
-    desktop_token = _antigravity_app_token()
-    present = (any(os.path.isdir(d) for d in dirs)
-               or keychain_creds is not None
-               or desktop_token is not None)
-    if not present:
-        return shared.result("antigravity", "Antigravity CLI", "error",
-                             detail="No ~/.gemini/antigravity* directory")
-
-    tok_path = os.path.join(base, "antigravity-cli", "antigravity-oauth-token")
-    creds, token, expired = _antigravity_token(tok_path)
-
-    refreshed = False
-    if creds and (expired or not token):
-        new_token = _refresh_antigravity_token(creds, tok_path)
-        if new_token:
-            token, expired, refreshed = new_token, False, True
-
-    plan_names = {"antigravity": "Antigravity Starter Quota"}
-
-    live_detail = None
-    plan = None
-    project = _antigravity_project()
-    if keychain_creds and (keychain_expired or not keychain_token):
-        new_token = _refresh_antigravity_token(keychain_creds, _write_antigravity_keychain_creds)
-        if new_token:
-            keychain_token, keychain_expired = new_token, False
-
-    tokens_to_try = []
-    if token and not expired:
-        tokens_to_try.append(("file", token, creds, lambda: _refresh_antigravity_token(creds, tok_path)))
-    if keychain_token and not keychain_expired and keychain_token != token:
-        tokens_to_try.append((
-            "keychain",
-            keychain_token,
-            keychain_creds,
-            lambda: _refresh_antigravity_token(
-                keychain_creds, _write_antigravity_keychain_creds),
-        ))
-    if desktop_token and desktop_token != token:
-        tokens_to_try.append(("desktop", desktop_token, None, None))
-    for source_name, auth_token, source_creds, refresh in tokens_to_try:
-        status, plan, windows, live_detail = gemini._codeassist_quota(
-            auth_token, project, "antigravity/usage-monitor")
-        plan = plan_names.get((plan or "").lower(), plan)
-        if (status != "live" and live_detail and "OAuth token expired" in live_detail
-                and refresh
-                and ((source_name != "file") or (not refreshed and source_creds))):
-            new_token = refresh()
-            if new_token and new_token != token:
-                if source_name == "file":
-                    refreshed = True
-                status, plan, windows, live_detail = gemini._codeassist_quota(
-                    new_token, project, "antigravity/usage-monitor")
-                plan = plan_names.get((plan or "").lower(), plan)
-        if status == "live":
-            return shared.result("antigravity", "Antigravity CLI", "ok", plan=plan,
-                                 source="live",
-                                 windows=gemini._rank_models(windows))
-
-    if token and expired:
-        detail = "OAuth token expired and auto-refresh failed — run antigravity once"
-    elif live_detail:
-        detail = live_detail
-    else:
-        detail = "Antigravity live usage unavailable"
-    return shared.result("antigravity", "Antigravity CLI", "error", plan=plan, detail=detail)
+    return AntigravityProvider().fetch()

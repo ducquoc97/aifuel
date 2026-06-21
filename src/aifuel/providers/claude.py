@@ -5,8 +5,10 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 from .. import shared
+from .base import BaseProvider
 
 
 _CLAUDE_RATE_LIMIT_CLAIMS = {
@@ -73,103 +75,116 @@ def _refresh_claude_token(creds, path):
     return access
 
 
-def fetch_claude():
-    cred_path = os.path.join(shared.HOME, ".claude", ".credentials.json")
-    if not os.path.exists(cred_path):
-        return shared.result("claude", "Claude Code", "error",
-                             detail="No ~/.claude/.credentials.json")
-    try:
-        creds = shared.read_json(cred_path)
-    except Exception as e:
-        return shared.result("claude", "Claude Code", "error", detail=f"creds unreadable: {e}")
+class ClaudeProvider(BaseProvider):
+    @property
+    def key(self) -> str:
+        return "claude"
 
-    token = shared.deep_find(creds, {"accessToken", "access_token"})
-    expiry = shared.to_epoch(shared.deep_find(creds, {"expiresAt", "expires_at", "expiry_date"}))
-    refreshed = False
-    if expiry is not None and expiry <= shared.now_ts() + 60:
-        new_token = _refresh_claude_token(creds, cred_path)
-        if new_token:
-            token, refreshed = new_token, True
-    if not token:
-        return shared.result("claude", "Claude Code", "error",
-                             detail="No access token in credentials")
+    @property
+    def name(self) -> str:
+        return "Claude Code"
 
-    def usage_headers(access_token):
-        return {
-            "Authorization": f"Bearer {access_token}",
-            "anthropic-beta": "oauth-2025-04-20",
-            "anthropic-version": "2023-06-01",
-            "User-Agent": "claude-cli/usage-monitor (external)",
-            "Accept": "application/json",
-        }
+    def fetch(self) -> dict[str, Any]:
+        cred_path = os.path.join(shared.HOME, ".claude", ".credentials.json")
+        if not os.path.exists(cred_path):
+            return shared.result(self.key, self.name, "error",
+                                 detail=f"No ~/.claude/.credentials.json")
+        try:
+            creds = shared.read_json(cred_path)
+        except Exception as e:
+            return shared.result(self.key, self.name, "error", detail=f"creds unreadable: {e}")
 
-    try:
-        data, _ = shared.http_get(
-            "https://api.anthropic.com/api/oauth/usage",
-            headers=usage_headers(token),
-        )
-    except urllib.error.HTTPError as e:
-        if e.code == 401 and not refreshed:
+        token = shared.deep_find(creds, {"accessToken", "access_token"})
+        expiry = shared.to_epoch(shared.deep_find(creds, {"expiresAt", "expires_at", "expiry_date"}))
+        refreshed = False
+        if expiry is not None and expiry <= shared.now_ts() + 60:
             new_token = _refresh_claude_token(creds, cred_path)
-            if new_token and new_token != token:
+            if new_token:
                 token, refreshed = new_token, True
-                try:
-                    data, _ = shared.http_get(
-                        "https://api.anthropic.com/api/oauth/usage",
-                        headers=usage_headers(token),
-                    )
-                except urllib.error.HTTPError as retry:
-                    if retry.code == 401:
-                        return shared.result("claude", "Claude Code", "error",
-                                             detail="OAuth token expired and auto-refresh failed")
-                    hint = " (429 = polled too fast; wait a few min)" if retry.code == 429 else ""
-                    return shared.result("claude", "Claude Code", "error",
-                                         detail=f"HTTP {retry.code}{hint}")
-                except Exception as retry:
-                    return shared.result("claude", "Claude Code", "error", detail=str(retry))
+        if not token:
+            return shared.result(self.key, self.name, "error",
+                                 detail="No access token in credentials")
+
+        def usage_headers(access_token):
+            return {
+                "Authorization": f"Bearer {access_token}",
+                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-version": "2023-06-01",
+                "User-Agent": "claude-cli/usage-monitor (external)",
+                "Accept": "application/json",
+            }
+
+        try:
+            data, _ = shared.http_get(
+                "https://api.anthropic.com/api/oauth/usage",
+                headers=usage_headers(token),
+            )
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and not refreshed:
+                new_token = _refresh_claude_token(creds, cred_path)
+                if new_token and new_token != token:
+                    token, refreshed = new_token, True
+                    try:
+                        data, _ = shared.http_get(
+                            "https://api.anthropic.com/api/oauth/usage",
+                            headers=usage_headers(token),
+                        )
+                    except urllib.error.HTTPError as retry:
+                        if retry.code == 401:
+                            return shared.result(self.key, self.name, "error",
+                                                 detail="OAuth token expired and auto-refresh failed")
+                        hint = " (429 = polled too fast; wait a few min)" if retry.code == 429 else ""
+                        return shared.result(self.key, self.name, "error",
+                                             detail=f"HTTP {retry.code}{hint}")
+                    except Exception as retry:
+                        return shared.result(self.key, self.name, "error", detail=str(retry))
+                else:
+                    return shared.result(self.key, self.name, "error",
+                                         detail="OAuth token expired and auto-refresh failed")
             else:
-                return shared.result("claude", "Claude Code", "error",
-                                     detail="OAuth token expired and auto-refresh failed")
-        else:
-            if e.code == 401:
-                return shared.result("claude", "Claude Code", "error",
-                                     detail="OAuth token expired and auto-refresh failed")
-            hint = " (429 = polled too fast; wait a few min)" if e.code == 429 else ""
-            return shared.result("claude", "Claude Code", "error", detail=f"HTTP {e.code}{hint}")
-    except Exception as e:
-        return shared.result("claude", "Claude Code", "error", detail=str(e))
+                if e.code == 401:
+                    return shared.result(self.key, self.name, "error",
+                                         detail="OAuth token expired and auto-refresh failed")
+                hint = " (429 = polled too fast; wait a few min)" if e.code == 429 else ""
+                return shared.result(self.key, self.name, "error", detail=f"HTTP {e.code}{hint}")
+        except Exception as e:
+            return shared.result(self.key, self.name, "error", detail=str(e))
 
-    if not isinstance(data, dict):
-        return shared.result("claude", "Claude Code", "error", detail="unexpected response")
+        if not isinstance(data, dict):
+            return shared.result(self.key, self.name, "error", detail="unexpected response")
 
-    windows = []
-    for k, v in data.items():
-        if not isinstance(v, dict):
-            continue
-        claim = k.lower()
-        if claim not in _CLAUDE_RATE_LIMIT_CLAIMS:
-            continue
-        used = shared.percent_value(v.get("used_percentage"))
-        if used is None:
-            used = shared.percent_value(v.get("used_percent"))
-        if used is None:
-            used = shared.percent_value(v.get("utilization"))
-        remaining = shared.percent_value(v.get("remaining_percentage"))
-        if remaining is None:
-            remaining = shared.percent_value(v.get("remaining_percent"))
-        if remaining is None:
-            remaining = shared.percent_value(v.get("remaining"))
-        resets = (v.get("resets_at") or v.get("resetsAt") or v.get("reset_at")
-                  or v.get("resetAt") or v.get("resets"))
-        if used is None and remaining is None and resets is None:
-            continue
-        label, period = _CLAUDE_RATE_LIMIT_CLAIMS[claim]
-        windows.append(shared.window(label, period, used_percent=used,
-                                     remaining_percent=remaining, resets_at=resets))
+        windows = []
+        for k, v in data.items():
+            if not isinstance(v, dict):
+                continue
+            claim = k.lower()
+            if claim not in _CLAUDE_RATE_LIMIT_CLAIMS:
+                continue
+            used = shared.percent_value(v.get("used_percentage"))
+            if used is None:
+                used = shared.percent_value(v.get("used_percent"))
+            if used is None:
+                used = shared.percent_value(v.get("utilization"))
+            remaining = shared.percent_value(v.get("remaining_percentage"))
+            if remaining is None:
+                remaining = shared.percent_value(v.get("remaining_percent"))
+            if remaining is None:
+                remaining = shared.percent_value(v.get("remaining"))
+            resets = (v.get("resets_at") or v.get("resetsAt") or v.get("reset_at")
+                      or v.get("resetAt") or v.get("resets"))
+            if used is None and remaining is None and resets is None:
+                continue
+            label, period = _CLAUDE_RATE_LIMIT_CLAIMS[claim]
+            windows.append(shared.window(label, period, used_percent=used,
+                                         remaining_percent=remaining, resets_at=resets))
 
-    plan = (shared.deep_find(data, {"plan", "subscription", "tier", "subscriptionType", "subscription_type"})
-            or shared.deep_find(creds, {"subscriptionType", "subscription_type"}))
-    if not windows:
-        return shared.result("claude", "Claude Code", "error", plan=plan,
-                             detail="connected but no usage windows in response")
-    return shared.result("claude", "Claude Code", "ok", plan=plan, source="live", windows=windows)
+        plan = (shared.deep_find(data, {"plan", "subscription", "tier", "subscriptionType", "subscription_type"})
+                or shared.deep_find(creds, {"subscriptionType", "subscription_type"}))
+        if not windows:
+            return shared.result(self.key, self.name, "error", plan=plan,
+                                 detail="connected but no usage windows in response")
+        return shared.result(self.key, self.name, "ok", plan=plan, source="live", windows=windows)
+
+
+def fetch_claude():
+    return ClaudeProvider().fetch()
