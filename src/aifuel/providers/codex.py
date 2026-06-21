@@ -76,6 +76,9 @@ def fetch_codex():
         return shared.result("codex", "Codex CLI", "error",
                              detail="Codex live usage endpoint returned no rate_limit windows")
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return shared.result("codex", "Codex CLI", "error",
+                                 detail="Token expired — run the Codex CLI once to refresh")
         return shared.result("codex", "Codex CLI", "error",
                              detail=f"Codex live usage request failed with HTTP {e.code}")
     except Exception as e:

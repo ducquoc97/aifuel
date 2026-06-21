@@ -119,6 +119,9 @@ def fetch_claude():
                         headers=usage_headers(token),
                     )
                 except urllib.error.HTTPError as retry:
+                    if retry.code == 401:
+                        return shared.result("claude", "Claude Code", "error",
+                                             detail="OAuth token expired and auto-refresh failed")
                     hint = " (429 = polled too fast; wait a few min)" if retry.code == 429 else ""
                     return shared.result("claude", "Claude Code", "error",
                                          detail=f"HTTP {retry.code}{hint}")
@@ -128,6 +131,9 @@ def fetch_claude():
                 return shared.result("claude", "Claude Code", "error",
                                      detail="OAuth token expired and auto-refresh failed")
         else:
+            if e.code == 401:
+                return shared.result("claude", "Claude Code", "error",
+                                     detail="OAuth token expired and auto-refresh failed")
             hint = " (429 = polled too fast; wait a few min)" if e.code == 429 else ""
             return shared.result("claude", "Claude Code", "error", detail=f"HTTP {e.code}{hint}")
     except Exception as e:

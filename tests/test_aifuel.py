@@ -281,6 +281,51 @@ class ClaudeRefreshTests(TestCase):
         self.assertIsNone(res["source"])
         self.assertIn("no usage windows", res["detail"])
 
+    def test_fetch_claude_errors_on_http_failure_scenarios(self):
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": "old-access",
+                "refreshToken": "old-refresh",
+                "expiresAt": 9_999_999_999_999,
+                "subscriptionType": "team",
+            }
+        }
+        err_401 = urllib.error.HTTPError(
+            "https://api.anthropic.com/api/oauth/usage", 401, "Unauthorized", hdrs=None, fp=io.BytesIO(b"{}"),
+        )
+        err_500 = urllib.error.HTTPError(
+            "https://api.anthropic.com/api/oauth/usage", 500, "Internal Server Error", hdrs=None, fp=io.BytesIO(b"{}"),
+        )
+
+        # 1. 401 initially and refresh fails (returns None) -> expect friendly error
+        with mock.patch.object(claude.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=creds), \
+             mock.patch.object(shared, "now_ts", return_value=100), \
+             mock.patch.object(claude, "_refresh_claude_token", return_value=None), \
+             mock.patch.object(shared, "http_get", side_effect=err_401):
+            res = claude.fetch_claude()
+        self.assertEqual(res["status"], "error")
+        self.assertEqual(res["detail"], "OAuth token expired and auto-refresh failed")
+
+        # 2. 401 initially, refresh succeeds, but new token still returns 401 -> expect friendly error
+        with mock.patch.object(claude.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=creds), \
+             mock.patch.object(shared, "now_ts", return_value=100), \
+             mock.patch.object(claude, "_refresh_claude_token", return_value="new-access"), \
+             mock.patch.object(shared, "http_get", side_effect=[err_401, err_401]):
+            res = claude.fetch_claude()
+        self.assertEqual(res["status"], "error")
+        self.assertEqual(res["detail"], "OAuth token expired and auto-refresh failed")
+
+        # 3. 500 initially -> expect standard HTTP 500 error
+        with mock.patch.object(claude.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=creds), \
+             mock.patch.object(shared, "now_ts", return_value=100), \
+             mock.patch.object(shared, "http_get", side_effect=err_500):
+            res = claude.fetch_claude()
+        self.assertEqual(res["status"], "error")
+        self.assertIn("HTTP 500", res["detail"])
+
 
 class CodexFetchTests(TestCase):
     def test_fetch_codex_returns_live_usage(self):
@@ -350,7 +395,19 @@ class CodexFetchTests(TestCase):
 
         self.assertEqual(res["status"], "error")
         self.assertIsNone(res["source"])
-        self.assertIn("HTTP 401", res["detail"])
+        self.assertIn("Token expired — run the Codex CLI once to refresh", res["detail"])
+
+        err_500 = urllib.error.HTTPError(
+            shared.CODEX_USAGE_URL, 500, "Internal Server Error", hdrs=None, fp=io.BytesIO(b"{}"),
+        )
+        with mock.patch.object(codex.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=auth), \
+             mock.patch.object(shared, "http_get", side_effect=err_500):
+            res = codex.fetch_codex()
+
+        self.assertEqual(res["status"], "error")
+        self.assertIsNone(res["source"])
+        self.assertIn("HTTP 500", res["detail"])
 
 
 class CopilotFetchTests(TestCase):
@@ -362,6 +419,18 @@ class CopilotFetchTests(TestCase):
         self.assertEqual(res["status"], "error")
         self.assertIsNone(res["source"])
         self.assertIn("live usage endpoint unreachable", res["detail"])
+
+    def test_fetch_copilot_errors_when_unauthorized(self):
+        err = urllib.error.HTTPError(
+            "https://api.github.com/copilot_internal/user", 401, "Unauthorized", hdrs=None, fp=io.BytesIO(b"{}"),
+        )
+        with mock.patch.object(copilot, "_copilot_token", return_value=("token", None)), \
+             mock.patch.object(shared, "http_get", side_effect=err):
+            res = copilot.fetch_copilot()
+
+        self.assertEqual(res["status"], "error")
+        self.assertIsNone(res["source"])
+        self.assertIn("Token expired/unauthorized — sign in using the GitHub or Copilot CLI", res["detail"])
 
 
 class GeminiFetchTests(TestCase):

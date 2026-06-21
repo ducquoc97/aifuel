@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 
 from .. import shared
 
@@ -61,16 +62,23 @@ def fetch_copilot():
         "Accept": "application/json",
     }
     data = None
+    last_err_code = None
     for url in ("https://api.github.com/copilot_internal/user",
                 "https://api.github.com/copilot_internal/v2/token"):
         try:
             data, _ = shared.http_get(url, headers=headers)
             if isinstance(data, dict):
                 break
+        except urllib.error.HTTPError as e:
+            last_err_code = e.code
+            continue
         except Exception:
             continue
 
     if not isinstance(data, dict):
+        if last_err_code == 401:
+            return shared.result("copilot", "GitHub Copilot", "error",
+                                 detail="Token expired/unauthorized — sign in using the GitHub or Copilot CLI")
         return shared.result("copilot", "GitHub Copilot", "error",
                              detail="Copilot live usage endpoint unreachable")
 
