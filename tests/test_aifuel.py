@@ -42,6 +42,35 @@ class QuotaWindowTests(TestCase):
         self.assertEqual(inferred["period"], "5h")
         self.assertEqual(daily["period"], "daily")
 
+    def test_gemini_model_id_mapping(self):
+        quota = {
+            "buckets": [
+                {
+                    "modelId": "gemini-3-flash",
+                    "remainingFraction": 0.8,
+                    "resetTime": 1000,
+                },
+                {
+                    "modelId": "gemini-3.1-pro-preview-customtools",
+                    "remainingFraction": 0.5,
+                    "resetTime": 1000,
+                },
+                {
+                    "modelId": "gemini-2.5-pro",
+                    "remainingFraction": 0.9,
+                    "resetTime": 1000,
+                }
+            ]
+        }
+
+        with mock.patch.object(shared, "now_ts", return_value=100):
+            windows = gemini._quota_windows(quota)
+
+        self.assertEqual(len(windows), 3)
+        self.assertEqual(windows[0]["label"], "gemini-3.5-flash")
+        self.assertEqual(windows[1]["label"], "gemini-3.1-pro-preview")
+        self.assertEqual(windows[2]["label"], "gemini-2.5-pro")
+
 
 class TLSFallbackTests(TestCase):
     def tearDown(self):

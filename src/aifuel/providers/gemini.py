@@ -78,6 +78,12 @@ def _onboard_project(token, tier_id, ua):
 # keeps the dashboard in sync with the CLI's "Gemini" / "Claude & GPT" groups.
 _HIDDEN_MODEL_RE = re.compile(r"^tab_|^chat_\d+$")
 
+# Model ID translations from CCPA/Code Assist names to canonical Gemini CLI display names.
+_MODEL_MAPPING = {
+    "gemini-3-flash": "gemini-3.5-flash",
+    "gemini-3.1-pro-preview-customtools": "gemini-3.1-pro-preview",
+}
+
 
 def _quota_windows(quota, period_override=None):
     """Map retrieveUserQuota buckets -> per-model windows (the CLI /model bars)."""
@@ -87,6 +93,8 @@ def _quota_windows(quota, period_override=None):
             continue
         if _HIDDEN_MODEL_RE.match(bucket["modelId"]):
             continue
+        model_id = bucket["modelId"]
+        display_id = _MODEL_MAPPING.get(model_id, model_id)
         frac = bucket.get("remainingFraction")
         amount = bucket.get("remainingAmount")
         resets = bucket.get("resetTime")
@@ -101,12 +109,12 @@ def _quota_windows(quota, period_override=None):
                 else ("daily", "Daily")
             )
         if frac is not None:
-            windows.append(shared.window(bucket["modelId"], period,
+            windows.append(shared.window(display_id, period,
                                          remaining_percent=round(float(frac) * 100, 1),
                                          resets_at=resets))
         elif amount is not None:
             # No total exposed -> show remaining count without a percentage bar.
-            windows.append(shared.window(bucket["modelId"], period,
+            windows.append(shared.window(display_id, period,
                                          used=None, limit=None, resets_at=resets))
     return windows
 
