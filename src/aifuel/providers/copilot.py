@@ -59,7 +59,11 @@ class CopilotProvider(BaseProvider):
     def name(self) -> str:
         return "GitHub Copilot"
 
-    def fetch(self) -> dict[str, Any]:
+    @property
+    def cache_ttl_seconds(self) -> int:
+        return 120
+
+    def retrieve_quota(self) -> dict[str, Any]:
         token, _account = _copilot_token()
         if not token:
             return shared.result(self.key, self.name, "error",
@@ -135,4 +139,4 @@ class CopilotProvider(BaseProvider):
 
 
 def fetch_copilot():
-    return CopilotProvider().fetch()
+    return CopilotProvider().retrieve_quota()

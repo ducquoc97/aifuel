@@ -19,7 +19,13 @@ class BaseProvider(ABC):
         """The human-readable display name of the provider."""
         pass
 
+    @property
     @abstractmethod
-    def fetch(self) -> dict[str, Any]:
-        """Fetch the live usage or return an error result."""
+    def cache_ttl_seconds(self) -> int:
+        """The default caching TTL in seconds for the provider."""
+        pass
+
+    @abstractmethod
+    def retrieve_quota(self) -> dict[str, Any]:
+        """Retrieve the live usage/quota or return an error result."""
         pass

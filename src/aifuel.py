@@ -40,23 +40,14 @@ if THIS_DIR not in sys.path:
     sys.path.insert(0, THIS_DIR)
 
 from aifuel import shared
-from aifuel.providers import (
-    fetch_antigravity,
-    fetch_claude,
-    fetch_codex,
-    fetch_copilot,
-    fetch_gemini,
-)
+from aifuel.providers import ACTIVE_PROVIDERS
 
 
 HTML_PATH = os.path.join(THIS_DIR, "index.html")
 
 PROVIDERS = [
-    ("claude", fetch_claude, 180),       # claude oauth/usage 429s if polled fast
-    ("codex", fetch_codex, 30),
-    ("copilot", fetch_copilot, 120),
-    ("gemini", fetch_gemini, 120),
-    ("antigravity", fetch_antigravity, 60),
+    (p.key, p.retrieve_quota, p.cache_ttl_seconds)
+    for p in ACTIVE_PROVIDERS
 ]
 
 _PERIOD_RANK = {"monthly": 0, "weekly": 1, "daily": 2, "5h": 3, "unknown": 4}

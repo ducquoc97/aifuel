@@ -31,7 +31,11 @@ class CodexProvider(BaseProvider):
     def name(self) -> str:
         return "Codex CLI"
 
-    def fetch(self) -> dict[str, Any]:
+    @property
+    def cache_ttl_seconds(self) -> int:
+        return 30
+
+    def retrieve_quota(self) -> dict[str, Any]:
         """Live: ChatGPT backend usage endpoint (same data the Codex TUI refreshes)."""
         auth_path = os.path.join(shared.HOME, ".codex", "auth.json")
         token = account = None
@@ -98,4 +102,4 @@ class CodexProvider(BaseProvider):
 
 
 def fetch_codex():
-    return CodexProvider().fetch()
+    return CodexProvider().retrieve_quota()

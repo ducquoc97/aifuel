@@ -226,7 +226,11 @@ class GeminiProvider(BaseProvider):
     def name(self) -> str:
         return "Gemini CLI"
 
-    def fetch(self) -> dict[str, Any]:
+    @property
+    def cache_ttl_seconds(self) -> int:
+        return 120
+
+    def retrieve_quota(self) -> dict[str, Any]:
         """Live: loadCodeAssist (tier + project) -> retrieveUserQuota (per-model bars)."""
         cred = os.path.join(shared.HOME, ".gemini", "oauth_creds.json")
         if not os.path.exists(cred):
@@ -270,4 +274,4 @@ class GeminiProvider(BaseProvider):
 
 
 def fetch_gemini():
-    return GeminiProvider().fetch()
+    return GeminiProvider().retrieve_quota()

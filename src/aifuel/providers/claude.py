@@ -84,7 +84,11 @@ class ClaudeProvider(BaseProvider):
     def name(self) -> str:
         return "Claude Code"
 
-    def fetch(self) -> dict[str, Any]:
+    @property
+    def cache_ttl_seconds(self) -> int:
+        return 180  # claude oauth/usage 429s if polled fast
+
+    def retrieve_quota(self) -> dict[str, Any]:
         cred_path = os.path.join(shared.HOME, ".claude", ".credentials.json")
         if not os.path.exists(cred_path):
             return shared.result(self.key, self.name, "error",
@@ -187,4 +191,4 @@ class ClaudeProvider(BaseProvider):
 
 
 def fetch_claude():
-    return ClaudeProvider().fetch()
+    return ClaudeProvider().retrieve_quota()

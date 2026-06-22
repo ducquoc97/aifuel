@@ -137,7 +137,11 @@ class AntigravityProvider(BaseProvider):
     def name(self) -> str:
         return "Antigravity CLI"
 
-    def fetch(self) -> dict[str, Any]:
+    @property
+    def cache_ttl_seconds(self) -> int:
+        return 60
+
+    def retrieve_quota(self) -> dict[str, Any]:
         base = os.path.join(shared.HOME, ".gemini")
         dirs = [os.path.join(base, "antigravity"), os.path.join(base, "antigravity-cli")]
         keychain_creds, keychain_token, keychain_expired = _antigravity_keychain_creds()
@@ -210,4 +214,4 @@ class AntigravityProvider(BaseProvider):
 
 
 def fetch_antigravity():
-    return AntigravityProvider().fetch()
+    return AntigravityProvider().retrieve_quota()

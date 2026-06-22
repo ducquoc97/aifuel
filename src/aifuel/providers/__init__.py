@@ -1,10 +1,18 @@
 from .base import BaseProvider
-from .claude import ClaudeProvider, fetch_claude
-from .codex import CodexProvider, fetch_codex
-from .copilot import CopilotProvider, fetch_copilot
-from .gemini import GeminiProvider, fetch_gemini
-from .antigravity import AntigravityProvider, fetch_antigravity
+from .claude import ClaudeProvider
+from .codex import CodexProvider
+from .copilot import CopilotProvider
+from .gemini import GeminiProvider
+from .antigravity import AntigravityProvider
 
+# Instantiate all active providers explicitly
+ACTIVE_PROVIDERS = [
+    ClaudeProvider(),
+    CodexProvider(),
+    CopilotProvider(),
+    GeminiProvider(),
+    AntigravityProvider(),
+]
 
 __all__ = [
     "BaseProvider",
@@ -13,9 +21,5 @@ __all__ = [
     "CopilotProvider",
     "GeminiProvider",
     "AntigravityProvider",
-    "fetch_antigravity",
-    "fetch_claude",
-    "fetch_codex",
-    "fetch_copilot",
-    "fetch_gemini",
+    "ACTIVE_PROVIDERS",
 ]

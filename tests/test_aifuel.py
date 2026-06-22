@@ -24,6 +24,7 @@ from aifuel.providers import (
     CopilotProvider,
     GeminiProvider,
     AntigravityProvider,
+    ACTIVE_PROVIDERS,
     antigravity,
     claude,
     codex,
@@ -742,16 +743,25 @@ class ProviderClassTests(TestCase):
 
     def test_provider_classes_key_and_name(self):
         providers = [
-            (ClaudeProvider(), "claude", "Claude Code"),
-            (CodexProvider(), "codex", "Codex CLI"),
-            (CopilotProvider(), "copilot", "GitHub Copilot"),
-            (GeminiProvider(), "gemini", "Gemini CLI"),
-            (AntigravityProvider(), "antigravity", "Antigravity CLI"),
+            (ClaudeProvider(), "claude", "Claude Code", 180),
+            (CodexProvider(), "codex", "Codex CLI", 30),
+            (CopilotProvider(), "copilot", "GitHub Copilot", 120),
+            (GeminiProvider(), "gemini", "Gemini CLI", 120),
+            (AntigravityProvider(), "antigravity", "Antigravity CLI", 60),
         ]
-        for p, expected_key, expected_name in providers:
+        for p, expected_key, expected_name, expected_ttl in providers:
             self.assertIsInstance(p, BaseProvider)
             self.assertEqual(p.key, expected_key)
             self.assertEqual(p.name, expected_name)
+            self.assertEqual(p.cache_ttl_seconds, expected_ttl)
+            self.assertTrue(hasattr(p, "retrieve_quota"))
+
+    def test_active_providers_registry(self):
+        self.assertEqual(len(ACTIVE_PROVIDERS), 5)
+        keys = [p.key for p in ACTIVE_PROVIDERS]
+        self.assertEqual(keys, ["claude", "codex", "copilot", "gemini", "antigravity"])
+        for p in ACTIVE_PROVIDERS:
+            self.assertIsInstance(p, BaseProvider)
 
 
 if __name__ == "__main__":
