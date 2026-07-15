@@ -350,6 +350,14 @@ class ProviderDiscoveryTests(TestCase):
         self.assertEqual(second["providers"], [])
         self.assertEqual(Provider.retrievals, 1)
 
+    def test_text_output_explains_empty_discovered_provider_set(self):
+        text = aifuel_cli.render_text({
+            "generated_at": 1_000,
+            "providers": [],
+        }, color=False)
+
+        self.assertIn("No provider-specific logins found.", text)
+
 
 class CLITests(TestCase):
     def test_dashboard_mode_opens_browser_by_default(self):

@@ -198,6 +198,9 @@ def render_text(data, color=True):
     out = [paint("bold", "aifuel")
            + paint("grey", f"   updated {updated} · ranked by soonest reset")]
 
+    if not providers:
+        out.extend(["", "   No provider-specific logins found."])
+
     for i, p in enumerate(providers, 1):
         src = "live" if p["source"] == "live" else None
         meta = " · ".join(x for x in (p.get("plan"), src, p["status"]) if x)

@@ -458,6 +458,29 @@
   .skel-line  { height: 12px; border-radius: 6px; margin-top: 14px }
   .skel-line.short { width: 55% }
 
+  .card.empty-state {
+    grid-column: 1 / -1;
+    min-height: 220px;
+    display: grid;
+    place-items: center;
+    text-align: center;
+  }
+  .empty-state-content { max-width: 360px }
+  .empty-state-icon {
+    width: 36px; height: 36px; margin: 0 auto var(--space-4);
+    color: var(--label-3);
+  }
+  .empty-state-title {
+    margin: 0 0 var(--space-2);
+    font-size: 17px; line-height: 1.294; font-weight: 600;
+    letter-spacing: -0.022em;
+  }
+  .empty-state-copy {
+    margin: 0;
+    color: var(--label-2);
+    font-size: 14px; line-height: 1.428;
+  }
+
   /* ---- Reduced motion ---- */
   @media (prefers-reduced-motion: reduce) {
     .card, .track-fill, .chev, .btn, .disclosure { transition: none }
@@ -738,6 +761,22 @@ function discoveryCard() {
   return card;
 }
 
+function emptyStateCard() {
+  const card = document.createElement("div");
+  card.className = "card empty-state";
+  card.setAttribute("role", "listitem");
+  card.innerHTML = `
+    <div class="empty-state-content" role="status">
+      <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M7 8.5h10M8.5 12h7M10 15.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <rect x="3.5" y="3.5" width="17" height="17" rx="5" stroke="currentColor" stroke-width="1.5"/>
+      </svg>
+      <h2 class="empty-state-title">No configured providers found</h2>
+      <p class="empty-state-copy">Sign in with an AI coding provider, then refresh this dashboard.</p>
+    </div>`;
+  return card;
+}
+
 // Render whatever has arrived so far: ranked real cards first, loading skeletons
 // for providers still in flight. Called on every stream message.
 function render() {
@@ -746,6 +785,11 @@ function render() {
 
   if (EXPECTED === null) {
     grid.appendChild(discoveryCard());
+    return;
+  }
+
+  if (EXPECTED.length === 0 && RECEIVED.size === 0) {
+    grid.appendChild(emptyStateCard());
     return;
   }
 
