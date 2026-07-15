@@ -419,7 +419,7 @@ class CopilotFetchTests(TestCase):
 
         self.assertEqual(res["status"], "error")
         self.assertIsNone(res["source"])
-        self.assertIn("Token expired/unauthorized — sign in using the Copilot CLI", res["detail"])
+        self.assertIn("Token expired/unauthorized: sign in using the Copilot CLI", res["detail"])
 
 
 if __name__ == "__main__":

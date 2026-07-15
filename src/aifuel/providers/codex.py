@@ -8,6 +8,10 @@ from .. import shared
 from .base import BaseProvider
 
 
+def _credential_path():
+    return os.path.join(shared.HOME, ".codex", "auth.json")
+
+
 def _codex_window(rl_window, label_prefix=None):
     """Build a window() from a ChatGPT `*_window` rate-limit object."""
     if not isinstance(rl_window, dict):
@@ -25,7 +29,7 @@ def _codex_window(rl_window, label_prefix=None):
 class CodexProvider(BaseProvider):
     @classmethod
     def is_discovered(cls) -> bool:
-        return os.path.exists(os.path.join(shared.HOME, ".codex", "auth.json"))
+        return shared.credential_source_exists(_credential_path())
 
     @property
     def key(self) -> str:
@@ -41,7 +45,7 @@ class CodexProvider(BaseProvider):
 
     def retrieve_quota(self) -> dict[str, Any]:
         """Live: ChatGPT backend usage endpoint (same data the Codex TUI refreshes)."""
-        auth_path = os.path.join(shared.HOME, ".codex", "auth.json")
+        auth_path = _credential_path()
         token = account = None
         if os.path.exists(auth_path):
             try:

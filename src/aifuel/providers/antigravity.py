@@ -136,13 +136,16 @@ class AntigravityProvider(BaseProvider):
             os.path.join(base, "antigravity"),
             os.path.join(base, "antigravity-cli"),
         )
-        if any(os.path.isdir(path) for path in provider_dirs):
+        if any(shared.credential_source_exists(path, directory=True)
+               for path in provider_dirs):
             return True
-        if any(os.path.exists(path) for path in _antigravity_app_state_dbs()):
+        if any(shared.credential_source_exists(path)
+               for path in _antigravity_app_state_dbs()):
             return True
         return shared.read_keychain_secret(
             shared.ANTIGRAVITY_KEYCHAIN_SERVICE,
             shared.ANTIGRAVITY_KEYCHAIN_ACCOUNT,
+            strict=True,
         ) is not None
 
     @property

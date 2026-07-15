@@ -17,6 +17,23 @@ from aifuel.providers import antigravity
 
 
 class AntigravityMacFallbackTests(TestCase):
+    def test_keychain_discovery_surfaces_operational_failure(self):
+        failure = shared.subprocess.CalledProcessError(1, ["security"])
+
+        with mock.patch.object(shared.sys, "platform", "darwin"), \
+             mock.patch.object(shared.subprocess, "check_output", side_effect=failure):
+            with self.assertRaisesRegex(OSError, "keychain lookup failed"):
+                shared.read_keychain_secret("gemini", "antigravity", strict=True)
+
+    def test_keychain_discovery_treats_missing_item_as_undiscovered(self):
+        missing = shared.subprocess.CalledProcessError(44, ["security"])
+
+        with mock.patch.object(shared.sys, "platform", "darwin"), \
+             mock.patch.object(shared.subprocess, "check_output", side_effect=missing):
+            secret = shared.read_keychain_secret("gemini", "antigravity", strict=True)
+
+        self.assertIsNone(secret)
+
     def test_fetch_antigravity_does_not_infer_period_from_reset_countdown(self):
         reset_at = 2_000_000
         load_code_assist = {

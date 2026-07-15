@@ -237,10 +237,14 @@ def _refresh_gemini_token(creds, path):
     return access
 
 
+def _credential_path():
+    return os.path.join(shared.HOME, ".gemini", "oauth_creds.json")
+
+
 class GeminiProvider(BaseProvider):
     @classmethod
     def is_discovered(cls) -> bool:
-        return os.path.exists(os.path.join(shared.HOME, ".gemini", "oauth_creds.json"))
+        return shared.credential_source_exists(_credential_path())
 
     @property
     def key(self) -> str:
@@ -256,7 +260,7 @@ class GeminiProvider(BaseProvider):
 
     def retrieve_quota(self) -> dict[str, Any]:
         """Live: loadCodeAssist (tier + project) -> retrieveUserQuota (per-model bars)."""
-        cred = os.path.join(shared.HOME, ".gemini", "oauth_creds.json")
+        cred = _credential_path()
         if not os.path.exists(cred):
             return shared.result(self.key, self.name, "error",
                                  detail="No ~/.gemini/oauth_creds.json")

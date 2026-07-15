@@ -9,9 +9,13 @@ from .. import shared
 from .base import BaseProvider
 
 
+def _credential_path():
+    return os.path.join(shared.HOME, ".copilot", "config.json")
+
+
 def _copilot_token():
     """Return the Copilot CLI's own token and account label."""
-    cfg = os.path.join(shared.HOME, ".copilot", "config.json")
+    cfg = _credential_path()
     if os.path.exists(cfg):
         try:
             with open(cfg, "r", encoding="utf-8") as fh:
@@ -30,7 +34,7 @@ def _copilot_token():
 class CopilotProvider(BaseProvider):
     @classmethod
     def is_discovered(cls) -> bool:
-        return os.path.exists(os.path.join(shared.HOME, ".copilot", "config.json"))
+        return shared.credential_source_exists(_credential_path())
 
     @property
     def key(self) -> str:
@@ -74,7 +78,7 @@ class CopilotProvider(BaseProvider):
         if not isinstance(data, dict):
             if last_err_code == 401:
                 return shared.result(self.key, self.name, "error",
-                                     detail="Token expired/unauthorized — sign in using the Copilot CLI")
+                                     detail="Token expired/unauthorized: sign in using the Copilot CLI")
             return shared.result(self.key, self.name, "error",
                                  detail="Copilot live usage endpoint unreachable")
 

@@ -11,6 +11,10 @@ from .. import shared
 from .base import BaseProvider
 
 
+def _credential_path():
+    return os.path.join(shared.HOME, ".claude", ".credentials.json")
+
+
 _CLAUDE_RATE_LIMIT_CLAIMS = {
     "five_hour": ("Current session", "5h"),
     "5_hour": ("Current session", "5h"),
@@ -78,7 +82,7 @@ def _refresh_claude_token(creds, path):
 class ClaudeProvider(BaseProvider):
     @classmethod
     def is_discovered(cls) -> bool:
-        return os.path.exists(os.path.join(shared.HOME, ".claude", ".credentials.json"))
+        return shared.credential_source_exists(_credential_path())
 
     @property
     def key(self) -> str:
@@ -93,7 +97,7 @@ class ClaudeProvider(BaseProvider):
         return 180  # claude oauth/usage 429s if polled fast
 
     def retrieve_quota(self) -> dict[str, Any]:
-        cred_path = os.path.join(shared.HOME, ".claude", ".credentials.json")
+        cred_path = _credential_path()
         if not os.path.exists(cred_path):
             return shared.result(self.key, self.name, "error",
                                  detail=f"No ~/.claude/.credentials.json")

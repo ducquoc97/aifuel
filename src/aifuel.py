@@ -44,6 +44,7 @@ from aifuel.providers import SUPPORTED_PROVIDER_CLASSES
 
 
 HTML_PATH = os.path.join(THIS_DIR, "index.html")
+STYLESHEET_PATH = os.path.join(THIS_DIR, "dashboard.css")
 
 _PERIOD_RANK = {"monthly": 0, "weekly": 1, "daily": 2, "5h": 3, "unknown": 4}
 
@@ -95,8 +96,11 @@ def discover_providers():
         try:
             discovered = provider_class.is_discovered()
         except Exception as e:
+            provider_name = provider_class.__name__
+            if provider_name.endswith("Provider"):
+                provider_name = provider_name[:-len("Provider")]
             errors.append({
-                "provider": provider_class.__name__.removesuffix("Provider"),
+                "provider": provider_name,
                 "detail": f"{e.__class__.__name__}: {e}",
             })
             continue
@@ -302,6 +306,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, body, "text/html; charset=utf-8")
             except OSError as e:
                 self._send(500, f"index.html not found: {e}", "text/plain")
+        elif path == "/dashboard.css":
+            try:
+                with open(STYLESHEET_PATH, "r", encoding="utf-8") as fh:
+                    body = fh.read()
+                self._send(200, body, "text/css; charset=utf-8")
+            except OSError as e:
+                self._send(500, f"dashboard.css not found: {e}", "text/plain")
         elif path == "/api/usage":
             force = urllib.parse.parse_qs(parts.query).get("force", [""])[0] == "1"
             payload = json.dumps(collect(force=force), default=str)

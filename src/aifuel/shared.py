@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import ssl
+import stat
 import subprocess
 import sys
 import time
@@ -200,6 +201,15 @@ def read_json(path):
         return json.load(fh)
 
 
+def credential_source_exists(path, directory=False):
+    """Check a credential marker while surfacing inaccessible stores."""
+    try:
+        mode = os.stat(path).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return stat.S_ISDIR(mode) if directory else True
+
+
 def write_json_atomic(path, data):
     """Overwrite `path` with `data` atomically, preserving its file mode."""
     tmp = f"{path}.tmp.{os.getpid()}"
@@ -233,7 +243,7 @@ def read_sqlite_item(path, key):
         con.close()
 
 
-def read_keychain_secret(service, account):
+def read_keychain_secret(service, account, strict=False):
     """Read a macOS generic-password secret as a string."""
     if sys.platform != "darwin":
         return None
@@ -242,7 +252,15 @@ def read_keychain_secret(service, account):
             ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
             text=True, stderr=subprocess.DEVNULL,
         ).strip()
-    except (OSError, subprocess.CalledProcessError):
+    except subprocess.CalledProcessError as e:
+        if e.returncode == 44:
+            return None
+        if strict:
+            raise OSError(f"keychain lookup failed with status {e.returncode}") from e
+        return None
+    except OSError as e:
+        if strict:
+            raise OSError(f"keychain lookup failed: {e}") from e
         return None
 
 
