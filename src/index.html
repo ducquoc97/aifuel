@@ -855,7 +855,10 @@ async function load(force, initial) {
         const msg = JSON.parse(line);
         if (msg.providers_expected) {
           EXPECTED = msg.providers_expected;
-          if (initial) render();
+          for (const key of RECEIVED.keys()) {
+            if (!EXPECTED.includes(key)) RECEIVED.delete(key);
+          }
+          render();
         } else if (msg.provider) {
           RECEIVED.set(msg.provider.key, msg.provider);
           got++;
