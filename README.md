@@ -76,7 +76,7 @@ Both need only `python3` — no packaging, no dependencies. The launcher points 
 |-------------------|---------------|---------------------------------------------------------------------|
 | Claude Code       | **live**      | `GET api.anthropic.com/api/oauth/usage` (token from `~/.claude/.credentials.json`); non-live responses are surfaced as errors |
 | Codex CLI         | **live**      | `GET chatgpt.com/backend-api/codex/usage` (token from `~/.codex/auth.json`); non-live responses are surfaced as errors |
-| GitHub Copilot    | **live**      | `api.github.com/copilot_internal/user` or `api.github.com/copilot_internal/v2/token` (token from `~/.copilot/config.json`, `~/.config/gh/hosts.yml`, or env); non-live responses are surfaced as errors |
+| GitHub Copilot    | **live**      | `api.github.com/copilot_internal/user` or `api.github.com/copilot_internal/v2/token` (token from `~/.copilot/config.json`); non-live responses are surfaced as errors |
 | Gemini CLI        | **live**      | `:loadCodeAssist` → `:retrieveUserQuota` for real per-model bars (needs working OAuth and any required project); non-live responses are surfaced as errors |
 | Antigravity CLI   | **live**      | Code Assist quota via its live OAuth token sources; non-live responses are surfaced as errors |
 
@@ -104,7 +104,7 @@ Because `--json` is a stable, structured feed, it drops cleanly into a tmux / po
 
 **Does this send my tokens anywhere?** No. It reads the same local credential files your CLIs already use, calls each provider's *own* usage endpoint, and shows you the result. There is no server, no telemetry, no third party.
 
-**Do I need API keys?** No. It reuses the OAuth/login your CLIs already set up — if `claude`, `codex`, `gemini`, `gh`, or `agy` work on your machine, `aifuel` can read their quota.
+**Do I need API keys?** No. It reuses the OAuth/login your AI coding CLIs already set up. A general GitHub CLI login does not count as a GitHub Copilot login.
 
 **It only shows some providers.** It shows whatever it can authenticate. Log in to a provider's CLI (or set `GOOGLE_CLOUD_PROJECT` for paid Gemini tiers) and its card fills in.
 

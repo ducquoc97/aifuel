@@ -1,5 +1,6 @@
 import io
 import sys
+import tempfile
 import urllib.error
 from pathlib import Path
 from unittest import TestCase, main, mock
@@ -374,6 +375,31 @@ class CodexFetchTests(TestCase):
 
 
 class CopilotFetchTests(TestCase):
+    def test_fetch_copilot_ignores_general_github_credentials(self):
+        with tempfile.TemporaryDirectory() as home:
+            copilot_config = Path(home) / ".copilot" / "config.json"
+            copilot_config.parent.mkdir(parents=True)
+            copilot_config.write_text("not json", encoding="utf-8")
+
+            hosts = Path(home) / ".config" / "gh" / "hosts.yml"
+            hosts.parent.mkdir(parents=True)
+            hosts.write_text(
+                "github.com:\n  user: octocat\n  oauth_token: gh-token\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(shared, "HOME", home), \
+                 mock.patch.dict(copilot.os.environ, {
+                     "GITHUB_TOKEN": "github-env-token",
+                     "GH_TOKEN": "gh-env-token",
+                 }), \
+                 mock.patch.object(shared, "http_get") as http_get:
+                res = copilot.fetch_copilot()
+
+        self.assertEqual(res["status"], "error")
+        self.assertEqual(res["detail"], "No Copilot-specific token found")
+        http_get.assert_not_called()
+
     def test_fetch_copilot_errors_when_live_usage_unreachable(self):
         with mock.patch.object(copilot, "_copilot_token", return_value=("token", None)), \
              mock.patch.object(shared, "http_get", side_effect=Exception("boom")):
@@ -393,7 +419,7 @@ class CopilotFetchTests(TestCase):
 
         self.assertEqual(res["status"], "error")
         self.assertIsNone(res["source"])
-        self.assertIn("Token expired/unauthorized — sign in using the GitHub or Copilot CLI", res["detail"])
+        self.assertIn("Token expired/unauthorized — sign in using the Copilot CLI", res["detail"])
 
 
 if __name__ == "__main__":

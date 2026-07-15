@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import sys
 import urllib.error
 from typing import Any
 
@@ -12,12 +10,7 @@ from .base import BaseProvider
 
 
 def _copilot_token():
-    """Prefer the Copilot CLI's own account token, then gh, then env.
-
-    The Copilot CLI / IDE may be signed into a different GitHub account than the
-    `gh` CLI, so reading gh's token shows the wrong account's quota. Returns
-    (token, account_label).
-    """
+    """Return the Copilot CLI's own token and account label."""
     cfg = os.path.join(shared.HOME, ".copilot", "config.json")
     if os.path.exists(cfg):
         try:
@@ -31,23 +24,7 @@ def _copilot_token():
                 return tok, acct
         except Exception:
             pass
-    hosts_candidates = [os.path.join(shared.HOME, ".config", "gh", "hosts.yml")]
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA") or os.path.join(shared.HOME, "AppData", "Roaming")
-        hosts_candidates.insert(0, os.path.join(appdata, "GitHub CLI", "hosts.yml"))
-    for hosts in hosts_candidates:
-        if os.path.exists(hosts):
-            try:
-                with open(hosts, "r", encoding="utf-8") as fh:
-                    txt = fh.read()
-                m = re.search(r"oauth_token:\s*(\S+)", txt)
-                if m:
-                    u = re.search(r"user:\s*(\S+)", txt)
-                    return m.group(1), (u.group(1) if u else None)
-            except Exception:
-                pass
-    env = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    return env, None
+    return None, None
 
 
 class CopilotProvider(BaseProvider):
@@ -67,7 +44,7 @@ class CopilotProvider(BaseProvider):
         token, _account = _copilot_token()
         if not token:
             return shared.result(self.key, self.name, "error",
-                                 detail="No GitHub/Copilot token found")
+                                 detail="No Copilot-specific token found")
 
         headers = {
             "Authorization": f"token {token}",
@@ -93,7 +70,7 @@ class CopilotProvider(BaseProvider):
         if not isinstance(data, dict):
             if last_err_code == 401:
                 return shared.result(self.key, self.name, "error",
-                                     detail="Token expired/unauthorized — sign in using the GitHub or Copilot CLI")
+                                     detail="Token expired/unauthorized — sign in using the Copilot CLI")
             return shared.result(self.key, self.name, "error",
                                  detail="Copilot live usage endpoint unreachable")
 
