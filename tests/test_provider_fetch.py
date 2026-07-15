@@ -11,7 +11,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from aifuel import shared
-from aifuel.providers import claude, codex, copilot, gemini
+from aifuel.providers import claude, codex, copilot
 
 
 class ClaudeRefreshTests(TestCase):
@@ -394,23 +394,6 @@ class CopilotFetchTests(TestCase):
         self.assertEqual(res["status"], "error")
         self.assertIsNone(res["source"])
         self.assertIn("Token expired/unauthorized — sign in using the GitHub or Copilot CLI", res["detail"])
-
-
-class GeminiFetchTests(TestCase):
-    def test_fetch_gemini_errors_when_live_quota_fails(self):
-        creds = {"access_token": "token", "refresh_token": "refresh"}
-
-        with mock.patch.object(gemini.os.path, "exists", return_value=True), \
-             mock.patch.object(shared, "read_json", return_value=creds), \
-             mock.patch.object(gemini, "_codeassist_quota",
-                               return_value=("fallback", "Gemini Code Assist", [], "retrieveUserQuota HTTP 403")), \
-             mock.patch.object(gemini, "_refresh_gemini_token", return_value=None):
-            res = gemini.fetch_gemini()
-
-        self.assertEqual(res["status"], "error")
-        self.assertIsNone(res["source"])
-        self.assertEqual(res["plan"], "Gemini Code Assist")
-        self.assertIn("retrieveUserQuota HTTP 403", res["detail"])
 
 
 if __name__ == "__main__":

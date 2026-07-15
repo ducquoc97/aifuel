@@ -14,19 +14,44 @@ from .base import BaseProvider
 
 
 def _gemini_project_from_config():
-    """GOOGLE_CLOUD_PROJECT as gemini-cli resolves it: env first, then .env files."""
-    for path in (os.path.join(shared.HOME, ".gemini", ".env"), os.path.join(shared.HOME, ".env")):
+    """Project from the first .env file Gemini CLI would load."""
+    candidates = []
+    current = os.path.abspath(os.getcwd())
+    while True:
+        candidates.extend((
+            os.path.join(current, ".gemini", ".env"),
+            os.path.join(current, ".env"),
+        ))
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    candidates.extend((
+        os.path.join(shared.HOME, ".gemini", ".env"),
+        os.path.join(shared.HOME, ".env"),
+    ))
+
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
         if not os.path.exists(path):
             continue
-        try:
-            for line in open(path, encoding="utf-8"):
+        projects = {}
+        with open(path, encoding="utf-8") as env_file:
+            for line in env_file:
                 line = line.strip()
-                if line.startswith("GOOGLE_CLOUD_PROJECT") and "=" in line:
-                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
-                    if val:
-                        return val
-        except Exception:
-            pass
+                if line.startswith("export "):
+                    line = line[7:].lstrip()
+                key, separator, value = line.partition("=")
+                key = key.strip()
+                if separator and key in ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID"):
+                    value = value.strip().strip('"').strip("'")
+                    if value:
+                        projects[key] = value
+        return (projects.get("GOOGLE_CLOUD_PROJECT")
+                or projects.get("GOOGLE_CLOUD_PROJECT_ID"))
     return None
 
 
@@ -141,7 +166,10 @@ def _codeassist_quota(token, hint_project, ua, period_override=None):
         project = hint_project or resp_project
         if not project:
             return ("fallback", plan, [],
-                    "Standard/Enterprise tier needs a project (set GOOGLE_CLOUD_PROJECT)")
+                    "Standard/Enterprise tier needs a Google Cloud project. "
+                    "Add GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT_ID to "
+                    ".gemini/.env and refresh, or export one before starting "
+                    "aifuel and restart.")
     else:
         # Personal / free account: ignore any user-supplied project and use the
         # auto-provisioned one.
@@ -246,10 +274,18 @@ class GeminiProvider(BaseProvider):
             if new_token:
                 token, refreshed = new_token, True
 
-        env_project = (
-            os.environ.get("GOOGLE_CLOUD_PROJECT")
-            or _gemini_project_from_config()
-        )
+        env_project = (os.environ.get("GOOGLE_CLOUD_PROJECT")
+                       or os.environ.get("GOOGLE_CLOUD_PROJECT_ID"))
+        if not env_project:
+            try:
+                env_project = _gemini_project_from_config()
+            except (OSError, UnicodeError) as e:
+                return shared.result(
+                    self.key, self.name, "error",
+                    detail="Could not read Gemini project configuration "
+                           f"({e.__class__.__name__}). Check the file permissions "
+                           "and UTF-8 encoding, then refresh.",
+                )
         status, plan, windows, detail = _codeassist_quota(
             token, env_project, "gemini-cli/usage-monitor", period_override="daily")
 
