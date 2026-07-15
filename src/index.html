@@ -520,7 +520,6 @@ function anchorPeriod(windows) {
 
 const PROVIDER_ICON = {
   claude:      "https://www.anthropic.com/favicon.ico",
-  codex:       "https://openai.com/favicon.ico",
   copilot:     "https://github.com/favicon.ico",
   gemini:      "https://geminicli.com/favicon.ico",
   antigravity: "https://antigravity.google/favicon.ico",
@@ -540,7 +539,7 @@ const PROVIDER_NAME = {
 // arrived (RECEIVED), the full set still expected (EXPECTED, for skeletons), and
 // the generated_at from the final stream line.
 const RECEIVED = new Map();   // key -> provider result
-let EXPECTED = Object.keys(PROVIDER_NAME);
+let EXPECTED = null;
 let GENERATED_AT = null;
 let streamAbort = null;
 
@@ -724,11 +723,31 @@ function skeletonCard(key) {
   return card;
 }
 
+function discoveryCard() {
+  const card = document.createElement("div");
+  card.className = "card skeleton";
+  card.setAttribute("role", "status");
+  card.setAttribute("aria-busy", "true");
+  card.innerHTML = `
+    <div class="provider"><span class="name">Finding configured providers</span>
+      <span class="spinner" aria-hidden="true"></span></div>
+    <div class="badges"><span class="skel skel-badge"></span></div>
+    <hr class="card-divider" aria-hidden="true">
+    <div class="skel skel-line"></div>
+    <div class="skel skel-line short"></div>`;
+  return card;
+}
+
 // Render whatever has arrived so far: ranked real cards first, loading skeletons
 // for providers still in flight. Called on every stream message.
 function render() {
   const grid = document.getElementById("grid");
   grid.innerHTML = "";
+
+  if (EXPECTED === null) {
+    grid.appendChild(discoveryCard());
+    return;
+  }
 
   const arrived = sortProviders([...RECEIVED.values()]);
   arrived.forEach((p, i) => grid.appendChild(providerCard(p, i)));
@@ -766,7 +785,8 @@ async function load(force, initial) {
   refreshBtn.setAttribute("aria-busy", "true");
   if (initial) {
     RECEIVED.clear();
-    render();               // show skeletons immediately
+    EXPECTED = null;
+    render();               // show neutral discovery state immediately
     status.textContent = "Loading…";
   }
 

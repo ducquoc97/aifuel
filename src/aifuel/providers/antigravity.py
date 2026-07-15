@@ -129,6 +129,22 @@ def _antigravity_app_token():
 
 
 class AntigravityProvider(BaseProvider):
+    @classmethod
+    def is_discovered(cls) -> bool:
+        base = os.path.join(shared.HOME, ".gemini")
+        provider_dirs = (
+            os.path.join(base, "antigravity"),
+            os.path.join(base, "antigravity-cli"),
+        )
+        if any(os.path.isdir(path) for path in provider_dirs):
+            return True
+        if any(os.path.exists(path) for path in _antigravity_app_state_dbs()):
+            return True
+        return shared.read_keychain_secret(
+            shared.ANTIGRAVITY_KEYCHAIN_SERVICE,
+            shared.ANTIGRAVITY_KEYCHAIN_ACCOUNT,
+        ) is not None
+
     @property
     def key(self) -> str:
         return "antigravity"

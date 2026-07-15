@@ -23,6 +23,10 @@ def _codex_window(rl_window, label_prefix=None):
 
 
 class CodexProvider(BaseProvider):
+    @classmethod
+    def is_discovered(cls) -> bool:
+        return os.path.exists(os.path.join(shared.HOME, ".codex", "auth.json"))
+
     @property
     def key(self) -> str:
         return "codex"

@@ -28,6 +28,10 @@ def _copilot_token():
 
 
 class CopilotProvider(BaseProvider):
+    @classmethod
+    def is_discovered(cls) -> bool:
+        return os.path.exists(os.path.join(shared.HOME, ".copilot", "config.json"))
+
     @property
     def key(self) -> str:
         return "copilot"

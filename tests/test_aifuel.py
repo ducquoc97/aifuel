@@ -1,8 +1,11 @@
 import importlib.util
+import json
 import ssl
 import sys
 import tempfile
+import threading
 import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import TestCase, main, mock
 
@@ -20,7 +23,7 @@ from aifuel.providers import (
     CopilotProvider,
     GeminiProvider,
     AntigravityProvider,
-    ACTIVE_PROVIDERS,
+    SUPPORTED_PROVIDER_CLASSES,
     gemini,
 )
 
@@ -208,6 +211,146 @@ class ProviderCacheTests(TestCase):
         self.assertIsNone(res["source"])
 
 
+class ProviderDiscoveryTests(TestCase):
+    def setUp(self):
+        aifuel_cli._cache.clear()
+
+    def tearDown(self):
+        aifuel_cli._cache.clear()
+
+    def test_collect_initializes_only_discovered_providers(self):
+        def provider_type(key, discovered):
+            class Provider:
+                instances = 0
+                retrievals = 0
+
+                def __init__(self):
+                    type(self).instances += 1
+                    self.key = key
+                    self.name = f"{key.title()} CLI"
+                    self.cache_ttl_seconds = 30
+
+                @classmethod
+                def is_discovered(cls):
+                    return discovered
+
+                def retrieve_quota(self):
+                    type(self).retrievals += 1
+                    return shared.result(self.key, self.name, "ok", source="live")
+
+            return Provider
+
+        gemini = provider_type("gemini", True)
+        codex = provider_type("codex", True)
+        claude = provider_type("claude", False)
+
+        with mock.patch.object(
+            aifuel_cli,
+            "SUPPORTED_PROVIDER_CLASSES",
+            [claude, codex, gemini],
+            create=True,
+        ):
+            data = aifuel_cli.collect(force=True)
+
+        self.assertEqual([provider["key"] for provider in data["providers"]], [
+            "codex",
+            "gemini",
+        ])
+        self.assertEqual(claude.instances, 0)
+        self.assertEqual(claude.retrievals, 0)
+
+    def test_provider_discovery_uses_provider_specific_credential_markers(self):
+        with tempfile.TemporaryDirectory() as home, \
+             mock.patch.object(shared, "HOME", home), \
+             mock.patch.object(shared, "read_keychain_secret", return_value=None):
+            markers = [
+                (ClaudeProvider, Path(home) / ".claude" / ".credentials.json", False),
+                (CodexProvider, Path(home) / ".codex" / "auth.json", False),
+                (CopilotProvider, Path(home) / ".copilot" / "config.json", False),
+                (GeminiProvider, Path(home) / ".gemini" / "oauth_creds.json", False),
+                (AntigravityProvider, Path(home) / ".gemini" / "antigravity-cli", True),
+            ]
+
+            for provider_class, marker, is_directory in markers:
+                self.assertFalse(provider_class.is_discovered())
+                if is_directory:
+                    marker.mkdir(parents=True)
+                else:
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.write_text("not valid credentials", encoding="utf-8")
+                self.assertTrue(provider_class.is_discovered())
+
+    def test_usage_stream_announces_and_fetches_only_discovered_providers(self):
+        class DiscoveredProvider:
+            @classmethod
+            def is_discovered(cls):
+                return True
+
+            def __init__(self):
+                self.key = "gemini"
+                self.name = "Gemini CLI"
+                self.cache_ttl_seconds = 30
+
+            def retrieve_quota(self):
+                return shared.result(self.key, self.name, "ok", source="live")
+
+        class UndiscoveredProvider:
+            @classmethod
+            def is_discovered(cls):
+                return False
+
+            def __init__(self):
+                raise AssertionError("undiscovered provider was initialized")
+
+        server = aifuel_cli.ThreadingHTTPServer(("127.0.0.1", 0), aifuel_cli.Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(thread.join)
+        self.addCleanup(server.shutdown)
+
+        with mock.patch.object(
+            aifuel_cli,
+            "SUPPORTED_PROVIDER_CLASSES",
+            [UndiscoveredProvider, DiscoveredProvider],
+        ):
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/usage/stream",
+            ) as response:
+                messages = [json.loads(line) for line in response]
+
+        self.assertEqual(messages[0], {"providers_expected": ["gemini"]})
+        self.assertEqual(messages[1]["provider"]["key"], "gemini")
+        self.assertTrue(messages[2]["done"])
+
+    def test_each_collection_uses_current_discovery_state_before_cache(self):
+        class Provider:
+            discovered = True
+            retrievals = 0
+
+            @classmethod
+            def is_discovered(cls):
+                return cls.discovered
+
+            def __init__(self):
+                self.key = "codex"
+                self.name = "Codex CLI"
+                self.cache_ttl_seconds = 30
+
+            def retrieve_quota(self):
+                type(self).retrievals += 1
+                return shared.result(self.key, self.name, "ok", source="live")
+
+        with mock.patch.object(aifuel_cli, "SUPPORTED_PROVIDER_CLASSES", [Provider]):
+            first = aifuel_cli.collect(force=True)
+            Provider.discovered = False
+            second = aifuel_cli.collect()
+
+        self.assertEqual([provider["key"] for provider in first["providers"]], ["codex"])
+        self.assertEqual(second["providers"], [])
+        self.assertEqual(Provider.retrievals, 1)
+
+
 class CLITests(TestCase):
     def test_dashboard_mode_opens_browser_by_default(self):
         server = mock.Mock()
@@ -258,12 +401,14 @@ class ProviderClassTests(TestCase):
             self.assertEqual(p.cache_ttl_seconds, expected_ttl)
             self.assertTrue(hasattr(p, "retrieve_quota"))
 
-    def test_active_providers_registry(self):
-        self.assertEqual(len(ACTIVE_PROVIDERS), 5)
-        keys = [p.key for p in ACTIVE_PROVIDERS]
-        self.assertEqual(keys, ["claude", "codex", "copilot", "gemini", "antigravity"])
-        for p in ACTIVE_PROVIDERS:
-            self.assertIsInstance(p, BaseProvider)
+    def test_supported_provider_catalog(self):
+        self.assertEqual(SUPPORTED_PROVIDER_CLASSES, [
+            ClaudeProvider,
+            CodexProvider,
+            CopilotProvider,
+            GeminiProvider,
+            AntigravityProvider,
+        ])
 
 
 if __name__ == "__main__":

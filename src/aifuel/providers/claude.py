@@ -76,6 +76,10 @@ def _refresh_claude_token(creds, path):
 
 
 class ClaudeProvider(BaseProvider):
+    @classmethod
+    def is_discovered(cls) -> bool:
+        return os.path.exists(os.path.join(shared.HOME, ".claude", ".credentials.json"))
+
     @property
     def key(self) -> str:
         return "claude"

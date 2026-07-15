@@ -40,15 +40,10 @@ if THIS_DIR not in sys.path:
     sys.path.insert(0, THIS_DIR)
 
 from aifuel import shared
-from aifuel.providers import ACTIVE_PROVIDERS
+from aifuel.providers import SUPPORTED_PROVIDER_CLASSES
 
 
 HTML_PATH = os.path.join(THIS_DIR, "index.html")
-
-PROVIDERS = [
-    (p.key, p.retrieve_quota, p.cache_ttl_seconds)
-    for p in ACTIVE_PROVIDERS
-]
 
 _PERIOD_RANK = {"monthly": 0, "weekly": 1, "daily": 2, "5h": 3, "unknown": 4}
 
@@ -92,7 +87,22 @@ def get_provider(key, fn, ttl, force=False):
     return res
 
 
+def discover_providers():
+    """Instantiate providers whose provider-specific credential source exists."""
+    providers = []
+    for provider_class in SUPPORTED_PROVIDER_CLASSES:
+        if provider_class.is_discovered():
+            provider = provider_class()
+            providers.append((
+                provider.key,
+                provider.retrieve_quota,
+                provider.cache_ttl_seconds,
+            ))
+    return providers
+
+
 def collect(force=False):
+    providers = discover_providers()
     results = []
     threads = []
     out = {}
@@ -100,14 +110,14 @@ def collect(force=False):
     def run(key, fn, ttl):
         out[key] = get_provider(key, fn, ttl, force=force)
 
-    for key, fn, ttl in PROVIDERS:
+    for key, fn, ttl in providers:
         t = threading.Thread(target=run, args=(key, fn, ttl))
         t.start()
         threads.append(t)
     for t in threads:
         t.join()
 
-    for key, _, _ in PROVIDERS:
+    for key, _, _ in providers:
         res = out[key]
         res["reset_at"] = shared.effective_reset(res)
         results.append(res)
@@ -118,8 +128,10 @@ def collect(force=False):
     return {"generated_at": shared.now_ts(), "providers": results}
 
 
-def collect_stream(force=False):
+def collect_stream(force=False, providers=None):
     """Yield each provider result the moment it finishes, in ready-first order."""
+    if providers is None:
+        providers = discover_providers()
     q = queue.Queue()
 
     def run(key, fn, ttl):
@@ -127,10 +139,10 @@ def collect_stream(force=False):
         res["reset_at"] = shared.effective_reset(res)
         q.put(res)
 
-    for key, fn, ttl in PROVIDERS:
+    for key, fn, ttl in providers:
         threading.Thread(target=run, args=(key, fn, ttl), daemon=True).start()
 
-    for _ in PROVIDERS:
+    for _ in providers:
         yield q.get()
 
 
@@ -289,8 +301,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            emit({"providers_expected": [key for key, _, _ in PROVIDERS]})
-            for res in collect_stream(force=force):
+            providers = discover_providers()
+            emit({"providers_expected": [key for key, _, _ in providers]})
+            for res in collect_stream(force=force, providers=providers):
                 emit({"provider": res})
             emit({"done": True, "generated_at": shared.now_ts()})
         except (BrokenPipeError, ConnectionResetError):

@@ -95,6 +95,7 @@ Because `--json` is a stable, structured feed, it drops cleanly into a tmux / po
 ## How it works (and what it touches)
 
 - Credentials are read **locally only**, to authenticate each provider's own usage endpoint — exactly like the CLIs do. Tokens are never printed, and are only ever sent to the provider they belong to.
+- Before each collection, `aifuel` checks for each provider's own local credential source and initializes only the providers it finds. Discovery never calls an API, refreshes a token, or writes credentials.
 - For Gemini and Antigravity, an expired access token is refreshed against Google's OAuth endpoint using the `refresh_token` already on disk — the same exchange the CLI performs on startup — and written back to its own creds file.
 - Claude's `oauth/usage` endpoint rate-limits aggressively, so results are cached for 180s.
 - The dashboard auto-refreshes every 5 minutes; countdowns tick every second client-side.
@@ -106,6 +107,6 @@ Because `--json` is a stable, structured feed, it drops cleanly into a tmux / po
 
 **Do I need API keys?** No. It reuses the OAuth/login your AI coding CLIs already set up. A general GitHub CLI login does not count as a GitHub Copilot login.
 
-**It only shows some providers.** It shows whatever it can authenticate. Log in to a provider's CLI (or set `GOOGLE_CLOUD_PROJECT` for paid Gemini tiers) and its card fills in.
+**It only shows some providers.** It shows providers with their own local credential source. Log in to that provider's AI coding CLI, then refresh the dashboard.
 
 **Why not just check each dashboard?** Because five tabs don't tell you which limit you'll hit first. `aifuel` does — at a glance, on every OS.

@@ -238,6 +238,10 @@ def _refresh_gemini_token(creds, path):
 
 
 class GeminiProvider(BaseProvider):
+    @classmethod
+    def is_discovered(cls) -> bool:
+        return os.path.exists(os.path.join(shared.HOME, ".gemini", "oauth_creds.json"))
+
     @property
     def key(self) -> str:
         return "gemini"

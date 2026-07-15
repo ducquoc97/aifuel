@@ -7,6 +7,12 @@ from typing import Any
 class BaseProvider(ABC):
     """Abstract base class for all usage and quota providers."""
 
+    @classmethod
+    @abstractmethod
+    def is_discovered(cls) -> bool:
+        """Whether this provider's local credential source is present."""
+        pass
+
     @property
     @abstractmethod
     def key(self) -> str:
