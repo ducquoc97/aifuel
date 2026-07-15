@@ -39,7 +39,7 @@ SPEC.loader.exec_module(aifuel_cli)
 
 
 class QuotaWindowTests(TestCase):
-    def test_period_override_preserves_daily_label_near_reset(self):
+    def test_period_requires_explicit_provider_semantics(self):
         quota = {
             "buckets": [{
                 "modelId": "gemini-2.5-pro",
@@ -49,10 +49,10 @@ class QuotaWindowTests(TestCase):
         }
 
         with mock.patch.object(shared, "now_ts", return_value=1_000):
-            inferred = gemini._quota_windows(quota)[0]
+            unknown = gemini._quota_windows(quota)[0]
             daily = gemini._quota_windows(quota, period_override="daily")[0]
 
-        self.assertEqual(inferred["period"], "5h")
+        self.assertEqual(unknown["period"], "unknown")
         self.assertEqual(daily["period"], "daily")
 
     def test_gemini_model_id_mapping(self):
@@ -370,6 +370,32 @@ class ClaudeRefreshTests(TestCase):
 
 
 class CodexFetchTests(TestCase):
+    def test_fetch_codex_labels_weekly_primary_from_duration(self):
+        auth = {"access_token": "token", "account_id": "acct"}
+        payload = {
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 604_800,
+                    "used_percent": 25,
+                    "reset_after_seconds": 60,
+                },
+            },
+        }
+
+        with mock.patch.object(codex.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=auth), \
+             mock.patch.object(shared, "now_ts", return_value=100), \
+             mock.patch.object(shared, "http_get", return_value=(payload, None)):
+            res = codex.fetch_codex()
+
+        labels = [w["label"] for w in res["windows"]]
+        self.assertEqual(
+            [(w["label"], w["period"]) for w in res["windows"]],
+            [("Weekly", "weekly")],
+        )
+        self.assertNotIn("5-hour", labels)
+
     def test_fetch_codex_returns_live_usage(self):
         auth = {"access_token": "token", "account_id": "acct"}
         payload = {
@@ -412,7 +438,7 @@ class CodexFetchTests(TestCase):
             [
                 ("5-hour", "5h", 25, 160),
                 ("Weekly", "weekly", 10, 3700),
-                ("Codex-Spark", "daily", 5, 220),
+                ("Codex-Spark Daily", "daily", 5, 220),
             ],
         )
 
@@ -493,6 +519,41 @@ class GeminiFetchTests(TestCase):
 
 
 class AntigravityMacFallbackTests(TestCase):
+    def test_fetch_antigravity_does_not_infer_period_from_reset_countdown(self):
+        reset_at = 2_000_000
+        load_code_assist = {
+            "currentTier": {"id": "antigravity", "name": "antigravity"},
+            "cloudaicompanionProject": {"id": "project"},
+        }
+        quota = {
+            "buckets": [{
+                "modelId": "weekly-model",
+                "remainingFraction": 0.5,
+                "resetTime": reset_at,
+            }],
+        }
+
+        with mock.patch.object(antigravity, "_antigravity_keychain_creds",
+                               return_value=(None, None, True)), \
+             mock.patch.object(antigravity, "_antigravity_app_token",
+                               return_value="desktop-token"), \
+             mock.patch.object(antigravity, "_antigravity_token",
+                               return_value=(None, None, True)), \
+             mock.patch.object(antigravity, "_antigravity_project", return_value=None), \
+             mock.patch.object(antigravity.os.path, "isdir", return_value=False), \
+             mock.patch.object(shared, "now_ts", return_value=reset_at - 18_000), \
+             mock.patch.object(shared, "http_get", side_effect=[
+                 (load_code_assist, None),
+                 (quota, None),
+             ]):
+            res = antigravity.fetch_antigravity()
+
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(
+            [(w["label"], w["period"]) for w in res["windows"]],
+            [("weekly-model", "unknown")],
+        )
+
     def _write_state_db(self, path, auth_status):
         con = sqlite3.connect(path)
         try:

@@ -98,7 +98,7 @@ Because `--json` is a stable, structured feed, it drops cleanly into a tmux / po
 - For Gemini and Antigravity, an expired access token is refreshed against Google's OAuth endpoint using the `refresh_token` already on disk — the same exchange the CLI performs on startup — and written back to its own creds file.
 - Claude's `oauth/usage` endpoint rate-limits aggressively, so results are cached for 180s.
 - The dashboard auto-refreshes every 5 minutes; countdowns tick every second client-side.
-- Ordering: providers **with** a weekly/monthly window come first (soonest reset on top); providers that only expose shorter windows (Gemini daily, Antigravity ~5h) follow.
+- Ordering: providers **with** an authoritative weekly/monthly window come first (soonest reset on top); providers that expose shorter windows or no duration (Gemini daily, Antigravity unspecified) follow.
 
 ## FAQ
 

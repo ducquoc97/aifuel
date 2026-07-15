@@ -100,16 +100,8 @@ def _quota_windows(quota, period_override=None):
         frac = bucket.get("remainingFraction")
         amount = bucket.get("remainingAmount")
         resets = bucket.get("resetTime")
-        reset_epoch = shared.to_epoch(resets)
-        if period_override:
-            period = period_override
-        else:
-            secs_until = (reset_epoch - shared.now_ts()) if reset_epoch else None
-            period, _ = (
-                shared.period_for_seconds(secs_until)
-                if secs_until and secs_until > 0
-                else ("daily", "Daily")
-            )
+        # resetTime identifies the next reset, not the window's total duration.
+        period = period_override or "unknown"
         if frac is not None:
             windows.append(shared.window(display_id, period,
                                          remaining_percent=round(float(frac) * 100, 1),

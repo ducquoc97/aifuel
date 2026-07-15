@@ -8,13 +8,13 @@ from .. import shared
 from .base import BaseProvider
 
 
-def _codex_window(rl_window, label_override=None):
+def _codex_window(rl_window, label_prefix=None):
     """Build a window() from a ChatGPT `*_window` rate-limit object."""
     if not isinstance(rl_window, dict):
         return None
     period, label = shared.period_for_seconds(rl_window.get("limit_window_seconds"))
-    if label_override:
-        label = label_override
+    if label_prefix:
+        label = f"{label_prefix} {label}"
     resets = rl_window.get("reset_at")
     if resets is None and rl_window.get("reset_after_seconds") is not None:
         resets = shared.now_ts() + float(rl_window["reset_after_seconds"])
@@ -66,10 +66,10 @@ class CodexProvider(BaseProvider):
             if isinstance(rl, dict):
                 plan = data.get("plan_type")
                 windows = []
-                w = _codex_window(rl.get("primary_window"), "5-hour")
+                w = _codex_window(rl.get("primary_window"))
                 if w:
                     windows.append(w)
-                w = _codex_window(rl.get("secondary_window"), "Weekly")
+                w = _codex_window(rl.get("secondary_window"))
                 if w:
                     windows.append(w)
                 # Per-model extra limits (e.g. Codex-Spark) -> primary + secondary window each.
@@ -81,8 +81,7 @@ class CodexProvider(BaseProvider):
                     w = _codex_window(erl.get("primary_window"), limit_name)
                     if w:
                         windows.append(w)
-                    w = _codex_window(erl.get("secondary_window"),
-                                      f"{limit_name} Weekly")
+                    w = _codex_window(erl.get("secondary_window"), limit_name)
                     if w:
                         windows.append(w)
                 if windows:
