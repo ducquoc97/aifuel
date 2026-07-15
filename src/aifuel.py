@@ -90,19 +90,28 @@ def get_provider(key, fn, ttl, force=False):
 def discover_providers():
     """Instantiate providers whose provider-specific credential source exists."""
     providers = []
+    errors = []
     for provider_class in SUPPORTED_PROVIDER_CLASSES:
-        if provider_class.is_discovered():
+        try:
+            discovered = provider_class.is_discovered()
+        except Exception as e:
+            errors.append({
+                "provider": provider_class.__name__.removesuffix("Provider"),
+                "detail": f"{e.__class__.__name__}: {e}",
+            })
+            continue
+        if discovered:
             provider = provider_class()
             providers.append((
                 provider.key,
                 provider.retrieve_quota,
                 provider.cache_ttl_seconds,
             ))
-    return providers
+    return providers, errors
 
 
 def collect(force=False):
-    providers = discover_providers()
+    providers, discovery_errors = discover_providers()
     results = []
     threads = []
     out = {}
@@ -125,13 +134,17 @@ def collect(force=False):
     far = float("inf")
     results.sort(key=lambda r: (effective_remaining(r) <= 0,
                                 r["reset_at"] if r["reset_at"] else far))
-    return {"generated_at": shared.now_ts(), "providers": results}
+    return {
+        "generated_at": shared.now_ts(),
+        "providers": results,
+        "discovery_errors": discovery_errors,
+    }
 
 
 def collect_stream(force=False, providers=None):
     """Yield each provider result the moment it finishes, in ready-first order."""
     if providers is None:
-        providers = discover_providers()
+        providers, _ = discover_providers()
     q = queue.Queue()
 
     def run(key, fn, ttl):
@@ -144,6 +157,14 @@ def collect_stream(force=False, providers=None):
 
     for _ in providers:
         yield q.get()
+
+
+def report_discovery_errors(errors):
+    for error in errors:
+        print(
+            f"Provider discovery failed for {error['provider']}: {error['detail']}",
+            file=sys.stderr,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -304,8 +325,12 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            providers = discover_providers()
-            emit({"providers_expected": [key for key, _, _ in providers]})
+            providers, discovery_errors = discover_providers()
+            emit({
+                "providers_expected": [key for key, _, _ in providers],
+                "discovery_errors": discovery_errors,
+            })
+            report_discovery_errors(discovery_errors)
             for res in collect_stream(force=force, providers=providers):
                 emit({"provider": res})
             emit({"done": True, "generated_at": shared.now_ts()})
@@ -326,15 +351,19 @@ def main():
     args = ap.parse_args()
 
     if args.json:
-        print(json.dumps(collect(force=True), indent=2, default=str))
-        return
+        data = collect(force=True)
+        print(json.dumps(data, indent=2, default=str))
+        report_discovery_errors(data["discovery_errors"])
+        return 1 if data["discovery_errors"] else 0
 
     if args.text:
         color = (not args.no_color
                  and sys.stdout.isatty()
                  and os.environ.get("NO_COLOR") is None)
-        print(render_text(collect(force=True), color=color))
-        return
+        data = collect(force=True)
+        print(render_text(data, color=color))
+        report_discovery_errors(data["discovery_errors"])
+        return 1 if data["discovery_errors"] else 0
 
     url = f"http://{args.host}:{args.port}"
     server = ThreadingHTTPServer((args.host, args.port), Handler)
@@ -350,7 +379,8 @@ def main():
     except KeyboardInterrupt:
         print("\nbye")
         server.shutdown()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

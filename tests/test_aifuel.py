@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import ssl
 import sys
@@ -302,6 +303,11 @@ class ProviderDiscoveryTests(TestCase):
             def __init__(self):
                 raise AssertionError("undiscovered provider was initialized")
 
+        class BrokenProvider:
+            @classmethod
+            def is_discovered(cls):
+                raise OSError("credential store unavailable")
+
         server = aifuel_cli.ThreadingHTTPServer(("127.0.0.1", 0), aifuel_cli.Handler)
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
@@ -312,14 +318,20 @@ class ProviderDiscoveryTests(TestCase):
         with mock.patch.object(
             aifuel_cli,
             "SUPPORTED_PROVIDER_CLASSES",
-            [UndiscoveredProvider, DiscoveredProvider],
-        ):
+            [BrokenProvider, UndiscoveredProvider, DiscoveredProvider],
+        ), mock.patch.object(aifuel_cli.sys, "stderr", io.StringIO()):
             with urllib.request.urlopen(
                 f"http://127.0.0.1:{server.server_port}/api/usage/stream",
             ) as response:
                 messages = [json.loads(line) for line in response]
 
-        self.assertEqual(messages[0], {"providers_expected": ["gemini"]})
+        self.assertEqual(messages[0], {
+            "providers_expected": ["gemini"],
+            "discovery_errors": [{
+                "provider": "Broken",
+                "detail": "OSError: credential store unavailable",
+            }],
+        })
         self.assertEqual(messages[1]["provider"]["key"], "gemini")
         self.assertTrue(messages[2]["done"])
 
@@ -358,8 +370,65 @@ class ProviderDiscoveryTests(TestCase):
 
         self.assertIn("No provider-specific logins found.", text)
 
+    def test_collect_reports_discovery_failure_without_blocking_other_providers(self):
+        class BrokenProvider:
+            @classmethod
+            def is_discovered(cls):
+                raise OSError("credential store unavailable")
+
+        class GeminiProviderStub:
+            @classmethod
+            def is_discovered(cls):
+                return True
+
+            def __init__(self):
+                self.key = "gemini"
+                self.name = "Gemini CLI"
+                self.cache_ttl_seconds = 30
+
+            def retrieve_quota(self):
+                return shared.result(self.key, self.name, "ok", source="live")
+
+        with mock.patch.object(
+            aifuel_cli,
+            "SUPPORTED_PROVIDER_CLASSES",
+            [BrokenProvider, GeminiProviderStub],
+        ):
+            data = aifuel_cli.collect(force=True)
+
+        self.assertEqual([provider["key"] for provider in data["providers"]], ["gemini"])
+        self.assertEqual(data["discovery_errors"], [{
+            "provider": "Broken",
+            "detail": "OSError: credential store unavailable",
+        }])
+
 
 class CLITests(TestCase):
+    def test_json_command_reports_discovery_failures_and_returns_nonzero(self):
+        data = {
+            "generated_at": 1_000,
+            "providers": [],
+            "discovery_errors": [{
+                "provider": "Broken",
+                "detail": "OSError: credential store unavailable",
+            }],
+        }
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with mock.patch.object(sys, "argv", ["aifuel", "--json"]), \
+             mock.patch.object(aifuel_cli, "collect", return_value=data), \
+             mock.patch.object(sys, "stdout", stdout), \
+             mock.patch.object(sys, "stderr", stderr):
+            exit_code = aifuel_cli.main()
+
+        self.assertEqual(json.loads(stdout.getvalue()), data)
+        self.assertIn(
+            "Provider discovery failed for Broken: OSError: credential store unavailable",
+            stderr.getvalue(),
+        )
+        self.assertEqual(exit_code, 1)
+
     def test_dashboard_mode_opens_browser_by_default(self):
         server = mock.Mock()
         server.serve_forever.side_effect = KeyboardInterrupt

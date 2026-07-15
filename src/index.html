@@ -563,6 +563,7 @@ const PROVIDER_NAME = {
 // the generated_at from the final stream line.
 const RECEIVED = new Map();   // key -> provider result
 let EXPECTED = null;
+let DISCOVERY_ERRORS = [];
 let GENERATED_AT = null;
 let streamAbort = null;
 
@@ -830,6 +831,7 @@ async function load(force, initial) {
   if (initial) {
     RECEIVED.clear();
     EXPECTED = null;
+    DISCOVERY_ERRORS = [];
     render();               // show neutral discovery state immediately
     status.textContent = "Loading…";
   }
@@ -855,6 +857,7 @@ async function load(force, initial) {
         const msg = JSON.parse(line);
         if (msg.providers_expected) {
           EXPECTED = msg.providers_expected;
+          DISCOVERY_ERRORS = msg.discovery_errors || [];
           for (const key of RECEIVED.keys()) {
             if (!EXPECTED.includes(key)) RECEIVED.delete(key);
           }
@@ -866,8 +869,16 @@ async function load(force, initial) {
           status.textContent = `Loading ${got}/${EXPECTED.length}…`;
         } else if (msg.done) {
           GENERATED_AT = msg.generated_at;
-          status.textContent = "Updated " +
-            new Date(GENERATED_AT * 1000).toLocaleTimeString();
+          if (DISCOVERY_ERRORS.length) {
+            const names = DISCOVERY_ERRORS.map(error => error.provider).join(", ");
+            status.innerHTML = `<span class="err">Discovery failed: ${esc(names)}</span>`;
+            status.title = DISCOVERY_ERRORS.map(
+              error => `${error.provider}: ${error.detail}`).join("\n");
+          } else {
+            status.textContent = "Updated " +
+              new Date(GENERATED_AT * 1000).toLocaleTimeString();
+            status.removeAttribute("title");
+          }
         }
       }
     }
