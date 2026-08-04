@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import json
 import os
+import queue
+import subprocess
+import threading
+import time
 import urllib.error
 from typing import Any
 
 from .. import shared
 from .base import BaseProvider
+
+
+_APP_SERVER_TIMEOUT_SECONDS = 12
 
 
 def _credential_path():
@@ -24,6 +32,128 @@ def _codex_window(rl_window, label_prefix=None):
         resets = shared.now_ts() + float(rl_window["reset_after_seconds"])
     return shared.window(label, period, used_percent=rl_window.get("used_percent"),
                          resets_at=resets)
+
+
+def _nonnegative_int(value):
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _await_response(responses, response_id, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            response = responses.get(timeout=remaining)
+        except queue.Empty:
+            return None
+        if isinstance(response, dict) and response.get("id") == response_id:
+            return response
+
+
+def _parse_app_server_reset_credits(reset_credits):
+    if not isinstance(reset_credits, dict):
+        return None
+    available_count = _nonnegative_int(reset_credits.get("availableCount"))
+    if available_count is None:
+        return None
+    credits = []
+    for credit in reset_credits.get("credits") or []:
+        if not isinstance(credit, dict):
+            continue
+        credits.append({
+            "reset_type": credit.get("resetType"),
+            "title": credit.get("title"),
+            "description": credit.get("description"),
+            "expires_at": shared.to_epoch(credit.get("expiresAt")),
+        })
+    return {"available_count": available_count, "credits": credits}
+
+
+def _app_server_reset_credits():
+    """Read detailed Codex reset credits through the CLI's supported app-server API."""
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            ["codex", "app-server", "--stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        responses = queue.Queue()
+
+        def read_stdout():
+            for line in proc.stdout:
+                try:
+                    responses.put(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+
+        threading.Thread(target=read_stdout, daemon=True).start()
+
+        def send(message):
+            proc.stdin.write(json.dumps(message) + "\n")
+            proc.stdin.flush()
+
+        send({
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "clientInfo": {
+                    "name": "aifuel",
+                    "title": "aifuel",
+                    "version": "1",
+                },
+            },
+        })
+        initialized = _await_response(responses, 0, _APP_SERVER_TIMEOUT_SECONDS)
+        if not initialized or initialized.get("error"):
+            return None
+        send({"method": "initialized", "params": {}})
+        send({"id": 1, "method": "account/rateLimits/read"})
+        response = _await_response(responses, 1, _APP_SERVER_TIMEOUT_SECONDS)
+        if not response or response.get("error"):
+            return None
+
+        result = response.get("result")
+        if not isinstance(result, dict):
+            return None
+        return _parse_app_server_reset_credits(result.get("rateLimitResetCredits"))
+    except (OSError, BrokenPipeError):
+        return None
+    finally:
+        if proc is not None:
+            if proc.stdin:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+
+
+def _codex_reset_credits(usage_data):
+    """Use the HTTP count as a fallback when detailed CLI credit data is unavailable."""
+    reported = usage_data.get("rate_limit_reset_credits")
+    available_count = (_nonnegative_int(reported.get("available_count"))
+                       if isinstance(reported, dict) else None)
+    if available_count is None:
+        return None
+    return _app_server_reset_credits() or {
+        "available_count": available_count,
+        "credits": [],
+    }
 
 
 class CodexProvider(BaseProvider):
@@ -93,8 +223,10 @@ class CodexProvider(BaseProvider):
                     if w:
                         windows.append(w)
                 if windows:
-                    return shared.result(self.key, self.name, "ok", plan=plan,
-                                         source="live", windows=windows)
+                    res = shared.result(self.key, self.name, "ok", plan=plan,
+                                        source="live", windows=windows)
+                    res["reset_credits"] = _codex_reset_credits(data)
+                    return res
             return shared.result(self.key, self.name, "error",
                                  detail="Codex live usage endpoint returned no rate_limit windows")
         except urllib.error.HTTPError as e:

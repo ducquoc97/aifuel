@@ -266,6 +266,85 @@ class ClaudeRefreshTests(TestCase):
 
 
 class CodexFetchTests(TestCase):
+    def test_app_server_reset_credits_preserve_usage_screen_details(self):
+        raw = {
+            "availableCount": 1,
+            "credits": [{
+                "id": "opaque-credit-id",
+                "resetType": "codexRateLimits",
+                "status": "available",
+                "title": "Full reset",
+                "description": "Ready to redeem",
+                "expiresAt": 1_786_558_341,
+            }],
+        }
+
+        reset_credits = codex._parse_app_server_reset_credits(raw)
+
+        self.assertEqual(reset_credits, {
+            "available_count": 1,
+            "credits": [{
+                "reset_type": "codexRateLimits",
+                "title": "Full reset",
+                "description": "Ready to redeem",
+                "expires_at": 1_786_558_341,
+            }],
+        })
+
+    def test_fetch_codex_includes_detailed_reset_credit_from_usage_screen(self):
+        auth = {"access_token": "token", "account_id": "acct"}
+        payload = {
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 604_800,
+                    "used_percent": 25,
+                    "reset_after_seconds": 60,
+                },
+            },
+            "rate_limit_reset_credits": {"available_count": 1},
+        }
+        reset_credits = {
+            "available_count": 1,
+            "credits": [{
+                "reset_type": "codexRateLimits",
+                "title": "Full reset",
+                "description": "Ready to redeem",
+                "expires_at": 1_786_558_341,
+            }],
+        }
+
+        with mock.patch.object(codex.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=auth), \
+             mock.patch.object(shared, "now_ts", return_value=100), \
+             mock.patch.object(shared, "http_get", return_value=(payload, None)), \
+             mock.patch.object(codex, "_app_server_reset_credits", return_value=reset_credits):
+            res = codex.fetch_codex()
+
+        self.assertEqual(res["reset_credits"], reset_credits)
+
+    def test_fetch_codex_keeps_reset_count_when_credit_details_are_unavailable(self):
+        auth = {"access_token": "token", "account_id": "acct"}
+        payload = {
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 604_800,
+                    "used_percent": 25,
+                    "reset_after_seconds": 60,
+                },
+            },
+            "rate_limit_reset_credits": {"available_count": 1},
+        }
+
+        with mock.patch.object(codex.os.path, "exists", return_value=True), \
+             mock.patch.object(shared, "read_json", return_value=auth), \
+             mock.patch.object(shared, "now_ts", return_value=100), \
+             mock.patch.object(shared, "http_get", return_value=(payload, None)), \
+             mock.patch.object(codex, "_app_server_reset_credits", return_value=None):
+            res = codex.fetch_codex()
+
+        self.assertEqual(res["reset_credits"], {"available_count": 1, "credits": []})
+
     def test_fetch_codex_labels_weekly_primary_from_duration(self):
         auth = {"access_token": "token", "account_id": "acct"}
         payload = {

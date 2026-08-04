@@ -201,6 +201,26 @@ function iconHTMLFor(key) {
     : "";
 }
 
+function resetCreditsHTML(resetCredits) {
+  const available = Number(resetCredits?.available_count);
+  if (!Number.isInteger(available) || available < 0) return "";
+  const noun = available === 1 ? "usage limit reset" : "usage limit resets";
+  const credits = (resetCredits.credits || []).filter(credit => credit && typeof credit === "object");
+  const details = credits.map(credit => {
+    const title = credit.title || credit.reset_type || "Usage limit reset";
+    const expiry = credit.expires_at ? `Expires ${fmtDate(credit.expires_at)}` : "";
+    return `<div class="reset-credit-detail">
+      <span>${esc(title)}</span>
+      ${expiry ? `<span>${esc(expiry)}</span>` : ""}
+    </div>`;
+  }).join("");
+  return `<section class="reset-credits" aria-label="Codex usage limit resets">
+    <div class="reset-credits-title">Redeem usage limit reset</div>
+    <div class="reset-credits-count">You have <b>${available} ${noun}</b> available.</div>
+    ${details}
+  </section>`;
+}
+
 function providerCard(p, i) {
   const card = document.createElement("div");
   card.className = "card" + (i === 0 ? " urgent" : "");
@@ -236,6 +256,7 @@ function providerCard(p, i) {
   }
 
   const rankLabel = i === 0 ? "resets soonest" : `#${i + 1}`;
+  const resetCredits = p.key === "codex" ? resetCreditsHTML(p.reset_credits) : "";
 
   card.innerHTML = `
     <div class="rank${i === 0 ? ' urgent' : ''}" aria-label="${rankLabel}">${rankLabel}</div>
@@ -245,6 +266,7 @@ function providerCard(p, i) {
       <span class="badge ${srcClass}">${esc(srcText)}</span>
     </div>
     ${p.detail && p.windows && p.windows.length ? `<div class="detail">${esc(p.detail)}</div>` : ""}
+    ${resetCredits}
     ${allW.length ? '<hr class="card-divider" aria-hidden="true">' : ""}
     ${wins}`;
   return card;

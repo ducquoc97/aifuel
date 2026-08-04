@@ -23,3 +23,7 @@ _Avoid_: Undiscovered provider, provider error
 **Provider Credential Source**:
 A local credential store created specifically for an AI coding provider. A general account login, such as GitHub CLI authentication, is not a credential source for a related provider such as GitHub Copilot.
 _Avoid_: Shared login, reusable credential
+
+**Codex Rate-Limit Reset Credit**:
+An earned Codex allowance that can reset eligible rate-limit windows when explicitly redeemed. A credit has an available count and can include a reset type, description, and expiry.
+_Avoid_: Quota-window reset, purchased credit

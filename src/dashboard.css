@@ -310,6 +310,36 @@
   .badge.live     { color: var(--green);  background: var(--green-tint) }
   .badge.error    { color: var(--red);    background: var(--red-tint) }
 
+  /* Codex's earned allowance to reset its rate-limit windows. */
+  .reset-credits {
+    margin-top: var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--blue-tint);
+  }
+  .reset-credits-title {
+    color: var(--blue);
+    font-size: 13px; font-weight: 600;
+    letter-spacing: -0.006em;
+  }
+  .reset-credits-count {
+    margin-top: 3px;
+    color: var(--label-2);
+    font-size: 13px; line-height: 1.35;
+    letter-spacing: -0.006em;
+  }
+  .reset-credit-detail {
+    display: flex; justify-content: space-between; gap: var(--space-2);
+    margin-top: var(--space-2);
+    color: var(--label-2);
+    font-size: 12px; letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .reset-credit-detail span:last-child {
+    color: var(--label-3);
+    text-align: right;
+  }
+
   /* Callout: 16px, -0.32pt tracking */
   .detail {
     color: var(--label-2);
