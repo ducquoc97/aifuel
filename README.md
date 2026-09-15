@@ -41,6 +41,17 @@ The only thing you need is `python3`. That's the entire dependency list.
 
 The CLI entrypoint lives at `src/aifuel.py`; provider handlers live under `src/aifuel/providers/`.
 
+## Rust replacement
+
+The repository now contains the first Rust replacement slice as a Cargo workspace. It currently implements the read-only Provider Discovery boundary and keeps the existing Python application available while later Rust quota, dashboard, MCP, and launcher work is ported.
+
+```bash
+cargo run -p aifuel -- --text
+cargo run -p aifuel -- --json
+```
+
+The Rust command checks only provider-owned local source metadata. It does not read credential contents, refresh tokens, call provider APIs, or write user state.
+
 ## Install as a global `aifuel` command
 
 The installers drop a tiny `aifuel` launcher on your `PATH` that forwards to this repo's `aifuel.py`, so every flag passes straight through (`--json`, `--text`, `--no-browser`, …).
