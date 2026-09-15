@@ -6,7 +6,7 @@ use std::fmt;
 /// The schema version for the initial Rust discovery output.
 pub const DISCOVERY_SCHEMA_VERSION: u32 = 1;
 
-/// A provider represented in the built-in Supported Provider catalog.
+/// A provider represented in the built-in Catalog Provider catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKey {
@@ -29,25 +29,43 @@ impl ProviderKey {
 
     /// The stable serialized key for this provider.
     pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Copilot => "copilot",
-            Self::Gemini => "gemini",
-            Self::Antigravity => "antigravity",
-        }
+        self.metadata().key
     }
 
     /// The user-facing provider name.
     pub const fn display_name(self) -> &'static str {
+        self.metadata().name
+    }
+
+    const fn metadata(self) -> ProviderMetadata {
         match self {
-            Self::Claude => "Claude Code",
-            Self::Codex => "Codex CLI",
-            Self::Copilot => "GitHub Copilot",
-            Self::Gemini => "Gemini CLI",
-            Self::Antigravity => "Antigravity CLI",
+            Self::Claude => ProviderMetadata {
+                key: "claude",
+                name: "Claude Code",
+            },
+            Self::Codex => ProviderMetadata {
+                key: "codex",
+                name: "Codex CLI",
+            },
+            Self::Copilot => ProviderMetadata {
+                key: "copilot",
+                name: "GitHub Copilot",
+            },
+            Self::Gemini => ProviderMetadata {
+                key: "gemini",
+                name: "Gemini CLI",
+            },
+            Self::Antigravity => ProviderMetadata {
+                key: "antigravity",
+                name: "Antigravity CLI",
+            },
         }
     }
+}
+
+struct ProviderMetadata {
+    key: &'static str,
+    name: &'static str,
 }
 
 impl fmt::Display for ProviderKey {
@@ -87,6 +105,8 @@ pub enum DiscoveryState {
 pub enum DiscoveryError {
     /// The provider-specific source could not be inspected.
     SourceUnavailable,
+    /// A source exists but is not the expected filesystem shape.
+    UnexpectedSourceType,
 }
 
 impl DiscoveryError {
@@ -94,6 +114,9 @@ impl DiscoveryError {
     pub const fn detail(self) -> &'static str {
         match self {
             Self::SourceUnavailable => "provider credential source could not be inspected",
+            Self::UnexpectedSourceType => {
+                "provider credential source has an unexpected filesystem type"
+            }
         }
     }
 }

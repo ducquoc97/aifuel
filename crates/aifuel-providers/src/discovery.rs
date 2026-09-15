@@ -42,22 +42,30 @@ impl DiscoveryContext {
     }
 
     /// Inspect one provider-owned relative source without reading its content.
-    pub(crate) fn inspect_source(&self, relative: &str) -> Result<DiscoveryState, DiscoveryError> {
+    pub(crate) fn inspect_source(
+        &self,
+        relative: &str,
+        expected: SourceKind,
+    ) -> Result<DiscoveryState, DiscoveryError> {
         match fs::metadata(self.home_dir.join(relative)) {
-            Ok(_) => Ok(DiscoveryState::Present),
+            Ok(metadata) if expected.matches(&metadata) => Ok(DiscoveryState::Present),
+            Ok(_) => Err(DiscoveryError::UnexpectedSourceType),
             Err(error) if is_absent(&error) => Ok(DiscoveryState::Absent),
             Err(_) => Err(DiscoveryError::SourceUnavailable),
         }
     }
 
     /// Inspect alternative provider-owned sources.
-    pub(crate) fn inspect_any(&self, sources: &[&str]) -> Result<DiscoveryState, DiscoveryError> {
+    pub(crate) fn inspect_any(
+        &self,
+        sources: &[(&str, SourceKind)],
+    ) -> Result<DiscoveryState, DiscoveryError> {
         let mut unavailable = false;
-        for source in sources {
-            match self.inspect_source(source) {
+        for (source, expected) in sources {
+            match self.inspect_source(source, *expected) {
                 Ok(DiscoveryState::Present) => return Ok(DiscoveryState::Present),
                 Ok(DiscoveryState::Absent) => {}
-                Err(DiscoveryError::SourceUnavailable) => unavailable = true,
+                Err(_) => unavailable = true,
             }
         }
 
@@ -70,10 +78,22 @@ impl DiscoveryContext {
 }
 
 fn is_absent(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-    )
+    error.kind() == io::ErrorKind::NotFound
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceKind {
+    File,
+    Directory,
+}
+
+impl SourceKind {
+    fn matches(self, metadata: &fs::Metadata) -> bool {
+        match self {
+            Self::File => metadata.is_file(),
+            Self::Directory => metadata.is_dir(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

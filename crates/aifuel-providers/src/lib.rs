@@ -18,24 +18,64 @@ use aifuel_core::{
     DiscoveryError, DiscoveryFailure, DiscoveryReport, DiscoveryState, ProviderDescriptor,
 };
 
-/// A provider object that was initialized after its source was discovered.
-///
-/// The object carries identity only until its provider-specific quota adapter
-/// is implemented. Constructing one has no network or credential side effect.
-pub trait ProviderAdapter: Send + Sync {
-    fn descriptor(&self) -> ProviderDescriptor;
+/// A static Catalog Provider definition whose discovery rule lives beside it.
+pub struct CatalogProvider {
+    descriptor: ProviderDescriptor,
+    discover: fn(&DiscoveryContext) -> Result<DiscoveryState, DiscoveryError>,
 }
 
-/// A static Supported Provider definition.
-pub trait ProviderDefinition: Send + Sync {
+impl CatalogProvider {
+    pub const fn new(
+        key: aifuel_core::ProviderKey,
+        discover: fn(&DiscoveryContext) -> Result<DiscoveryState, DiscoveryError>,
+    ) -> Self {
+        Self {
+            descriptor: ProviderDescriptor::for_key(key),
+            discover,
+        }
+    }
+}
+
+impl CatalogProviderDefinition for CatalogProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor
+    }
+
+    fn discover(&self, context: &DiscoveryContext) -> Result<DiscoveryState, DiscoveryError> {
+        (self.discover)(context)
+    }
+
+    fn initialize(&self) -> InitializedProvider {
+        initialized_provider(self.descriptor)
+    }
+}
+
+/// A Catalog Provider object initialized after its source was discovered.
+///
+/// The object carries identity only until its provider-specific quota
+/// implementation is added. Constructing one has no network or credential
+/// side effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InitializedProvider {
+    descriptor: ProviderDescriptor,
+}
+
+impl InitializedProvider {
+    pub fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor
+    }
+}
+
+/// A static Catalog Provider definition.
+pub trait CatalogProviderDefinition: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
     fn discover(&self, context: &DiscoveryContext) -> Result<DiscoveryState, DiscoveryError>;
-    fn initialize(&self) -> Box<dyn ProviderAdapter>;
+    fn initialize(&self) -> InitializedProvider;
 }
 
-/// The result of discovery plus the adapters created for present sources.
+/// The result of discovery plus the initialized providers for present sources.
 pub struct InitializedProviders {
-    adapters: Vec<Box<dyn ProviderAdapter>>,
+    providers: Vec<InitializedProvider>,
     report: DiscoveryReport,
 }
 
@@ -44,40 +84,40 @@ impl InitializedProviders {
         &self.report
     }
 
-    pub fn adapters(&self) -> impl Iterator<Item = &dyn ProviderAdapter> {
-        self.adapters.iter().map(Box::as_ref)
+    pub fn providers(&self) -> impl Iterator<Item = &InitializedProvider> {
+        self.providers.iter()
     }
 
     pub fn len(&self) -> usize {
-        self.adapters.len()
+        self.providers.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.adapters.is_empty()
+        self.providers.is_empty()
     }
 }
 
-/// A registry over an explicit catalog supplied by the application.
+/// A registry over an explicit Catalog Provider catalog supplied by the application.
 pub struct ProviderRegistry<'a> {
-    definitions: &'a [&'a dyn ProviderDefinition],
+    definitions: &'a [&'a dyn CatalogProviderDefinition],
 }
 
 impl<'a> ProviderRegistry<'a> {
-    pub const fn new(definitions: &'a [&'a dyn ProviderDefinition]) -> Self {
+    pub const fn new(definitions: &'a [&'a dyn CatalogProviderDefinition]) -> Self {
         Self { definitions }
     }
 
     /// Recompute discovery and initialize only the current Discovered Providers.
     pub fn discover_and_initialize(&self, context: &DiscoveryContext) -> InitializedProviders {
         let mut report = DiscoveryReport::new();
-        let mut adapters = Vec::new();
+        let mut providers = Vec::new();
 
         for definition in self.definitions {
             let descriptor = definition.descriptor();
             match definition.discover(context) {
                 Ok(DiscoveryState::Present) => {
                     report.providers.push(descriptor);
-                    adapters.push(definition.initialize());
+                    providers.push(definition.initialize());
                 }
                 Ok(DiscoveryState::Absent) => {}
                 Err(error) => report
@@ -86,12 +126,12 @@ impl<'a> ProviderRegistry<'a> {
             }
         }
 
-        InitializedProviders { adapters, report }
+        InitializedProviders { providers, report }
     }
 }
 
-/// The explicit catalog of the five currently supported provider identities.
-pub static SUPPORTED_PROVIDERS: &[&dyn ProviderDefinition] = &[
+/// The explicit catalog of the five current Catalog Provider identities.
+pub static CATALOG_PROVIDERS: &[&dyn CatalogProviderDefinition] = &[
     &claude::DEFINITION,
     &codex::DEFINITION,
     &copilot::DEFINITION,
@@ -100,21 +140,11 @@ pub static SUPPORTED_PROVIDERS: &[&dyn ProviderDefinition] = &[
 ];
 
 pub fn default_registry() -> ProviderRegistry<'static> {
-    ProviderRegistry::new(SUPPORTED_PROVIDERS)
+    ProviderRegistry::new(CATALOG_PROVIDERS)
 }
 
-struct InitializedAdapter {
-    descriptor: ProviderDescriptor,
-}
-
-impl ProviderAdapter for InitializedAdapter {
-    fn descriptor(&self) -> ProviderDescriptor {
-        self.descriptor
-    }
-}
-
-fn initialized_adapter(descriptor: ProviderDescriptor) -> Box<dyn ProviderAdapter> {
-    Box::new(InitializedAdapter { descriptor })
+pub(crate) fn initialized_provider(descriptor: ProviderDescriptor) -> InitializedProvider {
+    InitializedProvider { descriptor }
 }
 
 #[cfg(test)]
@@ -168,14 +198,14 @@ mod tests {
 
     fn keys(selection: &InitializedProviders) -> Vec<ProviderKey> {
         selection
-            .adapters()
+            .providers()
             .map(|provider| provider.descriptor().key)
             .collect()
     }
 
     #[test]
     fn catalog_is_explicit_and_keeps_the_five_provider_identities() {
-        let keys: Vec<_> = SUPPORTED_PROVIDERS
+        let keys: Vec<_> = CATALOG_PROVIDERS
             .iter()
             .map(|provider| provider.descriptor().key)
             .collect();
@@ -234,13 +264,54 @@ mod tests {
         assert_eq!(keys(&selection), vec![ProviderKey::Copilot]);
     }
 
+    #[test]
+    fn an_uninspectable_parent_is_reported_as_a_discovery_failure() {
+        let home = TestHome::new();
+        home.write_file(".gemini", b"this is a file, not a directory");
+
+        let selection = default_registry().discover_and_initialize(&home.context());
+        let failures: Vec<_> = selection
+            .report()
+            .discovery_errors
+            .iter()
+            .map(|failure| failure.provider.key)
+            .collect();
+
+        assert!(selection.is_empty());
+        assert_eq!(
+            failures,
+            vec![ProviderKey::Gemini, ProviderKey::Antigravity]
+        );
+    }
+
+    #[test]
+    fn source_shape_errors_are_reported_without_initializing_the_provider() {
+        let home = TestHome::new();
+        home.create_directory(".copilot/config.json");
+        home.write_file(".gemini/antigravity", b"file where directory is expected");
+
+        let selection = default_registry().discover_and_initialize(&home.context());
+        let failures: Vec<_> = selection
+            .report()
+            .discovery_errors
+            .iter()
+            .map(|failure| failure.provider.key)
+            .collect();
+
+        assert!(selection.is_empty());
+        assert_eq!(
+            failures,
+            vec![ProviderKey::Copilot, ProviderKey::Antigravity]
+        );
+    }
+
     struct ControlledDefinition {
         descriptor: ProviderDescriptor,
         state: Result<DiscoveryState, DiscoveryError>,
         initialized: Arc<AtomicUsize>,
     }
 
-    impl ProviderDefinition for ControlledDefinition {
+    impl CatalogProviderDefinition for ControlledDefinition {
         fn descriptor(&self) -> ProviderDescriptor {
             self.descriptor
         }
@@ -249,9 +320,9 @@ mod tests {
             self.state
         }
 
-        fn initialize(&self) -> Box<dyn ProviderAdapter> {
+        fn initialize(&self) -> InitializedProvider {
             self.initialized.fetch_add(1, Ordering::Relaxed);
-            initialized_adapter(self.descriptor)
+            initialized_provider(self.descriptor)
         }
     }
 
@@ -275,7 +346,7 @@ mod tests {
             state: Err(DiscoveryError::SourceUnavailable),
             initialized: Arc::clone(&failed_count),
         };
-        let definitions: [&dyn ProviderDefinition; 3] = [&present, &absent, &failed];
+        let definitions: [&dyn CatalogProviderDefinition; 3] = [&present, &absent, &failed];
         let selection = ProviderRegistry::new(&definitions)
             .discover_and_initialize(&DiscoveryContext::new(Path::new("/unused")));
 
