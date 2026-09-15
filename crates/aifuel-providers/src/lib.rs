@@ -88,13 +88,20 @@ impl InitializedProvider {
 }
 
 /// A static Catalog Provider definition.
+///
+/// The shared implementation keeps this discovery seam focused on the
+/// provider lifecycle. It does not expose quota or execution behavior.
 pub trait CatalogProviderDefinition: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
     fn discover(&self, context: &DiscoveryContext) -> Result<DiscoveryState, DiscoveryError>;
     fn initialize(&self) -> InitializedProvider;
 }
 
-/// The result of discovery plus the initialized providers for present sources.
+/// The result of discovery plus the initialized provider identities for present
+/// sources.
+///
+/// The concrete handles make the initialization boundary observable now, while
+/// keeping quota collection outside this issue.
 pub struct InitializedProviders {
     providers: Vec<InitializedProvider>,
     report: DiscoveryReport,
