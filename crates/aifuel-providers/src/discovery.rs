@@ -56,23 +56,22 @@ impl DiscoveryContext {
     }
 
     /// Inspect alternative provider-owned sources.
-    pub(crate) fn inspect_any(
-        &self,
-        sources: &[(&str, SourceKind)],
-    ) -> Result<DiscoveryState, DiscoveryError> {
-        let mut unavailable = false;
+    pub(crate) fn inspect_any<'a, I>(&self, sources: I) -> Result<DiscoveryState, DiscoveryError>
+    where
+        I: IntoIterator<Item = (&'a str, SourceKind)>,
+    {
+        let mut failure = None;
         for (source, expected) in sources {
-            match self.inspect_source(source, *expected) {
+            match self.inspect_source(source, expected) {
                 Ok(DiscoveryState::Present) => return Ok(DiscoveryState::Present),
                 Ok(DiscoveryState::Absent) => {}
-                Err(_) => unavailable = true,
+                Err(error) => failure = Some(failure.unwrap_or(error)),
             }
         }
 
-        if unavailable {
-            Err(DiscoveryError::SourceUnavailable)
-        } else {
-            Ok(DiscoveryState::Absent)
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(DiscoveryState::Absent),
         }
     }
 }

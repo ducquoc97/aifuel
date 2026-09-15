@@ -1,9 +1,5 @@
-use super::discovery::SourceKind;
-use super::{CatalogProvider, DiscoveryContext};
-use aifuel_core::{DiscoveryError, DiscoveryState, ProviderKey};
+use super::CatalogProvider;
+use aifuel_core::ProviderKey;
 
-fn discover(context: &DiscoveryContext) -> Result<DiscoveryState, DiscoveryError> {
-    context.inspect_source(".gemini/oauth_creds.json", SourceKind::File)
-}
-
-pub static DEFINITION: CatalogProvider = CatalogProvider::new(ProviderKey::Gemini, discover);
+pub static DEFINITION: CatalogProvider =
+    CatalogProvider::file_source(ProviderKey::Gemini, ".gemini/oauth_creds.json");

@@ -1,9 +1,5 @@
-use super::discovery::SourceKind;
-use super::{CatalogProvider, DiscoveryContext};
-use aifuel_core::{DiscoveryError, DiscoveryState, ProviderKey};
+use super::CatalogProvider;
+use aifuel_core::ProviderKey;
 
-fn discover(context: &DiscoveryContext) -> Result<DiscoveryState, DiscoveryError> {
-    context.inspect_source(".codex/auth.json", SourceKind::File)
-}
-
-pub static DEFINITION: CatalogProvider = CatalogProvider::new(ProviderKey::Codex, discover);
+pub static DEFINITION: CatalogProvider =
+    CatalogProvider::file_source(ProviderKey::Codex, ".codex/auth.json");

@@ -17,21 +17,35 @@ pub use discovery::{DiscoveryContext, DiscoveryContextError};
 use aifuel_core::{
     DiscoveryError, DiscoveryFailure, DiscoveryReport, DiscoveryState, ProviderDescriptor,
 };
+use discovery::SourceKind;
 
-/// A static Catalog Provider definition whose discovery rule lives beside it.
+/// The provider-owned source markers used by a Catalog Provider definition.
+enum CredentialSources {
+    File(&'static str),
+    Directories(&'static [&'static str]),
+}
+
+/// A static Catalog Provider definition.
 pub struct CatalogProvider {
     descriptor: ProviderDescriptor,
-    discover: fn(&DiscoveryContext) -> Result<DiscoveryState, DiscoveryError>,
+    sources: CredentialSources,
 }
 
 impl CatalogProvider {
-    pub const fn new(
+    pub const fn file_source(key: aifuel_core::ProviderKey, source: &'static str) -> Self {
+        Self {
+            descriptor: ProviderDescriptor::for_key(key),
+            sources: CredentialSources::File(source),
+        }
+    }
+
+    pub const fn directory_sources(
         key: aifuel_core::ProviderKey,
-        discover: fn(&DiscoveryContext) -> Result<DiscoveryState, DiscoveryError>,
+        sources: &'static [&'static str],
     ) -> Self {
         Self {
             descriptor: ProviderDescriptor::for_key(key),
-            discover,
+            sources: CredentialSources::Directories(sources),
         }
     }
 }
@@ -42,7 +56,15 @@ impl CatalogProviderDefinition for CatalogProvider {
     }
 
     fn discover(&self, context: &DiscoveryContext) -> Result<DiscoveryState, DiscoveryError> {
-        (self.discover)(context)
+        match self.sources {
+            CredentialSources::File(source) => context.inspect_source(source, SourceKind::File),
+            CredentialSources::Directories(sources) => context.inspect_any(
+                sources
+                    .iter()
+                    .copied()
+                    .map(|source| (source, SourceKind::Directory)),
+            ),
+        }
     }
 
     fn initialize(&self) -> InitializedProvider {
@@ -52,9 +74,8 @@ impl CatalogProviderDefinition for CatalogProvider {
 
 /// A Catalog Provider object initialized after its source was discovered.
 ///
-/// The object carries identity only until its provider-specific quota
-/// implementation is added. Constructing one has no network or credential
-/// side effect.
+/// This handle is the current collection boundary: it records which catalog
+/// provider passed discovery without reading or retaining credential content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InitializedProvider {
     descriptor: ProviderDescriptor,
