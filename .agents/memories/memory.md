@@ -9,3 +9,11 @@
 - Hide a provider when its discovery check fails, but report the failure separately in the dashboard, stderr, and JSON. One-shot modes return a nonzero exit code while preserving successful partial results.
 - Treat an empty discovered-provider set as a successful result with an intentional empty state in every output mode.
 - Keep a static supported-provider catalog. Each provider class owns its provider-specific discovery knowledge.
+
+## Rust Provider Discovery
+
+- Keep discovery local, side-effect-free, and metadata-only. Do not parse credentials, refresh tokens, call provider APIs, spawn subprocesses, or write user state.
+- Resolve platform home directories at the executable boundary; inject an explicit discovery context into library code and tests.
+- Let each provider definition own its provider-specific source markers. A present marker initializes an identity-only adapter without validating its contents.
+- Recompute discovery for each collection. Initialize only present providers; report inspection failures separately with safe, path-free diagnostics.
+- Keep the static provider catalog separate from the discovered set. Preserve empty discovery as a successful empty result and keep provider-owned authentication boundaries explicit.
