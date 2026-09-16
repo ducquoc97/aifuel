@@ -163,8 +163,8 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
     let integration = integration::for_provider(request.provider)?;
     integration.validate(request)?;
     let args = (integration.build_args)(request)?;
-    integration::preflight(&integration, request.timeout, started_at)?;
-    let mut command = Command::new(integration.program());
+    let program = integration::preflight(&integration, request.timeout, started_at)?;
+    let mut command = Command::new(&program);
     command
         .args(args)
         .current_dir(effective_working_directory.expect("launcher always has a working directory"))
@@ -173,10 +173,9 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound => LaunchError::InvalidRequest(format!(
-            "provider executable {:?} was not found",
-            integration.program()
-        )),
+        io::ErrorKind::NotFound => {
+            LaunchError::InvalidRequest(format!("provider executable {:?} was not found", program))
+        }
         _ => LaunchError::Io(error),
     })?;
     let stdout = child.stdout.take().expect("stdout was requested");

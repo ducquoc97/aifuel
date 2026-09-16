@@ -44,10 +44,6 @@ impl ProviderIntegration {
         }
         Ok(())
     }
-
-    pub(super) fn program(&self) -> &'static str {
-        self.program
-    }
 }
 
 pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration, LaunchError> {
@@ -104,19 +100,32 @@ pub(super) fn preflight(
     integration: &ProviderIntegration,
     timeout: Option<Duration>,
     started_at: Instant,
-) -> Result<(), LaunchError> {
-    let mut child = Command::new(integration.program)
-        .args(integration.preflight_args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| match error.kind() {
-            io::ErrorKind::NotFound => LaunchError::InvalidRequest(format!(
-                "provider executable {:?} was not found",
-                integration.program
-            )),
-            _ => LaunchError::Io(error),
-        })?;
+) -> Result<String, LaunchError> {
+    let mut program = None;
+    let mut child = None;
+    for candidate in program_candidates(integration.program) {
+        match Command::new(&candidate)
+            .args(integration.preflight_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(process) => {
+                program = Some(candidate);
+                child = Some(process);
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(LaunchError::Io(error)),
+        }
+    }
+    let program = program.ok_or_else(|| {
+        LaunchError::InvalidRequest(format!(
+            "provider executable {:?} was not found",
+            integration.program
+        ))
+    })?;
+    let mut child = child.expect("a candidate process exists with a resolved program");
     let stdout = child.stdout.take().expect("preflight stdout was requested");
     let reader = thread::spawn(move || read_output(stdout));
     let deadline = timeout.map(|timeout| started_at + timeout);
@@ -143,12 +152,30 @@ pub(super) fn preflight(
             .iter()
             .all(|flag| help.contains(flag))
     {
-        Ok(())
+        Ok(program)
     } else {
         Err(LaunchError::InvalidRequest(format!(
             "provider executable {:?} failed capability preflight for {}",
             integration.program, integration.provider
         )))
+    }
+}
+
+fn program_candidates(program: &str) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let mut candidates = vec![program.to_owned()];
+        if !program.ends_with(".cmd") {
+            candidates.push(format!("{program}.cmd"));
+        }
+        if !program.ends_with(".bat") {
+            candidates.push(format!("{program}.bat"));
+        }
+        candidates
+    }
+    #[cfg(not(windows))]
+    {
+        vec![program.to_owned()]
     }
 }
 
