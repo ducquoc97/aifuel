@@ -41,7 +41,7 @@ pub fn install_fake_command(directory: &Path, command_name: &str) {
         fs::write(
             &path,
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\nprintf 'exec --prompt --approval-mode --output-format --print --permission-mode --sandbox --plan\\n'\nexit 0\nfi\nprintf 'fake {command_name} response: %s\\n' \"$*\"\n"
+                "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\nprintf 'exec --prompt --approval-mode --output-format --print --permission-mode --sandbox --plan\\n'\nexit 0\nfi\nif [ \"$1\" = \"exec\" ] && [ \"$2\" = \"--help\" ]; then\nprintf 'exec --prompt --approval-mode --output-format --print --permission-mode --sandbox --plan\\n'\nexit 0\nfi\nprintf 'fake {command_name} response: %s\\n' \"$*\"\n"
             ),
         )
         .expect("fake provider executable should be writable");
@@ -58,7 +58,7 @@ pub fn install_fake_command(directory: &Path, command_name: &str) {
         fs::write(
             directory.join(format!("{command_name}.cmd")),
             format!(
-                "@echo off\nif \"%~1\"==\"--help\" (echo exec --prompt --approval-mode --output-format --print --permission-mode --sandbox --plan & exit /b 0)\necho fake {command_name} response %*\n"
+                "@echo off\nif \"%~1\"==\"--help\" (echo exec --prompt --approval-mode --output-format --print --permission-mode --sandbox --plan & exit /b 0)\nif \"%~1\"==\"exec\" if \"%~2\"==\"--help\" (echo exec --prompt --approval-mode --output-format --print --permission-mode --sandbox --plan & exit /b 0)\necho fake {command_name} response %*\n"
             ),
         )
         .expect("fake provider executable should be writable");

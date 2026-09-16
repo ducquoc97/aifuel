@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 pub(super) struct ProviderIntegration {
     provider: ProviderKey,
     program: &'static str,
+    preflight_args: &'static [&'static str],
     required_flags: &'static [&'static str],
     pub(super) build_args: fn(&RunRequest) -> Result<Vec<String>, LaunchError>,
     supports_resume: bool,
@@ -54,6 +55,7 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
         ProviderKey::Gemini => Ok(ProviderIntegration {
             provider,
             program: "gemini",
+            preflight_args: &["--help"],
             required_flags: &["--prompt", "--approval-mode", "--output-format"],
             build_args: gemini_args,
             supports_resume: true,
@@ -64,6 +66,7 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
         ProviderKey::Claude => Ok(ProviderIntegration {
             provider,
             program: "claude",
+            preflight_args: &["--help"],
             required_flags: &["--print", "--permission-mode", "--output-format"],
             build_args: claude_args,
             supports_resume: true,
@@ -74,6 +77,7 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
         ProviderKey::Codex => Ok(ProviderIntegration {
             provider,
             program: "codex",
+            preflight_args: &["exec", "--help"],
             required_flags: &["exec", "--sandbox"],
             build_args: codex_args,
             supports_resume: true,
@@ -84,6 +88,7 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
         ProviderKey::Copilot => Ok(ProviderIntegration {
             provider,
             program: "copilot",
+            preflight_args: &["--help"],
             required_flags: &["--prompt", "--plan", "--output-format"],
             build_args: copilot_args,
             supports_resume: true,
@@ -101,7 +106,7 @@ pub(super) fn preflight(
     started_at: Instant,
 ) -> Result<(), LaunchError> {
     let mut child = Command::new(integration.program)
-        .arg("--help")
+        .args(integration.preflight_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

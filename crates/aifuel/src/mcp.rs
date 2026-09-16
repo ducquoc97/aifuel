@@ -160,6 +160,7 @@ fn filter_status(state: &Value, arguments: &Value) -> Value {
                 if let Some(errors) = collection.get_mut("errors").and_then(Value::as_array_mut) {
                     errors.push(json!({
                         "provider_id": provider_id,
+                        "account_id": account_id,
                         "code": "unavailable",
                         "message": "requested provider or account is not currently discovered"
                     }));
