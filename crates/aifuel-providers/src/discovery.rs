@@ -33,7 +33,7 @@ impl DiscoveryContext {
             .or_else(|| {
                 let drive = env::var_os("HOMEDRIVE")?;
                 let path = env::var_os("HOMEPATH")?;
-                Some(PathBuf::from(drive).join(path))
+                Some(PathBuf::from(drive).join(path).into())
             });
 
         #[cfg(not(windows))]
