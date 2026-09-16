@@ -7,6 +7,8 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod integration;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AccessMode {
     #[serde(rename = "read-only")]
@@ -78,7 +80,8 @@ pub struct RunRequest {
 #[derive(Debug, Serialize)]
 pub struct RunResult {
     pub run_id: String,
-    pub session_id: String,
+    pub local_session_id: String,
+    pub session_id: Option<String>,
     pub resumed_from: Option<String>,
     pub provider_id: ProviderKey,
     pub requested_model: Option<String>,
@@ -160,10 +163,11 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .as_deref()
         .or_else(|| temporary_directory.as_ref().map(TemporaryDirectory::path));
 
-    let integration = integration_for(request.provider)?;
-    let args = command_for(request, &integration)?;
-    preflight(&integration)?;
-    let mut command = Command::new(integration.program);
+    let integration = integration::for_provider(request.provider)?;
+    integration.validate(request)?;
+    let args = integration::command_for(request, &integration)?;
+    integration::preflight(&integration)?;
+    let mut command = Command::new(integration.program());
     command
         .args(args)
         .current_dir(effective_working_directory.expect("launcher always has a working directory"))
@@ -174,7 +178,7 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
     let mut child = command.spawn().map_err(|error| match error.kind() {
         io::ErrorKind::NotFound => LaunchError::InvalidRequest(format!(
             "provider executable {:?} was not found",
-            integration.program
+            integration.program()
         )),
         _ => LaunchError::Io(error),
     })?;
@@ -219,10 +223,7 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
             .unwrap_or_default()
             .as_nanos()
     );
-    let session_id = request
-        .resume
-        .clone()
-        .unwrap_or_else(|| format!("session-{run_id}"));
+    let local_session_id = format!("session-{run_id}");
     let diagnostics = (!error_output.trim().is_empty()).then_some(error_output);
     let error = if exit_code == Some(0) && !timed_out {
         None
@@ -233,7 +234,8 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
     };
     Ok(RunResult {
         run_id,
-        session_id,
+        local_session_id,
+        session_id: None,
         provider_id: request.provider,
         requested_model: request.model.clone(),
         effective_model: None,
@@ -256,186 +258,6 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
             .expect("launcher always has a working directory")
             .to_path_buf(),
     })
-}
-
-fn preflight(integration: &ProviderIntegration) -> Result<(), LaunchError> {
-    let output = Command::new(integration.program)
-        .arg("--help")
-        .output()
-        .map_err(|error| match error.kind() {
-            io::ErrorKind::NotFound => LaunchError::InvalidRequest(format!(
-                "provider executable {:?} was not found",
-                integration.program
-            )),
-            _ => LaunchError::Io(error),
-        })?;
-    let help = String::from_utf8_lossy(&output.stdout);
-    if output.status.success()
-        && integration
-            .required_flags
-            .iter()
-            .all(|flag| help.contains(flag))
-    {
-        Ok(())
-    } else {
-        Err(LaunchError::InvalidRequest(format!(
-            "provider executable {:?} failed capability preflight for {}",
-            integration.program, integration.provider
-        )))
-    }
-}
-
-struct ProviderIntegration {
-    provider: ProviderKey,
-    program: &'static str,
-    required_flags: &'static [&'static str],
-    build_args: fn(&RunRequest) -> Result<Vec<String>, LaunchError>,
-}
-
-fn integration_for(provider: ProviderKey) -> Result<ProviderIntegration, LaunchError> {
-    match provider {
-        ProviderKey::Gemini => Ok(ProviderIntegration {
-            provider,
-            program: "gemini",
-            required_flags: &["--prompt", "--approval-mode", "--output-format"],
-            build_args: gemini_args,
-        }),
-        ProviderKey::Claude => Ok(ProviderIntegration {
-            provider,
-            program: "claude",
-            required_flags: &["--print", "--permission-mode", "--output-format"],
-            build_args: claude_args,
-        }),
-        ProviderKey::Codex => Ok(ProviderIntegration {
-            provider,
-            program: "codex",
-            required_flags: &["exec", "--sandbox"],
-            build_args: codex_args,
-        }),
-        ProviderKey::Copilot => Ok(ProviderIntegration {
-            provider,
-            program: "copilot",
-            required_flags: &["--prompt", "--plan", "--output-format"],
-            build_args: copilot_args,
-        }),
-        ProviderKey::Antigravity => Err(LaunchError::UnsupportedProvider(provider)),
-    }
-}
-
-fn command_for(
-    request: &RunRequest,
-    integration: &ProviderIntegration,
-) -> Result<Vec<String>, LaunchError> {
-    (integration.build_args)(request)
-}
-
-fn gemini_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
-    let mut args = vec![
-        "--prompt".to_owned(),
-        request.prompt.clone(),
-        "--skip-trust".to_owned(),
-    ];
-    if let Some(model) = &request.model {
-        args.extend(["--model".to_owned(), model.clone()]);
-    }
-    args.extend([
-        "--approval-mode".to_owned(),
-        match request.access {
-            AccessMode::ReadOnly => "plan".to_owned(),
-            AccessMode::WorkspaceWrite => "auto_edit".to_owned(),
-        },
-        "--output-format".to_owned(),
-        provider_output_format(request).to_owned(),
-    ]);
-    if let Some(session) = &request.resume {
-        args.extend(["--resume".to_owned(), session.clone()]);
-    }
-    Ok(args)
-}
-
-fn claude_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
-    let mut args = vec!["--print".to_owned(), request.prompt.clone()];
-    if let Some(model) = &request.model {
-        args.extend(["--model".to_owned(), model.clone()]);
-    }
-    args.extend([
-        "--permission-mode".to_owned(),
-        match request.access {
-            AccessMode::ReadOnly => "plan".to_owned(),
-            AccessMode::WorkspaceWrite => "acceptEdits".to_owned(),
-        },
-        "--output-format".to_owned(),
-        provider_output_format(request).to_owned(),
-    ]);
-    if let Some(session) = &request.resume {
-        args.extend(["--resume".to_owned(), session.clone()]);
-    }
-    Ok(args)
-}
-
-fn codex_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
-    let mut args = vec!["exec".to_owned()];
-    if let Some(session) = &request.resume {
-        args.extend(["resume".to_owned(), session.clone()]);
-    }
-    if let Some(model) = &request.model {
-        args.extend(["--model".to_owned(), model.clone()]);
-    }
-    args.extend([
-        "--sandbox".to_owned(),
-        match request.access {
-            AccessMode::ReadOnly => "read-only".to_owned(),
-            AccessMode::WorkspaceWrite => "workspace-write".to_owned(),
-        },
-    ]);
-    if request.output != OutputFormat::Text {
-        args.push("--json".to_owned());
-    }
-    args.push(request.prompt.clone());
-    args.insert(1, "--skip-git-repo-check".to_owned());
-    Ok(args)
-}
-
-fn copilot_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
-    if request.access == AccessMode::WorkspaceWrite {
-        return Err(LaunchError::InvalidRequest(
-            "Copilot workspace-write execution is not verified".to_owned(),
-        ));
-    }
-    if request.output == OutputFormat::Jsonl {
-        return Err(LaunchError::InvalidRequest(
-            "Copilot JSONL output is not verified".to_owned(),
-        ));
-    }
-    let mut args = vec![
-        "--prompt".to_owned(),
-        request.prompt.clone(),
-        "--plan".to_owned(),
-    ];
-    if let Some(model) = &request.model {
-        args.extend(["--model".to_owned(), model.clone()]);
-    }
-    args.extend([
-        "--output-format".to_owned(),
-        match request.output {
-            OutputFormat::Text => "text",
-            OutputFormat::Json => "json",
-            OutputFormat::Jsonl => unreachable!("JSONL was rejected above"),
-        }
-        .to_owned(),
-    ]);
-    if let Some(session) = &request.resume {
-        args.extend(["--resume".to_owned(), session.clone()]);
-    }
-    Ok(args)
-}
-
-fn provider_output_format(request: &RunRequest) -> &'static str {
-    match request.output {
-        OutputFormat::Text => "text",
-        OutputFormat::Json => "json",
-        OutputFormat::Jsonl => "stream-json",
-    }
 }
 
 fn read_stream<R: Read>(mut reader: R) -> Result<String, io::Error> {

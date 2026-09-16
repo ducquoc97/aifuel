@@ -84,14 +84,24 @@ pub(crate) fn statuses() -> Vec<CatalogProviderStatus> {
                 _ => (CapabilityState::Unsupported, CapabilityState::Unsupported),
             };
             let implemented = !matches!(monitoring, CapabilityState::Unsupported);
+            let platform_monitoring = if implemented {
+                CapabilityState::Unknown
+            } else {
+                CapabilityState::Unsupported
+            };
+            let platform_agent_execution = if agent_execution == CapabilityState::Supported {
+                CapabilityState::Unknown
+            } else {
+                agent_execution
+            };
             let platforms = ["macos", "linux", "windows"]
                 .into_iter()
                 .map(|platform| CatalogPlatformStatus {
                     platform: platform.to_owned(),
-                    monitoring,
-                    agent_execution,
+                    monitoring: platform_monitoring,
+                    agent_execution: platform_agent_execution,
                     reason: if implemented {
-                        "Rust adapter is implemented; live support still depends on provider credentials and platform CLI availability".to_owned()
+                        "Rust adapter is implemented, but this platform has not passed live acceptance in this build".to_owned()
                     } else {
                         "No Rust provider adapter is implemented; capability remains explicitly unsupported".to_owned()
                     },
