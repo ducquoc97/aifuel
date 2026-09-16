@@ -5,14 +5,18 @@
 //! user state. Quota adapters are added by later implementation issues.
 
 mod discovery;
+mod usage;
+mod usage_helpers;
 
 mod antigravity;
 mod claude;
+mod code_assist;
 mod codex;
 mod copilot;
 mod gemini;
 
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
+pub use usage::{CollectionConfig, UsageService};
 
 use aifuel_core::{
     DiscoveryError, DiscoveryFailure, DiscoveryReport, DiscoveryState, ProviderDescriptor,

@@ -1,49 +1,43 @@
   /* ============================================================
-     Apple Human Interface Guidelines - semantic design tokens
-     Type scale, spacing, and color follow the iOS/macOS HIG spec.
-     Dark is the default appearance; light is adopted automatically.
+     Apple Human Interface Guidelines - semantic design tokens.
+     The dashboard uses a light appearance by default.
      ============================================================ */
   :root {
-    color-scheme: dark;
+    color-scheme: light;
     --maxw: 1440px;
 
-    /* Grouped backgrounds (dark) */
-    --bg:          #000000;
-    --bg-elev:     #1c1c1e;
-    --bg-elev-2:   #2c2c2e;
-    --bg-toolbar:  rgba(28,28,30,.76);
+    --bg:          #f2f2f7;
+    --bg-elev:     #ffffff;
+    --bg-elev-2:   #f2f2f7;
+    --bg-toolbar:  rgba(242,242,247,.82);
 
-    /* Label hierarchy (dark) - HIG spec */
-    --label:    #ffffff;
-    --label-2:  rgba(235,235,245,.60);
-    --label-3:  rgba(235,235,245,.30);
-    --label-4:  rgba(235,235,245,.18);
+    --label:    #000000;
+    --label-2:  rgba(60,60,67,.60);
+    --label-3:  rgba(60,60,67,.30);
+    --label-4:  rgba(60,60,67,.18);
 
-    /* Separators & fills (dark) */
-    --separator: rgba(84,84,88,.55);
-    --fill-1:    rgba(120,120,128,.36);
-    --fill-3:    rgba(120,120,128,.24);
-    --fill-4:    rgba(118,118,128,.18);
+    --separator: rgba(60,60,67,.29);
+    --fill-1:    rgba(120,120,128,.20);
+    --fill-3:    rgba(118,118,128,.12);
+    --fill-4:    rgba(116,116,128,.08);
 
-    /* System colors (dark) - exact HIG values */
-    --blue:   #0a84ff;
-    --green:  #30d158;
-    --orange: #ff9f0a;
-    --red:    #ff453a;
-    --yellow: #ffd60a;
+    --blue:   #007aff;
+    --green:  #34c759;
+    --orange: #ff9500;
+    --red:    #ff3b30;
+    --yellow: #ffcc00;
     --gray:   #8e8e93;
-    --indigo: #5e5ce6;
+    --indigo: #5856d6;
 
-    /* Tinted fills */
-    --blue-tint:   rgba(10,132,255,.18);
-    --green-tint:  rgba(48,209,88,.18);
-    --orange-tint: rgba(255,159,10,.18);
-    --red-tint:    rgba(255,69,58,.18);
-    --yellow-tint: rgba(255,214,10,.14);
+    --blue-tint:   rgba(0,122,255,.12);
+    --green-tint:  rgba(52,199,89,.14);
+    --orange-tint: rgba(255,149,0,.14);
+    --red-tint:    rgba(255,59,48,.12);
+    --yellow-tint: rgba(255,204,0,.14);
 
     --radius-card: 16px;
     --radius-sm:   10px;
-    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 0 0 .5px rgba(255,255,255,.04);
+    --shadow: 0 1px 4px rgba(0,0,0,.08), 0 0 0 .5px rgba(0,0,0,.05);
 
     /* 8pt spacing grid */
     --space-1: 4px;
@@ -52,41 +46,6 @@
     --space-4: 16px;
     --space-5: 20px;
     --space-6: 24px;
-  }
-
-  @media (prefers-color-scheme: light) {
-    :root {
-      color-scheme: light;
-      --bg:         #f2f2f7;
-      --bg-elev:    #ffffff;
-      --bg-elev-2:  #f2f2f7;
-      --bg-toolbar: rgba(242,242,247,.82);
-
-      --label:    #000000;
-      --label-2:  rgba(60,60,67,.60);
-      --label-3:  rgba(60,60,67,.30);
-      --label-4:  rgba(60,60,67,.18);
-
-      --separator: rgba(60,60,67,.29);
-      --fill-1:    rgba(120,120,128,.20);
-      --fill-3:    rgba(118,118,128,.12);
-      --fill-4:    rgba(116,116,128,.08);
-
-      --blue:   #007aff;
-      --green:  #34c759;
-      --orange: #ff9500;
-      --red:    #ff3b30;
-      --yellow: #ffcc00;
-      --indigo: #5856d6;
-
-      --blue-tint:   rgba(0,122,255,.12);
-      --green-tint:  rgba(52,199,89,.14);
-      --orange-tint: rgba(255,149,0,.14);
-      --red-tint:    rgba(255,59,48,.12);
-      --yellow-tint: rgba(255,204,0,.14);
-
-      --shadow: 0 1px 4px rgba(0,0,0,.08), 0 0 0 .5px rgba(0,0,0,.05);
-    }
   }
 
   /* ---- Reset & base ---- */

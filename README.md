@@ -4,10 +4,10 @@
 
 You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity… so which one runs out first? `aifuel` reads each provider's own usage endpoint and shows the **quota you have left** — in one dashboard, ranked by whichever weekly / monthly window **resets soonest**, with a live countdown to every refill.
 
-Stdlib-only. No dependencies. Runs on **Windows, Linux, and macOS** — in your browser, your terminal, or as JSON.
+One native binary. Runs on **Windows, Linux, and macOS** in your browser, terminal, or an MCP host.
 
-![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-3776ab)
-![Dependencies: none](https://img.shields.io/badge/dependencies-none-3ddc97)
+![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-000000)
+![Native binary](https://img.shields.io/badge/runtime-native%20binary-3ddc97)
 ![Platforms: Windows · Linux · macOS](https://img.shields.io/badge/platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-8a94a6)
 ![Providers modularized](https://img.shields.io/badge/providers-modular-6ea8fe)
 
@@ -17,10 +17,13 @@ Stdlib-only. No dependencies. Runs on **Windows, Linux, and macOS** — in your 
 
 ## Why aifuel?
 
-You can't manage a limit you can't see. Most quota trackers are **macOS menu-bar apps** (nothing for Windows/Linux) or **terminal-only CLIs you have to compile or `npm`/`cargo install`** first. `aifuel` is all three things at once:
+You can't manage a limit you can't see. `aifuel` combines a local
+terminal summary, a browser dashboard, explicit provider execution, and a
+read-only MCP status server.
 
 - 🖥️ **Cross-platform *and* visual.** A real auto-refreshing dashboard on Windows, Linux **and** macOS — not just a Mac menu bar.
-- 📦 **Zero-install.** A small, stdlib-only Python app. No `npm`, no `cargo build`, no app bundle, no virtualenv. `git clone` and run.
+- 📦 **Single binary.** Build once with Cargo, then run without Python, Node.js,
+  or a virtual environment.
 - ⏳ **Ranked by what runs out first.** Sorted by soonest reset, with a per-window countdown and renew date, so you see the cliff *before* you hit it mid-task.
 - 🔋 **Shows what's *left*, not what you spent.** Remaining quota — not a cost/billing report.
 - 🔒 **Local-only and honest.** Reads each CLI's own credentials to call that provider's usage endpoint, exactly like the CLI does. Nothing is printed, logged, or sent anywhere else.
@@ -30,31 +33,37 @@ You can't manage a limit you can't see. Most quota trackers are **macOS menu-bar
 ```bash
 git clone --depth=1 https://github.com/ducquoc97/aifuel.git
 cd aifuel
-python3 src/aifuel.py          # dashboard + browser at http://127.0.0.1:8787
-python3 src/aifuel.py --no-browser   # serve without opening the browser
-python3 src/aifuel.py --text   # compact colored terminal summary
-python3 src/aifuel.py --json   # raw usage JSON, then exit
-python3 src/aifuel.py --port 9000
+cargo run -p aifuel -- --no-browser       # dashboard at http://127.0.0.1:8787
+cargo run -p aifuel -- --text             # terminal quota summary
+cargo run -p aifuel -- --json             # normalized status JSON
+cargo run -p aifuel -- run --provider gemini --prompt "Explain Rust ownership"
+cargo run -p aifuel -- mcp                 # read-only MCP server over stdio
 ```
 
-The only thing you need is `python3`. That's the entire dependency list.
+For a reusable binary, run `cargo build --release -p aifuel` and use
+`target/release/aifuel`.
 
-The CLI entrypoint lives at `src/aifuel.py`; provider handlers live under `src/aifuel/providers/`.
+## Rust CLI
 
-## Rust replacement
-
-The repository now contains the first Rust replacement slice as a Cargo workspace. It currently implements the read-only Provider Discovery boundary and keeps the existing Python application available while later Rust quota, dashboard, MCP, and launcher work is ported.
+The Cargo workspace contains the native application. The default command collects
+live status for discovered provider integrations. `run` delegates one
+explicit prompt to a selected installed provider CLI, and `mcp` serves
+read-only status over stdio.
 
 ```bash
-cargo run -p aifuel -- --text
-cargo run -p aifuel -- --json
+aifuel --text
+aifuel --json
+aifuel run --provider gemini --prompt "Explain Rust ownership"
+aifuel mcp
 ```
 
-The Rust command checks only provider-owned local source metadata. It does not read credential contents, refresh tokens, call provider APIs, or write user state.
+Provider Discovery checks only provider-owned local source metadata. Collection
+reads provider credentials to make read-only requests and never refreshes or
+writes credentials.
 
 ## Install as a global `aifuel` command
 
-The installers drop a tiny `aifuel` launcher on your `PATH` that forwards to this repo's `aifuel.py`, so every flag passes straight through (`--json`, `--text`, `--no-browser`, …).
+The installers build the Rust binary and place it on your `PATH`.
 
 **Linux / macOS** (and Windows via WSL or Git Bash):
 
@@ -71,7 +80,7 @@ Override the target dir with `BIN_DIR=/usr/local/bin ./scripts/install.sh`.
 **Windows** (PowerShell):
 
 ```powershell
-.\scripts\install.ps1                # installs aifuel.cmd into ~\.local\bin (+ adds it to PATH)
+.\scripts\install.ps1                # installs aifuel.exe into ~\.local\bin (+ adds it to PATH)
 aifuel                               # dashboard (open a NEW terminal after install)
 aifuel --json
 .\scripts\install.ps1 -Uninstall     # remove it
@@ -79,7 +88,8 @@ aifuel --json
 
 Override the target dir with `.\scripts\install.ps1 -BinDir 'C:\tools\bin'`.
 
-Both need only `python3` — no packaging, no dependencies. The launcher points back at the repo, so `git pull` updates `aifuel` too. (Don't move the repo, or re-run the installer after you do.)
+The installers require Rust and Cargo at install time. After installation,
+the command has no separately installed language runtime requirement.
 
 ## What it tracks
 
@@ -97,18 +107,20 @@ Both need only `python3` — no packaging, no dependencies. The launcher points 
 
 | Command | What you get |
 |---|---|
-| `aifuel` | Auto-refreshing **web dashboard** — cards, fuel bars, live countdowns |
+| `aifuel` | Auto-refreshing **web dashboard** - cards, fuel bars, live countdowns |
 | `aifuel --text` | Compact **colored terminal** summary (great over SSH) |
 | `aifuel --json` | **Raw JSON** for scripts, status bars, and piping |
+| `aifuel run --provider ... --prompt ...` | Explicit prompt delegation to an installed provider CLI |
+| `aifuel mcp` | Read-only MCP status server over stdio |
 
 Because `--json` is a stable, structured feed, it drops cleanly into a tmux / polybar / Sketchybar / starship status line — pipe it and surface "what runs out first" wherever you already look.
 
 ## How it works (and what it touches)
 
-- Credentials are read **locally only**, to authenticate each provider's own usage endpoint — exactly like the CLIs do. Tokens are never printed, and are only ever sent to the provider they belong to.
+- Credentials are read **locally only**, to authenticate each provider's own usage endpoint. Tokens are never printed, and are only ever sent to the provider they belong to.
 - Before each collection, `aifuel` checks for each provider's own local credential source and initializes only the providers it finds. Discovery never calls an API, refreshes a token, or writes credentials.
 - If a local discovery check fails, other providers still load. JSON reports the failure in `discovery_errors`, and one-shot commands return a nonzero exit status after printing available results.
-- For Gemini and Antigravity, an expired access token is refreshed against Google's OAuth endpoint using the `refresh_token` already on disk — the same exchange the CLI performs on startup — and written back to its own creds file.
+- The Rust collection service never refreshes or writes provider credentials. Expired credentials are reported as unavailable.
 - Claude's `oauth/usage` endpoint rate-limits aggressively, so results are cached for 180s.
 - The dashboard auto-refreshes every 5 minutes; countdowns tick every second client-side.
 - Ordering: each provider uses its authoritative weekly/monthly window when available; otherwise it uses the soonest reported reset. Providers are then ordered by that reset, with depleted providers last.

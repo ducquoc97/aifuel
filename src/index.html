@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<meta name="color-scheme" content="light dark"/>
+<meta name="color-scheme" content="light"/>
 <title>aifuel — fuel gauge for your AI coding subscriptions</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23F97316'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' font-family='system-ui'%3E⛽%3C/text%3E%3C/svg%3E"/>
 <link rel="stylesheet" href="/dashboard.css"/>
@@ -62,10 +62,7 @@ function anchorPeriod(windows) {
 }
 
 const PROVIDER_ICON = {
-  claude:      "https://www.anthropic.com/favicon.ico",
-  copilot:     "https://github.com/favicon.ico",
-  gemini:      "https://geminicli.com/favicon.ico",
-  antigravity: "https://antigravity.google/favicon.ico",
+  // Icons stay local so the dashboard does not contact third-party origins.
 };
 
 // Display names for the loading placeholders, shown before a provider's own
@@ -412,10 +409,11 @@ async function load(force, initial) {
         } else if (msg.done) {
           GENERATED_AT = msg.generated_at;
           if (DISCOVERY_ERRORS.length) {
-            const names = DISCOVERY_ERRORS.map(error => error.provider).join(", ");
+            const names = DISCOVERY_ERRORS.map(error =>
+              error.provider?.name || error.provider?.key || error.provider).join(", ");
             status.innerHTML = `<span class="err">Discovery failed: ${esc(names)}</span>`;
             status.title = DISCOVERY_ERRORS.map(
-              error => `${error.provider}: ${error.detail}`).join("\n");
+              error => `${error.provider?.name || error.provider?.key || error.provider}: ${error.detail}`).join("\n");
           } else {
             status.textContent = "Updated " +
               new Date(GENERATED_AT * 1000).toLocaleTimeString();
