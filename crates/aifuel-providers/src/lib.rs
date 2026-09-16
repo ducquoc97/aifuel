@@ -9,6 +9,7 @@ mod usage;
 mod usage_helpers;
 
 mod antigravity;
+mod catalog;
 mod claude;
 mod code_assist;
 mod codex;

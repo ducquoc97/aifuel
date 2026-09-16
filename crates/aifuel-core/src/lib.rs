@@ -6,8 +6,8 @@ use std::str::FromStr;
 
 mod status;
 pub use status::{
-    CollectionScope, CollectionStatus, STATUS_SCHEMA_VERSION, StatusAccount, StatusError,
-    StatusModel, StatusObservation, StatusQuotaPool, StatusReport,
+    CatalogProviderStatus, CollectionScope, CollectionStatus, STATUS_SCHEMA_VERSION, StatusAccount,
+    StatusError, StatusModel, StatusObservation, StatusQuotaPool, StatusReport,
 };
 
 /// The schema version for the initial Rust discovery output.

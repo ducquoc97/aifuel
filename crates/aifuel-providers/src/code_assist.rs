@@ -6,6 +6,20 @@ use super::usage_helpers::{
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow};
 use serde_json::Value;
 
+pub(crate) enum CodeAssistPeriod {
+    Daily,
+    Unknown,
+}
+
+impl CodeAssistPeriod {
+    fn as_str(&self) -> Option<&'static str> {
+        match self {
+            Self::Daily => Some("daily"),
+            Self::Unknown => None,
+        }
+    }
+}
+
 pub(crate) async fn collect_gemini(service: &UsageService) -> ProviderUsage {
     let path = service.home_dir.join(".gemini/oauth_creds.json");
     let credentials = match read_json(&path) {
@@ -23,7 +37,7 @@ pub(crate) async fn collect_gemini(service: &UsageService) -> ProviderUsage {
         token,
         project.as_deref(),
         "gemini-cli/usage-monitor",
-        true,
+        CodeAssistPeriod::Daily,
     )
     .await;
     if let Some(detail) = detail {
@@ -66,7 +80,7 @@ pub(crate) async fn collect_antigravity(service: &UsageService) -> ProviderUsage
         token,
         project.as_deref(),
         "antigravity/usage-monitor",
-        false,
+        CodeAssistPeriod::Unknown,
     )
     .await;
     if let Some(detail) = detail {
@@ -84,7 +98,7 @@ async fn collect_code_assist(
     token: &str,
     project_hint: Option<&str>,
     user_agent: &str,
-    daily: bool,
+    period: CodeAssistPeriod,
 ) -> (Option<String>, Vec<QuotaWindow>, Option<String>) {
     let load_url = format!("{}loadCodeAssist", service.config.gemini_api_url);
     let load = match post_json(service, &load_url, token, json_metadata(), user_agent).await {
@@ -140,7 +154,7 @@ async fn collect_code_assist(
         Ok(value) => value,
         Err(error) => return (plan, Vec::new(), Some(format!("retrieveUserQuota {error}"))),
     };
-    let windows = quota_windows(&quota, daily.then_some("daily"));
+    let windows = quota_windows(&quota, period.as_str());
     if windows.is_empty() {
         return (
             plan,

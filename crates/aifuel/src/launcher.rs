@@ -7,9 +7,11 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AccessMode {
+    #[serde(rename = "read-only")]
     ReadOnly,
+    #[serde(rename = "workspace-write")]
     WorkspaceWrite,
 }
 
@@ -23,16 +25,9 @@ impl AccessMode {
             )),
         }
     }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::ReadOnly => "read-only",
-            Self::WorkspaceWrite => "workspace-write",
-        }
-    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum OutputFormat {
     Text,
     Json,
@@ -52,6 +47,21 @@ impl OutputFormat {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ExecutionMode {
+    #[serde(rename = "prompt-only")]
+    PromptOnly,
+    Project,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Succeeded,
+    Failed,
+    Timeout,
+}
+
 #[derive(Debug, Clone)]
 pub struct RunRequest {
     pub provider: ProviderKey,
@@ -69,19 +79,21 @@ pub struct RunRequest {
 pub struct RunResult {
     pub run_id: String,
     pub session_id: String,
-    pub provider_id: String,
+    pub resumed_from: Option<String>,
+    pub provider_id: ProviderKey,
     pub requested_model: Option<String>,
     pub effective_model: Option<String>,
+    pub requested_account_id: Option<String>,
     pub account_id: Option<String>,
-    pub execution_mode: String,
-    pub permission_profile: String,
-    pub status: String,
+    pub execution_mode: ExecutionMode,
+    pub permission_profile: AccessMode,
+    pub status: RunStatus,
     pub exit_code: Option<i32>,
     pub output: String,
     pub error: Option<String>,
     pub diagnostics: Option<String>,
     pub timed_out: bool,
-    pub working_directory: String,
+    pub working_directory: PathBuf,
 }
 
 #[derive(Debug)]
@@ -117,7 +129,15 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
             "prompt must not be empty".to_owned(),
         ));
     }
-    if let Some(directory) = &request.working_directory {
+    let working_directory = request
+        .working_directory
+        .as_ref()
+        .map(fs::canonicalize)
+        .transpose()
+        .map_err(|error| {
+            LaunchError::InvalidRequest(format!("working directory is unavailable: {error}"))
+        })?;
+    if let Some(directory) = &working_directory {
         if !directory.is_dir() {
             return Err(LaunchError::InvalidRequest(format!(
                 "working directory is not an existing directory: {}",
@@ -125,22 +145,27 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
             )));
         }
     }
+    if request.account.is_some() {
+        return Err(LaunchError::InvalidRequest(
+            "explicit account selection is not verified by the selected provider CLI".to_owned(),
+        ));
+    }
 
-    let temporary_directory = if request.working_directory.is_none() {
+    let temporary_directory = if working_directory.is_none() {
         Some(TemporaryDirectory::new()?)
     } else {
         None
     };
-    let working_directory = request
-        .working_directory
+    let effective_working_directory = working_directory
         .as_deref()
         .or_else(|| temporary_directory.as_ref().map(TemporaryDirectory::path));
 
     let (program, args) = command_for(request)?;
+    preflight(program, request.provider)?;
     let mut command = Command::new(program);
     command
         .args(args)
-        .current_dir(working_directory.expect("launcher always has a working directory"))
+        .current_dir(effective_working_directory.expect("launcher always has a working directory"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -177,11 +202,11 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .join()
         .map_err(|_| LaunchError::InvalidRequest("stderr reader panicked".to_owned()))??;
     let status = if timed_out {
-        "timeout"
+        RunStatus::Timeout
     } else if exit_code == Some(0) {
-        "succeeded"
+        RunStatus::Succeeded
     } else {
-        "failed"
+        RunStatus::Failed
     };
 
     let run_id = format!(
@@ -207,27 +232,55 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
     Ok(RunResult {
         run_id,
         session_id,
-        provider_id: request.provider.as_str().to_owned(),
+        provider_id: request.provider,
         requested_model: request.model.clone(),
-        effective_model: request.model.clone(),
-        account_id: request.account.clone(),
-        execution_mode: if request.working_directory.is_some() {
-            "project".to_owned()
+        effective_model: None,
+        requested_account_id: request.account.clone(),
+        account_id: None,
+        execution_mode: if working_directory.is_some() {
+            ExecutionMode::Project
         } else {
-            "prompt-only".to_owned()
+            ExecutionMode::PromptOnly
         },
-        permission_profile: request.access.as_str().to_owned(),
-        status: status.to_owned(),
+        permission_profile: request.access,
+        status,
         exit_code,
         output,
         error,
         diagnostics,
         timed_out,
-        working_directory: working_directory
+        resumed_from: request.resume.clone(),
+        working_directory: effective_working_directory
             .expect("launcher always has a working directory")
-            .display()
-            .to_string(),
+            .to_path_buf(),
     })
+}
+
+fn preflight(program: &str, provider: ProviderKey) -> Result<(), LaunchError> {
+    let output = Command::new(program)
+        .arg("--help")
+        .output()
+        .map_err(|error| match error.kind() {
+            io::ErrorKind::NotFound => LaunchError::InvalidRequest(format!(
+                "provider executable {program:?} was not found"
+            )),
+            _ => LaunchError::Io(error),
+        })?;
+    let help = String::from_utf8_lossy(&output.stdout);
+    let required_flags = match provider {
+        ProviderKey::Gemini => ["--prompt", "--approval-mode", "--output-format"].as_slice(),
+        ProviderKey::Claude => ["--print", "--permission-mode", "--output-format"].as_slice(),
+        ProviderKey::Codex => ["exec", "--sandbox"].as_slice(),
+        ProviderKey::Copilot => ["--prompt", "--plan", "--output-format"].as_slice(),
+        ProviderKey::Antigravity => &[] as &[&str],
+    };
+    if output.status.success() && required_flags.iter().all(|flag| help.contains(flag)) {
+        Ok(())
+    } else {
+        Err(LaunchError::InvalidRequest(format!(
+            "provider executable {program:?} failed capability preflight for {provider}"
+        )))
+    }
 }
 
 fn command_for(request: &RunRequest) -> Result<(&'static str, Vec<String>), LaunchError> {
@@ -303,6 +356,11 @@ fn command_for(request: &RunRequest) -> Result<(&'static str, Vec<String>), Laun
                     "Copilot workspace-write execution is not verified".to_owned(),
                 ));
             }
+            if request.output == OutputFormat::Jsonl {
+                return Err(LaunchError::InvalidRequest(
+                    "Copilot JSONL output is not verified".to_owned(),
+                ));
+            }
             args.extend([
                 "--prompt".to_owned(),
                 request.prompt.clone(),
@@ -314,9 +372,9 @@ fn command_for(request: &RunRequest) -> Result<(&'static str, Vec<String>), Laun
             args.extend([
                 "--output-format".to_owned(),
                 match request.output {
-                    OutputFormat::Jsonl => "json",
                     OutputFormat::Text => "text",
                     OutputFormat::Json => "json",
+                    OutputFormat::Jsonl => unreachable!("JSONL was rejected above"),
                 }
                 .to_owned(),
             ]);

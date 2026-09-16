@@ -7,6 +7,7 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -107,41 +108,21 @@ impl UsageService {
             .collect();
         let discovery_errors = selection.report().discovery_errors.clone();
 
-        let claude = async {
-            if discovered.contains(&ProviderKey::Claude) {
-                Some(collect_claude(self).await)
-            } else {
-                None
-            }
-        };
-        let codex = async {
-            if discovered.contains(&ProviderKey::Codex) {
-                Some(collect_codex(self).await)
-            } else {
-                None
-            }
-        };
-        let copilot = async {
-            if discovered.contains(&ProviderKey::Copilot) {
-                Some(collect_copilot(self).await)
-            } else {
-                None
-            }
-        };
-        let gemini = async {
-            if discovered.contains(&ProviderKey::Gemini) {
-                Some(collect_gemini(self).await)
-            } else {
-                None
-            }
-        };
-        let antigravity = async {
-            if discovered.contains(&ProviderKey::Antigravity) {
-                Some(collect_antigravity(self).await)
-            } else {
-                None
-            }
-        };
+        let claude = collect_if(discovered.contains(&ProviderKey::Claude), || {
+            collect_claude(self)
+        });
+        let codex = collect_if(discovered.contains(&ProviderKey::Codex), || {
+            collect_codex(self)
+        });
+        let copilot = collect_if(discovered.contains(&ProviderKey::Copilot), || {
+            collect_copilot(self)
+        });
+        let gemini = collect_if(discovered.contains(&ProviderKey::Gemini), || {
+            collect_gemini(self)
+        });
+        let antigravity = collect_if(discovered.contains(&ProviderKey::Antigravity), || {
+            collect_antigravity(self)
+        });
         let (claude, codex, copilot, gemini, antigravity) =
             tokio::join!(claude, codex, copilot, gemini, antigravity);
         let providers = [claude, codex, copilot, gemini, antigravity]
@@ -150,6 +131,19 @@ impl UsageService {
             .collect();
 
         StatusReport::from_usage(unix_timestamp(), providers, discovery_errors)
+            .with_catalog(crate::catalog::statuses())
+    }
+}
+
+async fn collect_if<F, Fut>(discovered: bool, collect: F) -> Option<ProviderUsage>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = ProviderUsage>,
+{
+    if discovered {
+        Some(collect().await)
+    } else {
+        None
     }
 }
 

@@ -41,7 +41,9 @@ fn install_fake_command(directory: &Path, command_name: &str) {
         let path = directory.join(command_name);
         fs::write(
             &path,
-            format!("#!/bin/sh\nprintf 'fake {command_name} response: %s\\n' \"$*\"\n"),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\nprintf 'exec --prompt --approval-mode --output-format --print --permission-mode --sandbox --plan\\n'\nexit 0\nfi\nprintf 'fake {command_name} response: %s\\n' \"$*\"\n"
+            ),
         )
         .expect("fake provider executable should be writable");
         let mut permissions = fs::metadata(&path)
@@ -56,7 +58,9 @@ fn install_fake_command(directory: &Path, command_name: &str) {
     {
         fs::write(
             directory.join(format!("{command_name}.cmd")),
-            format!("@echo off\necho fake {command_name} response %*\n"),
+            format!(
+                "@echo off\nif \"%~1\"==\"--help\" (echo exec --prompt --approval-mode --output-format --print --permission-mode --sandbox --plan & exit /b 0)\necho fake {command_name} response %*\n"
+            ),
         )
         .expect("fake provider executable should be writable");
     }
@@ -167,7 +171,7 @@ fn run_emits_a_structured_result_when_json_is_requested() {
         serde_json::from_slice(&output.stdout).expect("run should emit JSON");
     assert_eq!(value["provider_id"], "gemini");
     assert_eq!(value["requested_model"], "gemini-3-flash");
-    assert_eq!(value["effective_model"], "gemini-3-flash");
+    assert!(value["effective_model"].is_null());
     assert_eq!(value["permission_profile"], "read-only");
     assert_eq!(value["status"], "succeeded");
     assert!(value["error"].is_null());

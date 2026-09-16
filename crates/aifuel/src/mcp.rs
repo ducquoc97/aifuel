@@ -161,6 +161,44 @@ fn filter_status(state: &Value, arguments: &Value) -> Value {
             }
         }
     }
+    if let Some(catalog) = filtered.get_mut("catalog").and_then(Value::as_array_mut) {
+        catalog.retain(|provider| provider_id.is_none_or(|id| provider["id"].as_str() == Some(id)));
+    }
+    if let Some(accounts) = filtered.get_mut("accounts").and_then(Value::as_array_mut) {
+        accounts.retain(|account| {
+            provider_id.is_none_or(|id| account["provider_id"].as_str() == Some(id))
+                && account_id.is_none_or(|id| account["id"].as_str() == Some(id))
+        });
+    }
+    if let Some(models) = filtered.get_mut("models").and_then(Value::as_array_mut) {
+        models
+            .retain(|model| provider_id.is_none_or(|id| model["provider_id"].as_str() == Some(id)));
+    }
+    if let Some(pools) = filtered
+        .get_mut("quota_pools")
+        .and_then(Value::as_array_mut)
+    {
+        pools.retain(|pool| provider_id.is_none_or(|id| pool["provider_id"].as_str() == Some(id)));
+    }
+    if let Some(observations) = filtered
+        .get_mut("observations")
+        .and_then(Value::as_array_mut)
+    {
+        observations.retain(|observation| {
+            provider_id.is_none_or(|id| observation["provider_id"].as_str() == Some(id))
+        });
+    }
+    if let Some(collection) = filtered.get_mut("collection") {
+        if let Some(coverage) = collection.get_mut("coverage").and_then(Value::as_array_mut) {
+            coverage.retain(|provider| provider_id.is_none_or(|id| provider.as_str() == Some(id)));
+        }
+        if let Some(errors) = collection.get_mut("errors").and_then(Value::as_array_mut) {
+            errors.retain(|error| {
+                provider_id.is_none_or(|id| error["provider_id"].as_str() == Some(id))
+                    && account_id.is_none_or(|id| error["account_id"].as_str() == Some(id))
+            });
+        }
+    }
     if let Some(scope) = filtered
         .get_mut("collection")
         .and_then(|collection| collection.get_mut("scope"))

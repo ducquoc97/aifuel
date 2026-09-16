@@ -10,6 +10,7 @@ pub struct StatusReport {
     pub generated_at: f64,
     pub collection: CollectionStatus,
     pub providers: Vec<ProviderUsage>,
+    pub catalog: Vec<CatalogProviderStatus>,
     pub accounts: Vec<StatusAccount>,
     pub models: Vec<StatusModel>,
     pub quota_pools: Vec<StatusQuotaPool>,
@@ -35,6 +36,7 @@ pub struct CollectionScope {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StatusError {
     pub provider_id: Option<String>,
+    pub account_id: Option<String>,
     pub code: String,
     pub message: String,
 }
@@ -46,9 +48,18 @@ pub struct StatusAccount {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CatalogProviderStatus {
+    pub id: String,
+    pub monitoring: String,
+    pub agent_execution: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StatusModel {
     pub id: String,
     pub provider_id: String,
+    pub account_id: Option<String>,
+    pub quota_pool_id: String,
     pub state: String,
 }
 
@@ -56,14 +67,19 @@ pub struct StatusModel {
 pub struct StatusQuotaPool {
     pub id: String,
     pub provider_id: String,
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StatusObservation {
     pub id: String,
     pub provider_id: String,
+    pub quota_pool_id: String,
     pub state: String,
     pub observed_at: Option<f64>,
+    pub collected_at: f64,
+    pub freshness: String,
+    pub provenance: String,
 }
 
 impl StatusReport {
@@ -82,6 +98,7 @@ impl StatusReport {
                 errors: Vec::new(),
             },
             providers: Vec::new(),
+            catalog: Vec::new(),
             accounts: Vec::new(),
             models: Vec::new(),
             quota_pools: Vec::new(),
@@ -99,6 +116,7 @@ impl StatusReport {
             .iter()
             .map(|failure| StatusError {
                 provider_id: Some(failure.provider.key.as_str().to_owned()),
+                account_id: None,
                 code: "discovery_failure".to_owned(),
                 message: failure.detail.to_owned(),
             })
@@ -106,6 +124,7 @@ impl StatusReport {
         errors.extend(providers.iter().filter_map(|provider| {
             provider.detail.as_ref().map(|detail| StatusError {
                 provider_id: Some(provider.key.as_str().to_owned()),
+                account_id: provider.account_id.clone(),
                 code: "collection_failed".to_owned(),
                 message: detail.clone(),
             })
@@ -151,9 +170,12 @@ impl StatusReport {
                 matches!(provider.key, ProviderKey::Gemini | ProviderKey::Antigravity)
             })
             .flat_map(|provider| {
-                provider.windows.iter().map(|window| StatusModel {
+                let quota_pool_id = quota_pool_id(provider);
+                provider.windows.iter().map(move |window| StatusModel {
                     id: window.label.clone(),
                     provider_id: provider.key.as_str().to_owned(),
+                    account_id: provider.account_id.clone(),
+                    quota_pool_id: quota_pool_id.clone(),
                     state: "observed".to_owned(),
                 })
             })
@@ -162,23 +184,32 @@ impl StatusReport {
             .iter()
             .filter(|provider| !provider.windows.is_empty())
             .map(|provider| StatusQuotaPool {
-                id: format!("{}:quota", provider.key),
+                id: quota_pool_id(provider),
                 provider_id: provider.key.as_str().to_owned(),
+                account_id: provider.account_id.clone(),
             })
             .collect();
         let observations = providers
             .iter()
             .flat_map(|provider| {
-                provider.windows.iter().map(|window| StatusObservation {
-                    id: format!("{}:{}", provider.key, window.label),
-                    provider_id: provider.key.as_str().to_owned(),
-                    state: if provider.status == "ok" {
-                        "known".to_owned()
-                    } else {
-                        "unavailable".to_owned()
-                    },
-                    observed_at: Some(generated_at),
-                })
+                let quota_pool_id = quota_pool_id(provider);
+                provider
+                    .windows
+                    .iter()
+                    .map(move |window| StatusObservation {
+                        id: format!("{}:{}", provider.key, window.label),
+                        provider_id: provider.key.as_str().to_owned(),
+                        quota_pool_id: quota_pool_id.clone(),
+                        state: if provider.status == "ok" {
+                            "known".to_owned()
+                        } else {
+                            "unavailable".to_owned()
+                        },
+                        observed_at: Some(generated_at),
+                        collected_at: generated_at,
+                        freshness: "fresh".to_owned(),
+                        provenance: "provider_api".to_owned(),
+                    })
             })
             .collect();
         Self {
@@ -198,12 +229,18 @@ impl StatusReport {
                 errors,
             },
             providers,
+            catalog: Vec::new(),
             accounts,
             models,
             quota_pools,
             observations,
             discovery_errors,
         }
+    }
+
+    pub fn with_catalog(mut self, catalog: Vec<CatalogProviderStatus>) -> Self {
+        self.catalog = catalog;
+        self
     }
 }
 
@@ -214,4 +251,12 @@ fn effective_remaining(provider: &ProviderUsage) -> f64 {
         .filter_map(|window| window.remaining_percent)
         .next()
         .unwrap_or(-1.0)
+}
+
+fn quota_pool_id(provider: &ProviderUsage) -> String {
+    format!(
+        "{}:{}:quota",
+        provider.key,
+        provider.account_id.as_deref().unwrap_or("unknown")
+    )
 }
