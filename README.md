@@ -65,6 +65,11 @@ Provider model defaults remain provider-owned. If a provider default is
 temporarily rejected, select an explicit model with `--model` so
 AI Fuel does not silently fall back to a different model.
 
+The pinned provider catalog preserves all 69 provider IDs as explicit
+capability states. The live Rust monitoring adapters currently cover Claude,
+Codex, Copilot, Gemini, and Antigravity; catalog-only entries remain clearly
+unsupported until an evidence-backed adapter is added.
+
 ## Install as a global `aifuel` command
 
 The installers build the Rust binary and place it on your `PATH`.

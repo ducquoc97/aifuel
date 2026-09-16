@@ -103,6 +103,7 @@ pub struct RunResult {
 pub enum LaunchError {
     InvalidRequest(String),
     UnsupportedProvider(ProviderKey),
+    Timeout(String),
     Io(io::Error),
 }
 
@@ -113,6 +114,7 @@ impl std::fmt::Display for LaunchError {
             Self::UnsupportedProvider(provider) => {
                 write!(f, "provider {provider} has no verified agent integration")
             }
+            Self::Timeout(message) => f.write_str(message),
             Self::Io(error) => write!(f, "launcher I/O failed: {error}"),
         }
     }
@@ -163,10 +165,11 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .as_deref()
         .or_else(|| temporary_directory.as_ref().map(TemporaryDirectory::path));
 
+    let started_at = Instant::now();
     let integration = integration::for_provider(request.provider)?;
     integration.validate(request)?;
-    let args = integration::command_for(request, &integration)?;
-    integration::preflight(&integration)?;
+    let args = (integration.build_args)(request)?;
+    integration::preflight(&integration, request.timeout, started_at)?;
     let mut command = Command::new(integration.program());
     command
         .args(args)
@@ -187,7 +190,10 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
     let stdout_reader = thread::spawn(move || read_stream(stdout));
     let stderr_reader = thread::spawn(move || read_stream(stderr));
 
-    let deadline = request.timeout.map(|timeout| Instant::now() + timeout);
+    let timeout = request
+        .timeout
+        .map(|timeout| timeout.saturating_sub(started_at.elapsed()));
+    let deadline = timeout.map(|timeout| Instant::now() + timeout);
     let mut timed_out = false;
     let exit_code = loop {
         if let Some(status) = child.try_wait().map_err(LaunchError::Io)? {

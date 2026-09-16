@@ -69,6 +69,24 @@ pub fn install_fake_gemini(directory: &Path) {
     install_fake_command(directory, "gemini");
 }
 
+#[cfg(unix)]
+pub fn install_slow_help_gemini(directory: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join("gemini");
+    fs::write(
+        &path,
+        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\nsleep 2\nexit 0\nfi\nprintf 'unexpected execution\\n'\n",
+    )
+    .expect("slow fake Gemini executable should be writable");
+    let mut permissions = fs::metadata(&path)
+        .expect("slow fake Gemini executable should exist")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)
+        .expect("slow fake Gemini executable should be executable");
+}
+
 pub fn path_with(directory: &Path) -> std::ffi::OsString {
     let mut paths = vec![directory.to_path_buf()];
     if let Some(existing) = std::env::var_os("PATH") {

@@ -106,6 +106,10 @@ fn run_launcher(args: &[String]) -> Result<u8, String> {
             eprintln!("aifuel: provider {provider} has no verified agent integration");
             return Ok(3);
         }
+        Err(launcher::LaunchError::Timeout(error)) => {
+            eprintln!("aifuel: {error}");
+            return Ok(5);
+        }
         Err(error) => {
             eprintln!("aifuel: {error}");
             return Ok(2);

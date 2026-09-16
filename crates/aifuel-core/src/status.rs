@@ -13,6 +13,7 @@ pub struct StatusReport {
     pub catalog: Vec<CatalogProviderStatus>,
     pub accounts: Vec<StatusAccount>,
     pub models: Vec<StatusModel>,
+    pub entitlements: Vec<StatusEntitlement>,
     pub quota_pools: Vec<StatusQuotaPool>,
     pub observations: Vec<StatusObservation>,
     pub discovery_errors: Vec<DiscoveryFailure>,
@@ -71,6 +72,17 @@ pub struct StatusModel {
     pub account_id: Option<String>,
     pub quota_pool_id: String,
     pub state: ModelState,
+    pub advertisement: CapabilityState,
+    pub entitlement: CapabilityState,
+    pub execution: CapabilityState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StatusEntitlement {
+    pub provider_id: String,
+    pub account_id: Option<String>,
+    pub model_id: String,
+    pub state: CapabilityState,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -78,6 +90,8 @@ pub struct StatusQuotaPool {
     pub id: String,
     pub provider_id: String,
     pub account_id: Option<String>,
+    pub shared: bool,
+    pub basis: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -86,6 +100,10 @@ pub struct StatusObservation {
     pub provider_id: String,
     pub account_id: Option<String>,
     pub quota_pool_id: String,
+    pub label: String,
+    pub used_percent: Option<f64>,
+    pub remaining_percent: Option<f64>,
+    pub resets_at: Option<f64>,
     pub state: ObservationState,
     pub observed_at: Option<f64>,
     pub collected_at: f64,
@@ -170,6 +188,7 @@ impl StatusReport {
             catalog: Vec::new(),
             accounts: Vec::new(),
             models: Vec::new(),
+            entitlements: Vec::new(),
             quota_pools: Vec::new(),
             observations: Vec::new(),
             discovery_errors: Vec::new(),
@@ -236,7 +255,7 @@ impl StatusReport {
                     })
             })
             .collect();
-        let models = providers
+        let models: Vec<StatusModel> = providers
             .iter()
             .filter(|provider| {
                 matches!(provider.key, ProviderKey::Gemini | ProviderKey::Antigravity)
@@ -249,7 +268,19 @@ impl StatusReport {
                     account_id: provider.account_id.clone(),
                     quota_pool_id: quota_pool_id.clone(),
                     state: ModelState::Observed,
+                    advertisement: CapabilityState::Unknown,
+                    entitlement: CapabilityState::Unknown,
+                    execution: CapabilityState::Unknown,
                 })
+            })
+            .collect();
+        let entitlements: Vec<StatusEntitlement> = models
+            .iter()
+            .map(|model| StatusEntitlement {
+                provider_id: model.provider_id.clone(),
+                account_id: model.account_id.clone(),
+                model_id: model.id.clone(),
+                state: model.entitlement,
             })
             .collect();
         let quota_pools = providers
@@ -259,6 +290,8 @@ impl StatusReport {
                 id: quota_pool_id(provider),
                 provider_id: provider.key.as_str().to_owned(),
                 account_id: provider.account_id.clone(),
+                shared: true,
+                basis: "provider-reported quota scope".to_owned(),
             })
             .collect();
         let observations = providers
@@ -273,6 +306,10 @@ impl StatusReport {
                         provider_id: provider.key.as_str().to_owned(),
                         account_id: provider.account_id.clone(),
                         quota_pool_id: quota_pool_id.clone(),
+                        label: window.label.clone(),
+                        used_percent: window.used_percent,
+                        remaining_percent: window.remaining_percent,
+                        resets_at: window.resets_at,
                         state: if provider.status == ProviderStatus::Ok {
                             ObservationState::Known
                         } else {
@@ -305,6 +342,7 @@ impl StatusReport {
             catalog: Vec::new(),
             accounts,
             models,
+            entitlements,
             quota_pools,
             observations,
             discovery_errors,

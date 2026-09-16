@@ -8,8 +8,8 @@ mod status;
 pub use status::{
     CapabilityState, CatalogPlatformStatus, CatalogProviderStatus, CollectionOutcome,
     CollectionScope, CollectionState, CollectionStatus, FreshnessState, ModelState,
-    ObservationState, Provenance, STATUS_SCHEMA_VERSION, StatusAccount, StatusError,
-    StatusErrorCode, StatusModel, StatusObservation, StatusQuotaPool, StatusReport,
+    ObservationState, Provenance, STATUS_SCHEMA_VERSION, StatusAccount, StatusEntitlement,
+    StatusError, StatusErrorCode, StatusModel, StatusObservation, StatusQuotaPool, StatusReport,
 };
 
 /// The schema version for the initial Rust discovery output.

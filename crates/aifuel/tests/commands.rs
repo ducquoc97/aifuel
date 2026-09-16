@@ -5,6 +5,8 @@ use std::process::{Command, Stdio};
 
 mod support;
 
+#[cfg(unix)]
+use support::install_slow_help_gemini;
 use support::{
     TestDirectory, install_fake_command, install_fake_gemini, path_with, start_gemini_fixture,
 };
@@ -117,6 +119,32 @@ fn run_uses_the_selected_copilot_integration() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
         "fake copilot response: --prompt hello --plan --output-format text"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_timeout_applies_to_provider_capability_preflight() {
+    let directory = TestDirectory::new("slow-preflight");
+    install_slow_help_gemini(directory.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+        .args([
+            "run",
+            "--provider",
+            "gemini",
+            "--prompt",
+            "hello",
+            "--timeout",
+            "1s",
+        ])
+        .env("PATH", path_with(directory.path()))
+        .output()
+        .expect("aifuel should start");
+
+    assert_eq!(output.status.code(), Some(5));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("provider capability preflight timed out")
     );
 }
 

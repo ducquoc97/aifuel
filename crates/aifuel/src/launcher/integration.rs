@@ -1,12 +1,14 @@
 use super::{AccessMode, LaunchError, OutputFormat, ProviderKey, RunRequest};
-use std::io;
-use std::process::Command;
+use std::io::{self, Read};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub(super) struct ProviderIntegration {
     provider: ProviderKey,
     program: &'static str,
     required_flags: &'static [&'static str],
-    build_args: fn(&RunRequest) -> Result<Vec<String>, LaunchError>,
+    pub(super) build_args: fn(&RunRequest) -> Result<Vec<String>, LaunchError>,
     supports_resume: bool,
     supports_workspace_write: bool,
     supports_jsonl: bool,
@@ -82,10 +84,16 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
     }
 }
 
-pub(super) fn preflight(integration: &ProviderIntegration) -> Result<(), LaunchError> {
-    let output = Command::new(integration.program)
+pub(super) fn preflight(
+    integration: &ProviderIntegration,
+    timeout: Option<Duration>,
+    started_at: Instant,
+) -> Result<(), LaunchError> {
+    let mut child = Command::new(integration.program)
         .arg("--help")
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .map_err(|error| match error.kind() {
             io::ErrorKind::NotFound => LaunchError::InvalidRequest(format!(
                 "provider executable {:?} was not found",
@@ -93,8 +101,27 @@ pub(super) fn preflight(integration: &ProviderIntegration) -> Result<(), LaunchE
             )),
             _ => LaunchError::Io(error),
         })?;
-    let help = String::from_utf8_lossy(&output.stdout);
-    if output.status.success()
+    let stdout = child.stdout.take().expect("preflight stdout was requested");
+    let reader = thread::spawn(move || read_output(stdout));
+    let deadline = timeout.map(|timeout| started_at + timeout);
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(LaunchError::Io)? {
+            break status;
+        }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            child.kill().map_err(LaunchError::Io)?;
+            let _ = child.wait().map_err(LaunchError::Io)?;
+            let _ = reader.join();
+            return Err(LaunchError::Timeout(
+                "provider capability preflight timed out".to_owned(),
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let help = reader
+        .join()
+        .map_err(|_| LaunchError::InvalidRequest("preflight reader panicked".to_owned()))??;
+    if status.success()
         && integration
             .required_flags
             .iter()
@@ -109,11 +136,10 @@ pub(super) fn preflight(integration: &ProviderIntegration) -> Result<(), LaunchE
     }
 }
 
-pub(super) fn command_for(
-    request: &RunRequest,
-    integration: &ProviderIntegration,
-) -> Result<Vec<String>, LaunchError> {
-    (integration.build_args)(request)
+fn read_output<R: Read>(mut reader: R) -> Result<String, io::Error> {
+    let mut output = String::new();
+    reader.read_to_string(&mut output)?;
+    Ok(output)
 }
 
 fn gemini_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {

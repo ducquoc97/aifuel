@@ -102,6 +102,8 @@ fn dispatch(request: &Value, state: &Value) -> Option<Value> {
         })),
         "resources/templates/list" => Ok(json!({"resourceTemplates": []})),
         "resources/read" => {
+            // Resource reads are intentionally cache-only. A cold resource is
+            // not_collected until the host calls get_status.
             let uri = request["params"]["uri"].as_str().unwrap_or("");
             if uri != "aifuel://status" {
                 Err((-32602, "unknown resource URI"))
@@ -187,6 +189,15 @@ fn filter_status(state: &Value, arguments: &Value) -> Value {
         pools.retain(|pool| {
             provider_id.is_none_or(|id| pool["provider_id"].as_str() == Some(id))
                 && account_id.is_none_or(|id| pool["account_id"].as_str() == Some(id))
+        });
+    }
+    if let Some(entitlements) = filtered
+        .get_mut("entitlements")
+        .and_then(Value::as_array_mut)
+    {
+        entitlements.retain(|entitlement| {
+            provider_id.is_none_or(|id| entitlement["provider_id"].as_str() == Some(id))
+                && account_id.is_none_or(|id| entitlement["account_id"].as_str() == Some(id))
         });
     }
     if let Some(observations) = filtered
