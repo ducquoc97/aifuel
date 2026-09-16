@@ -171,43 +171,34 @@ fn filter_status(state: &Value, arguments: &Value) -> Value {
         catalog.retain(|provider| provider_id.is_none_or(|id| provider["id"].as_str() == Some(id)));
     }
     if let Some(accounts) = filtered.get_mut("accounts").and_then(Value::as_array_mut) {
-        accounts.retain(|account| {
-            provider_id.is_none_or(|id| account["provider_id"].as_str() == Some(id))
-                && account_id.is_none_or(|id| account["id"].as_str() == Some(id))
-        });
+        accounts.retain(|account| matches_scope(account, provider_id, account_id));
+    }
+    if let Some(capabilities) = filtered
+        .get_mut("capabilities")
+        .and_then(Value::as_array_mut)
+    {
+        capabilities.retain(|capability| matches_scope(capability, provider_id, account_id));
     }
     if let Some(models) = filtered.get_mut("models").and_then(Value::as_array_mut) {
-        models.retain(|model| {
-            provider_id.is_none_or(|id| model["provider_id"].as_str() == Some(id))
-                && account_id.is_none_or(|id| model["account_id"].as_str() == Some(id))
-        });
+        models.retain(|model| matches_scope(model, provider_id, account_id));
     }
     if let Some(pools) = filtered
         .get_mut("quota_pools")
         .and_then(Value::as_array_mut)
     {
-        pools.retain(|pool| {
-            provider_id.is_none_or(|id| pool["provider_id"].as_str() == Some(id))
-                && account_id.is_none_or(|id| pool["account_id"].as_str() == Some(id))
-        });
+        pools.retain(|pool| matches_scope(pool, provider_id, account_id));
     }
     if let Some(entitlements) = filtered
         .get_mut("entitlements")
         .and_then(Value::as_array_mut)
     {
-        entitlements.retain(|entitlement| {
-            provider_id.is_none_or(|id| entitlement["provider_id"].as_str() == Some(id))
-                && account_id.is_none_or(|id| entitlement["account_id"].as_str() == Some(id))
-        });
+        entitlements.retain(|entitlement| matches_scope(entitlement, provider_id, account_id));
     }
     if let Some(observations) = filtered
         .get_mut("observations")
         .and_then(Value::as_array_mut)
     {
-        observations.retain(|observation| {
-            provider_id.is_none_or(|id| observation["provider_id"].as_str() == Some(id))
-                && account_id.is_none_or(|id| observation["account_id"].as_str() == Some(id))
-        });
+        observations.retain(|observation| matches_scope(observation, provider_id, account_id));
     }
     if let Some(collection) = filtered.get_mut("collection") {
         if let Some(coverage) = collection.get_mut("coverage").and_then(Value::as_array_mut) {
@@ -228,6 +219,11 @@ fn filter_status(state: &Value, arguments: &Value) -> Value {
         scope["account_id"] = account_id.map_or(Value::Null, |id| Value::String(id.to_owned()));
     }
     filtered
+}
+
+fn matches_scope(value: &Value, provider_id: Option<&str>, account_id: Option<&str>) -> bool {
+    provider_id.is_none_or(|id| value["provider_id"].as_str() == Some(id))
+        && account_id.is_none_or(|id| value["account_id"].as_str() == Some(id))
 }
 
 fn valid_status_arguments(arguments: &Value) -> bool {

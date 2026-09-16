@@ -12,6 +12,7 @@ pub struct StatusReport {
     pub providers: Vec<ProviderUsage>,
     pub catalog: Vec<CatalogProviderStatus>,
     pub accounts: Vec<StatusAccount>,
+    pub capabilities: Vec<StatusCapability>,
     pub models: Vec<StatusModel>,
     pub entitlements: Vec<StatusEntitlement>,
     pub quota_pools: Vec<StatusQuotaPool>,
@@ -46,6 +47,15 @@ pub struct StatusError {
 pub struct StatusAccount {
     pub id: String,
     pub provider_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StatusCapability {
+    pub provider_id: String,
+    pub account_id: Option<String>,
+    pub capability: String,
+    pub state: CapabilityState,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -187,6 +197,7 @@ impl StatusReport {
             providers: Vec::new(),
             catalog: Vec::new(),
             accounts: Vec::new(),
+            capabilities: Vec::new(),
             models: Vec::new(),
             entitlements: Vec::new(),
             quota_pools: Vec::new(),
@@ -253,6 +264,30 @@ impl StatusReport {
                         id: account_id.clone(),
                         provider_id: provider.key.as_str().to_owned(),
                     })
+            })
+            .collect();
+        let capabilities = providers
+            .iter()
+            .flat_map(|provider| {
+                [
+                    StatusCapability {
+                        provider_id: provider.key.as_str().to_owned(),
+                        account_id: provider.account_id.clone(),
+                        capability: "model_catalog".to_owned(),
+                        state: CapabilityState::Unknown,
+                        reason:
+                            "the quota endpoint does not establish an authoritative model catalog"
+                                .to_owned(),
+                    },
+                    StatusCapability {
+                        provider_id: provider.key.as_str().to_owned(),
+                        account_id: provider.account_id.clone(),
+                        capability: "account_entitlement".to_owned(),
+                        state: CapabilityState::Unknown,
+                        reason: "quota observations do not establish account entitlement"
+                            .to_owned(),
+                    },
+                ]
             })
             .collect();
         let models: Vec<StatusModel> = providers
@@ -341,6 +376,7 @@ impl StatusReport {
             providers,
             catalog: Vec::new(),
             accounts,
+            capabilities,
             models,
             entitlements,
             quota_pools,

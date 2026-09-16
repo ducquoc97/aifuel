@@ -150,12 +150,6 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
             )));
         }
     }
-    if request.account.is_some() {
-        return Err(LaunchError::InvalidRequest(
-            "explicit account selection is not verified by the selected provider CLI".to_owned(),
-        ));
-    }
-
     let temporary_directory = if working_directory.is_none() {
         Some(TemporaryDirectory::new()?)
     } else {

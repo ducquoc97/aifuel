@@ -10,6 +10,7 @@ pub(super) struct ProviderIntegration {
     required_flags: &'static [&'static str],
     pub(super) build_args: fn(&RunRequest) -> Result<Vec<String>, LaunchError>,
     supports_resume: bool,
+    supports_account_selection: bool,
     supports_workspace_write: bool,
     supports_jsonl: bool,
 }
@@ -19,6 +20,12 @@ impl ProviderIntegration {
         if request.resume.is_some() && !self.supports_resume {
             return Err(LaunchError::InvalidRequest(format!(
                 "{} does not support explicit session continuation",
+                self.provider
+            )));
+        }
+        if request.account.is_some() && !self.supports_account_selection {
+            return Err(LaunchError::InvalidRequest(format!(
+                "{} does not expose provider account selection",
                 self.provider
             )));
         }
@@ -50,6 +57,7 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
             required_flags: &["--prompt", "--approval-mode", "--output-format"],
             build_args: gemini_args,
             supports_resume: true,
+            supports_account_selection: false,
             supports_workspace_write: true,
             supports_jsonl: true,
         }),
@@ -59,6 +67,7 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
             required_flags: &["--print", "--permission-mode", "--output-format"],
             build_args: claude_args,
             supports_resume: true,
+            supports_account_selection: false,
             supports_workspace_write: true,
             supports_jsonl: true,
         }),
@@ -68,6 +77,7 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
             required_flags: &["exec", "--sandbox"],
             build_args: codex_args,
             supports_resume: true,
+            supports_account_selection: false,
             supports_workspace_write: true,
             supports_jsonl: true,
         }),
@@ -77,6 +87,7 @@ pub(super) fn for_provider(provider: ProviderKey) -> Result<ProviderIntegration,
             required_flags: &["--prompt", "--plan", "--output-format"],
             build_args: copilot_args,
             supports_resume: true,
+            supports_account_selection: false,
             supports_workspace_write: false,
             supports_jsonl: false,
         }),
