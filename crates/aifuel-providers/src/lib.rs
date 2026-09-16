@@ -299,11 +299,14 @@ mod tests {
     }
 
     #[test]
-    fn an_uninspectable_parent_is_reported_as_a_discovery_failure() {
+    fn an_uninspectable_source_is_reported_as_a_discovery_failure() {
         let home = TestHome::new();
-        home.write_file(".gemini", b"this is a file, not a directory");
+        let gemini = CatalogProvider::file_source(ProviderKey::Gemini, "\0");
+        let antigravity = CatalogProvider::file_source(ProviderKey::Antigravity, "\0");
+        let definitions: [&dyn CatalogProviderDefinition; 2] = [&gemini, &antigravity];
 
-        let selection = default_registry().discover_and_initialize(&home.context());
+        let selection =
+            ProviderRegistry::new(&definitions).discover_and_initialize(&home.context());
         let failures: Vec<_> = selection
             .report()
             .discovery_errors
