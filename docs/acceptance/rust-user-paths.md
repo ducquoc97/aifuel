@@ -28,9 +28,9 @@ process behavior; they do not replace live provider acceptance.
 - The installed Gemini CLI default model currently returns an upstream HTTP
   400 because it sends both thinking_budget and thinking_level. AI Fuel does
   not silently choose another model. Use an explicit provider-supported model.
-- The current local account returned live Codex, Gemini, Copilot, and
-  Antigravity observations. Claude returned HTTP 401, so its current account
-  remains an unavailable live observation.
+- The final status smoke returned live Codex and Copilot observations. Claude,
+  Gemini, and Antigravity returned HTTP 401, so those monitoring observations
+  remain unavailable in this environment.
 - Windows and macOS are covered by the CI build and test matrix, but no live
   provider accounts were used for those platforms in this run.
 - Provider account selection is fail-closed because the installed provider
