@@ -1,8 +1,9 @@
 //! Built-in provider discovery and initialization.
 //!
-//! This crate only inspects provider-owned source metadata in this slice. It
-//! does not parse credentials, refresh tokens, contact provider APIs, or write
-//! user state. Quota adapters are added by later implementation issues.
+//! This crate owns provider discovery and read-only quota collection.
+//! Discovery inspects provider-owned source metadata without reading its
+//! contents. Collection reads provider credentials only when requested, makes
+//! read-only API calls, and never refreshes or writes user state.
 
 mod discovery;
 mod usage;

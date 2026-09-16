@@ -53,7 +53,7 @@ pub struct StatusAccount {
 pub struct StatusCapability {
     pub provider_id: String,
     pub account_id: Option<String>,
-    pub capability: String,
+    pub capability: CapabilityKind,
     pub state: CapabilityState,
     pub reason: String,
 }
@@ -150,6 +150,13 @@ pub enum CapabilityState {
     Supported,
     Unsupported,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityKind {
+    ModelCatalog,
+    AccountEntitlement,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -273,7 +280,7 @@ impl StatusReport {
                     StatusCapability {
                         provider_id: provider.key.as_str().to_owned(),
                         account_id: provider.account_id.clone(),
-                        capability: "model_catalog".to_owned(),
+                        capability: CapabilityKind::ModelCatalog,
                         state: CapabilityState::Unknown,
                         reason:
                             "the quota endpoint does not establish an authoritative model catalog"
@@ -282,7 +289,7 @@ impl StatusReport {
                     StatusCapability {
                         provider_id: provider.key.as_str().to_owned(),
                         account_id: provider.account_id.clone(),
-                        capability: "account_entitlement".to_owned(),
+                        capability: CapabilityKind::AccountEntitlement,
                         state: CapabilityState::Unknown,
                         reason: "quota observations do not establish account entitlement"
                             .to_owned(),
