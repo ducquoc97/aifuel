@@ -2,7 +2,7 @@
 
 **The fuel gauge for your AI coding subscriptions.**
 
-You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity… so which one runs out first? `aifuel` reads each provider's own usage endpoint and shows the **quota you have left** — in one dashboard, ranked by whichever weekly / monthly window **resets soonest**, with a live countdown to every refill.
+You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity... so which one runs out first? `aifuel` reads each provider's own usage endpoint and shows the **quota you have left** - in one dashboard, ranked by whichever weekly / monthly window **resets soonest**, with a live countdown to every refill.
 
 One native binary. Runs on **Windows, Linux, and macOS** in your browser, terminal, or an MCP host.
 
@@ -21,11 +21,11 @@ You can't manage a limit you can't see. `aifuel` combines a local
 terminal summary, a browser dashboard, explicit provider execution, and a
 read-only MCP status server.
 
-- 🖥️ **Cross-platform *and* visual.** A real auto-refreshing dashboard on Windows, Linux **and** macOS — not just a Mac menu bar.
+- 🖥️ **Cross-platform *and* visual.** A real auto-refreshing dashboard on Windows, Linux **and** macOS - not just a Mac menu bar.
 - 📦 **Single binary.** Build once with Cargo, then run without Python, Node.js,
   or a virtual environment.
 - ⏳ **Ranked by what runs out first.** Sorted by soonest reset, with a per-window countdown and renew date, so you see the cliff *before* you hit it mid-task.
-- 🔋 **Shows what's *left*, not what you spent.** Remaining quota — not a cost/billing report.
+- 🔋 **Shows what's *left*, not what you spent.** Remaining quota - not a cost/billing report.
 - 🔒 **Local-only and honest.** Reads each CLI's own credentials to call that provider's usage endpoint, exactly like the CLI does. Nothing is printed, logged, or sent anywhere else.
 
 ## Quick start
@@ -36,7 +36,7 @@ cd aifuel
 cargo run -p aifuel -- --no-browser       # dashboard at http://127.0.0.1:8787
 cargo run -p aifuel -- --text             # terminal quota summary
 cargo run -p aifuel -- --json             # normalized status JSON
-cargo run -p aifuel -- run --provider gemini --prompt "Explain Rust ownership"
+cargo run -p aifuel -- run --provider gemini --model gemini-2.5-flash --prompt "Explain Rust ownership"
 cargo run -p aifuel -- mcp                 # read-only MCP server over stdio
 ```
 
@@ -53,13 +53,17 @@ read-only status over stdio.
 ```bash
 aifuel --text
 aifuel --json
-aifuel run --provider gemini --prompt "Explain Rust ownership"
+aifuel run --provider gemini --model gemini-2.5-flash --prompt "Explain Rust ownership"
 aifuel mcp
 ```
 
 Provider Discovery checks only provider-owned local source metadata. Collection
 reads provider credentials to make read-only requests and never refreshes or
 writes credentials.
+
+Provider model defaults remain provider-owned. If a provider default is
+temporarily rejected, select an explicit model with `--model` so
+AI Fuel does not silently fall back to a different model.
 
 ## Install as a global `aifuel` command
 
@@ -91,6 +95,25 @@ Override the target dir with `.\scripts\install.ps1 -BinDir 'C:\tools\bin'`.
 The installers require Rust and Cargo at install time. After installation,
 the command has no separately installed language runtime requirement.
 
+## MCP host setup
+
+Configure an MCP host to start the local read-only server over stdio:
+
+```json
+{
+  "mcpServers": {
+    "aifuel": {
+      "command": "aifuel",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The server exposes `get_status` and the `aifuel://status`
+resource. It reports provider status, quota, freshness, provenance, and errors.
+It does not execute prompts or edit files.
+
 ## What it tracks
 
 | Provider          | Source        | How                                                                 |
@@ -109,11 +132,11 @@ the command has no separately installed language runtime requirement.
 |---|---|
 | `aifuel` | Auto-refreshing **web dashboard** - cards, fuel bars, live countdowns |
 | `aifuel --text` | Compact **colored terminal** summary (great over SSH) |
-| `aifuel --json` | **Raw JSON** for scripts, status bars, and piping |
+| `aifuel --json` | **Normalized JSON** for scripts, status bars, and piping |
 | `aifuel run --provider ... --prompt ...` | Explicit prompt delegation to an installed provider CLI |
 | `aifuel mcp` | Read-only MCP status server over stdio |
 
-Because `--json` is a stable, structured feed, it drops cleanly into a tmux / polybar / Sketchybar / starship status line — pipe it and surface "what runs out first" wherever you already look.
+Because `--json` is a stable, structured feed, it drops cleanly into a tmux / polybar / Sketchybar / starship status line - pipe it and surface "what runs out first" wherever you already look.
 
 ## How it works (and what it touches)
 
@@ -121,7 +144,7 @@ Because `--json` is a stable, structured feed, it drops cleanly into a tmux / po
 - Before each collection, `aifuel` checks for each provider's own local credential source and initializes only the providers it finds. Discovery never calls an API, refreshes a token, or writes credentials.
 - If a local discovery check fails, other providers still load. JSON reports the failure in `discovery_errors`, and one-shot commands return a nonzero exit status after printing available results.
 - The Rust collection service never refreshes or writes provider credentials. Expired credentials are reported as unavailable.
-- Claude's `oauth/usage` endpoint rate-limits aggressively, so results are cached for 180s.
+- Provider status results are cached in-process for 300 seconds unless a refresh is requested.
 - The dashboard auto-refreshes every 5 minutes; countdowns tick every second client-side.
 - Ordering: each provider uses its authoritative weekly/monthly window when available; otherwise it uses the soonest reported reset. Providers are then ordered by that reset, with depleted providers last.
 
@@ -133,4 +156,4 @@ Because `--json` is a stable, structured feed, it drops cleanly into a tmux / po
 
 **It only shows some providers.** It shows providers with their own local credential source. Log in to that provider's AI coding CLI, then refresh the dashboard.
 
-**Why not just check each dashboard?** Because five tabs don't tell you which limit you'll hit first. `aifuel` does — at a glance, on every OS.
+**Why not just check each dashboard?** Because five tabs don't tell you which limit you'll hit first. `aifuel` does - at a glance, on every OS.

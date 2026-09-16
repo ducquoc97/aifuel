@@ -1,3 +1,4 @@
+use aifuel::launcher;
 use aifuel_core::StatusReport;
 use aifuel_providers::{CollectionConfig, DiscoveryContext, UsageService};
 use std::env;
@@ -7,7 +8,6 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 mod dashboard;
-mod launcher;
 mod mcp;
 
 fn main() -> ExitCode {
@@ -62,6 +62,9 @@ where
         index += 1;
     }
 
+    if json && text {
+        return Err("choose either --json or --text, not both".to_owned());
+    }
     if !json && !text {
         dashboard::serve(&host, port, !no_browser)?;
         return Ok(0);
@@ -98,7 +101,7 @@ fn print_help() {
     println!("       aifuel run --provider PROVIDER_ID [OPTIONS]");
     println!("       aifuel mcp");
     println!();
-    println!("The default command discovers provider-owned local source metadata.");
+    println!("The default command collects live status for discovered providers.");
     println!("run delegates one explicit prompt to a verified provider CLI.");
     println!("mcp serves read-only status over standard input and output.");
 }
@@ -125,7 +128,9 @@ fn run_launcher(args: &[String]) -> Result<u8, String> {
     match output_format {
         launcher::OutputFormat::Text => {
             print!("{}", result.output);
-            if let Some(error) = &result.error {
+            if let Some(diagnostics) = &result.diagnostics {
+                eprint!("{diagnostics}");
+            } else if let Some(error) = &result.error {
                 eprint!("{error}");
             }
         }

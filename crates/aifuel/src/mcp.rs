@@ -55,6 +55,7 @@ fn dispatch(request: &Value, state: &Value) -> Option<Value> {
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
 
     let result = match method {
+        "ping" => Ok(json!({})),
         "initialize" => Ok(json!({
             "protocolVersion": request["params"]["protocolVersion"].as_str().unwrap_or("2025-11-25"),
             "capabilities": {"tools": {}, "resources": {}},
@@ -72,6 +73,22 @@ fn dispatch(request: &Value, state: &Value) -> Option<Value> {
                         "refresh": {"type": "boolean", "default": false}
                     },
                     "additionalProperties": false
+                },
+                "outputSchema": {
+                    "type": "object",
+                    "required": ["schema_version", "generated_at", "collection", "providers"],
+                    "properties": {
+                        "schema_version": {"type": "integer"},
+                        "generated_at": {"type": "number"},
+                        "collection": {"type": "object"},
+                        "providers": {"type": "array"}
+                    }
+                },
+                "annotations": {
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
                 }
             }]
         })),
@@ -83,6 +100,7 @@ fn dispatch(request: &Value, state: &Value) -> Option<Value> {
                 "mimeType": "application/json"
             }]
         })),
+        "resources/templates/list" => Ok(json!({"resourceTemplates": []})),
         "resources/read" => {
             let uri = request["params"]["uri"].as_str().unwrap_or("");
             if uri != "aifuel://status" {
@@ -98,6 +116,8 @@ fn dispatch(request: &Value, state: &Value) -> Option<Value> {
             let name = request["params"]["name"].as_str().unwrap_or("");
             if name != "get_status" {
                 Err((-32602, "unknown tool"))
+            } else if !valid_status_arguments(&request["params"]["arguments"]) {
+                Err((-32602, "invalid get_status arguments"))
             } else {
                 let text = serde_json::to_string(state).expect("status value is serializable");
                 Ok(json!({"content": [{"type": "text", "text": text}], "structuredContent": state}))
@@ -117,20 +137,54 @@ fn dispatch(request: &Value, state: &Value) -> Option<Value> {
 }
 
 fn filter_status(state: &Value, arguments: &Value) -> Value {
-    let Some(provider_id) = arguments.get("provider_id").and_then(Value::as_str) else {
-        return state.clone();
-    };
     let mut filtered = state.clone();
+    let provider_id = arguments.get("provider_id").and_then(Value::as_str);
+    let account_id = arguments.get("account_id").and_then(Value::as_str);
+    if provider_id.is_none() && account_id.is_none() {
+        return filtered;
+    }
     if let Some(providers) = filtered.get_mut("providers").and_then(Value::as_array_mut) {
-        providers.retain(|provider| provider["key"].as_str() == Some(provider_id));
+        providers.retain(|provider| {
+            provider_id.is_none_or(|id| provider["key"].as_str() == Some(id))
+                && account_id.is_none_or(|id| provider["account_id"].as_str() == Some(id))
+        });
+        if providers.is_empty() {
+            if let Some(collection) = filtered.get_mut("collection") {
+                collection["outcome"] = Value::String("failed".to_owned());
+                if let Some(errors) = collection.get_mut("errors").and_then(Value::as_array_mut) {
+                    errors.push(json!({
+                        "provider_id": provider_id,
+                        "code": "unavailable",
+                        "message": "requested provider or account is not currently discovered"
+                    }));
+                }
+            }
+        }
     }
     if let Some(scope) = filtered
         .get_mut("collection")
         .and_then(|collection| collection.get_mut("scope"))
     {
-        scope["provider_id"] = Value::String(provider_id.to_owned());
+        scope["provider_id"] = provider_id.map_or(Value::Null, |id| Value::String(id.to_owned()));
+        scope["account_id"] = account_id.map_or(Value::Null, |id| Value::String(id.to_owned()));
     }
     filtered
+}
+
+fn valid_status_arguments(arguments: &Value) -> bool {
+    let Some(arguments) = arguments.as_object() else {
+        return true;
+    };
+    arguments
+        .keys()
+        .all(|key| matches!(key.as_str(), "provider_id" | "account_id" | "refresh"))
+        && arguments
+            .get("provider_id")
+            .is_none_or(|value| value.as_str().is_some_and(|value| !value.is_empty()))
+        && arguments
+            .get("account_id")
+            .is_none_or(|value| value.as_str().is_some_and(|value| !value.is_empty()))
+        && arguments.get("refresh").is_none_or(Value::is_boolean)
 }
 
 fn unix_timestamp() -> f64 {

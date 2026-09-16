@@ -116,15 +116,45 @@ fn respond(request: Request, status: u16, body: impl Into<String>, content_type:
 }
 
 fn is_local_request(request: &Request) -> bool {
-    request
+    let host = request
         .headers()
         .iter()
         .find(|header| header.field.equiv("Host"))
-        .map(|header| {
-            let host = header.value.as_str().split(':').next().unwrap_or("");
-            matches!(host, "127.0.0.1" | "localhost" | "[::1]" | "::1")
-        })
-        .unwrap_or(true)
+        .map(|header| host_without_port(header.value.as_str()))
+        .unwrap_or_else(|| "127.0.0.1".to_owned());
+    if !matches!(host.as_str(), "127.0.0.1" | "localhost" | "[::1]" | "::1") {
+        return false;
+    }
+    if let Some(origin) = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Origin"))
+        .map(|header| header.value.as_str())
+    {
+        let origin_host = origin
+            .split_once("://")
+            .map(|(_, value)| host_without_port(value))
+            .unwrap_or_default();
+        if origin != "null" && origin_host != host {
+            return false;
+        }
+    }
+    if request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Sec-Fetch-Site"))
+        .is_some_and(|header| matches!(header.value.as_str(), "cross-site" | "same-site"))
+    {
+        return false;
+    }
+    true
+}
+
+fn host_without_port(value: &str) -> String {
+    if let Some(value) = value.strip_prefix('[') {
+        return value.split(']').next().unwrap_or("").to_owned();
+    }
+    value.split(':').next().unwrap_or("").to_owned()
 }
 
 fn open_url(url: &str) {

@@ -79,6 +79,7 @@ pub struct RunResult {
     pub exit_code: Option<i32>,
     pub output: String,
     pub error: Option<String>,
+    pub diagnostics: Option<String>,
     pub timed_out: bool,
     pub working_directory: String,
 }
@@ -195,10 +196,13 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .resume
         .clone()
         .unwrap_or_else(|| format!("session-{run_id}"));
-    let error = if error_output.trim().is_empty() {
-        (exit_code != Some(0)).then(|| format!("provider exited with {:?}", exit_code))
+    let diagnostics = (!error_output.trim().is_empty()).then_some(error_output);
+    let error = if exit_code == Some(0) && !timed_out {
+        None
+    } else if let Some(diagnostics) = &diagnostics {
+        Some(diagnostics.clone())
     } else {
-        Some(error_output)
+        Some(format!("provider exited with {:?}", exit_code))
     };
     Ok(RunResult {
         run_id,
@@ -217,6 +221,7 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         exit_code,
         output,
         error,
+        diagnostics,
         timed_out,
         working_directory: working_directory
             .expect("launcher always has a working directory")
@@ -284,8 +289,11 @@ fn command_for(request: &RunRequest) -> Result<(&'static str, Vec<String>), Laun
                     AccessMode::ReadOnly => "read-only".to_owned(),
                     AccessMode::WorkspaceWrite => "workspace-write".to_owned(),
                 },
-                request.prompt.clone(),
             ]);
+            if request.output != OutputFormat::Text {
+                args.push("--json".to_owned());
+            }
+            args.push(request.prompt.clone());
             args.insert(1, "--skip-git-repo-check".to_owned());
             Ok(("codex", args))
         }
