@@ -120,7 +120,11 @@ fn dispatch(request: &Value, state: &Value) -> Option<Value> {
                 Err((-32602, "invalid get_status arguments"))
             } else {
                 let text = serde_json::to_string(state).expect("status value is serializable");
-                Ok(json!({"content": [{"type": "text", "text": text}], "structuredContent": state}))
+                Ok(json!({
+                    "content": [{"type": "text", "text": text}],
+                    "structuredContent": state,
+                    "isError": false
+                }))
             }
         }
         _ => Err((-32601, "method not found")),
@@ -171,14 +175,19 @@ fn filter_status(state: &Value, arguments: &Value) -> Value {
         });
     }
     if let Some(models) = filtered.get_mut("models").and_then(Value::as_array_mut) {
-        models
-            .retain(|model| provider_id.is_none_or(|id| model["provider_id"].as_str() == Some(id)));
+        models.retain(|model| {
+            provider_id.is_none_or(|id| model["provider_id"].as_str() == Some(id))
+                && account_id.is_none_or(|id| model["account_id"].as_str() == Some(id))
+        });
     }
     if let Some(pools) = filtered
         .get_mut("quota_pools")
         .and_then(Value::as_array_mut)
     {
-        pools.retain(|pool| provider_id.is_none_or(|id| pool["provider_id"].as_str() == Some(id)));
+        pools.retain(|pool| {
+            provider_id.is_none_or(|id| pool["provider_id"].as_str() == Some(id))
+                && account_id.is_none_or(|id| pool["account_id"].as_str() == Some(id))
+        });
     }
     if let Some(observations) = filtered
         .get_mut("observations")
@@ -186,6 +195,7 @@ fn filter_status(state: &Value, arguments: &Value) -> Value {
     {
         observations.retain(|observation| {
             provider_id.is_none_or(|id| observation["provider_id"].as_str() == Some(id))
+                && account_id.is_none_or(|id| observation["account_id"].as_str() == Some(id))
         });
     }
     if let Some(collection) = filtered.get_mut("collection") {

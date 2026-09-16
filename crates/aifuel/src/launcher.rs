@@ -160,9 +160,10 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .as_deref()
         .or_else(|| temporary_directory.as_ref().map(TemporaryDirectory::path));
 
-    let (program, args) = command_for(request)?;
-    preflight(program, request.provider)?;
-    let mut command = Command::new(program);
+    let integration = integration_for(request.provider)?;
+    let args = command_for(request, &integration)?;
+    preflight(&integration)?;
+    let mut command = Command::new(integration.program);
     command
         .args(args)
         .current_dir(effective_working_directory.expect("launcher always has a working directory"))
@@ -171,9 +172,10 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound => {
-            LaunchError::InvalidRequest(format!("provider executable {program:?} was not found"))
-        }
+        io::ErrorKind::NotFound => LaunchError::InvalidRequest(format!(
+            "provider executable {:?} was not found",
+            integration.program
+        )),
         _ => LaunchError::Io(error),
     })?;
     let stdout = child.stdout.take().expect("stdout was requested");
@@ -256,135 +258,176 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
     })
 }
 
-fn preflight(program: &str, provider: ProviderKey) -> Result<(), LaunchError> {
-    let output = Command::new(program)
+fn preflight(integration: &ProviderIntegration) -> Result<(), LaunchError> {
+    let output = Command::new(integration.program)
         .arg("--help")
         .output()
         .map_err(|error| match error.kind() {
             io::ErrorKind::NotFound => LaunchError::InvalidRequest(format!(
-                "provider executable {program:?} was not found"
+                "provider executable {:?} was not found",
+                integration.program
             )),
             _ => LaunchError::Io(error),
         })?;
     let help = String::from_utf8_lossy(&output.stdout);
-    let required_flags = match provider {
-        ProviderKey::Gemini => ["--prompt", "--approval-mode", "--output-format"].as_slice(),
-        ProviderKey::Claude => ["--print", "--permission-mode", "--output-format"].as_slice(),
-        ProviderKey::Codex => ["exec", "--sandbox"].as_slice(),
-        ProviderKey::Copilot => ["--prompt", "--plan", "--output-format"].as_slice(),
-        ProviderKey::Antigravity => &[] as &[&str],
-    };
-    if output.status.success() && required_flags.iter().all(|flag| help.contains(flag)) {
+    if output.status.success()
+        && integration
+            .required_flags
+            .iter()
+            .all(|flag| help.contains(flag))
+    {
         Ok(())
     } else {
         Err(LaunchError::InvalidRequest(format!(
-            "provider executable {program:?} failed capability preflight for {provider}"
+            "provider executable {:?} failed capability preflight for {}",
+            integration.program, integration.provider
         )))
     }
 }
 
-fn command_for(request: &RunRequest) -> Result<(&'static str, Vec<String>), LaunchError> {
-    let mut args = Vec::new();
-    match request.provider {
-        ProviderKey::Gemini => {
-            args.extend([
-                "--prompt".to_owned(),
-                request.prompt.clone(),
-                "--skip-trust".to_owned(),
-            ]);
-            if let Some(model) = &request.model {
-                args.extend(["--model".to_owned(), model.clone()]);
-            }
-            args.extend([
-                "--approval-mode".to_owned(),
-                match request.access {
-                    AccessMode::ReadOnly => "plan".to_owned(),
-                    AccessMode::WorkspaceWrite => "auto_edit".to_owned(),
-                },
-                "--output-format".to_owned(),
-                provider_output_format(request).to_owned(),
-            ]);
-            if let Some(session) = &request.resume {
-                args.extend(["--resume".to_owned(), session.clone()]);
-            }
-            Ok(("gemini", args))
-        }
-        ProviderKey::Claude => {
-            args.extend(["--print".to_owned(), request.prompt.clone()]);
-            if let Some(model) = &request.model {
-                args.extend(["--model".to_owned(), model.clone()]);
-            }
-            args.extend([
-                "--permission-mode".to_owned(),
-                match request.access {
-                    AccessMode::ReadOnly => "plan".to_owned(),
-                    AccessMode::WorkspaceWrite => "acceptEdits".to_owned(),
-                },
-                "--output-format".to_owned(),
-                provider_output_format(request).to_owned(),
-            ]);
-            if let Some(session) = &request.resume {
-                args.extend(["--resume".to_owned(), session.clone()]);
-            }
-            Ok(("claude", args))
-        }
-        ProviderKey::Codex => {
-            args.extend(["exec".to_owned()]);
-            if let Some(session) = &request.resume {
-                args.extend(["resume".to_owned(), session.clone()]);
-            }
-            if let Some(model) = &request.model {
-                args.extend(["--model".to_owned(), model.clone()]);
-            }
-            args.extend([
-                "--sandbox".to_owned(),
-                match request.access {
-                    AccessMode::ReadOnly => "read-only".to_owned(),
-                    AccessMode::WorkspaceWrite => "workspace-write".to_owned(),
-                },
-            ]);
-            if request.output != OutputFormat::Text {
-                args.push("--json".to_owned());
-            }
-            args.push(request.prompt.clone());
-            args.insert(1, "--skip-git-repo-check".to_owned());
-            Ok(("codex", args))
-        }
-        ProviderKey::Copilot => {
-            if request.access == AccessMode::WorkspaceWrite {
-                return Err(LaunchError::InvalidRequest(
-                    "Copilot workspace-write execution is not verified".to_owned(),
-                ));
-            }
-            if request.output == OutputFormat::Jsonl {
-                return Err(LaunchError::InvalidRequest(
-                    "Copilot JSONL output is not verified".to_owned(),
-                ));
-            }
-            args.extend([
-                "--prompt".to_owned(),
-                request.prompt.clone(),
-                "--plan".to_owned(),
-            ]);
-            if let Some(model) = &request.model {
-                args.extend(["--model".to_owned(), model.clone()]);
-            }
-            args.extend([
-                "--output-format".to_owned(),
-                match request.output {
-                    OutputFormat::Text => "text",
-                    OutputFormat::Json => "json",
-                    OutputFormat::Jsonl => unreachable!("JSONL was rejected above"),
-                }
-                .to_owned(),
-            ]);
-            if let Some(session) = &request.resume {
-                args.extend(["--resume".to_owned(), session.clone()]);
-            }
-            Ok(("copilot", args))
-        }
-        ProviderKey::Antigravity => Err(LaunchError::UnsupportedProvider(request.provider)),
+struct ProviderIntegration {
+    provider: ProviderKey,
+    program: &'static str,
+    required_flags: &'static [&'static str],
+    build_args: fn(&RunRequest) -> Result<Vec<String>, LaunchError>,
+}
+
+fn integration_for(provider: ProviderKey) -> Result<ProviderIntegration, LaunchError> {
+    match provider {
+        ProviderKey::Gemini => Ok(ProviderIntegration {
+            provider,
+            program: "gemini",
+            required_flags: &["--prompt", "--approval-mode", "--output-format"],
+            build_args: gemini_args,
+        }),
+        ProviderKey::Claude => Ok(ProviderIntegration {
+            provider,
+            program: "claude",
+            required_flags: &["--print", "--permission-mode", "--output-format"],
+            build_args: claude_args,
+        }),
+        ProviderKey::Codex => Ok(ProviderIntegration {
+            provider,
+            program: "codex",
+            required_flags: &["exec", "--sandbox"],
+            build_args: codex_args,
+        }),
+        ProviderKey::Copilot => Ok(ProviderIntegration {
+            provider,
+            program: "copilot",
+            required_flags: &["--prompt", "--plan", "--output-format"],
+            build_args: copilot_args,
+        }),
+        ProviderKey::Antigravity => Err(LaunchError::UnsupportedProvider(provider)),
     }
+}
+
+fn command_for(
+    request: &RunRequest,
+    integration: &ProviderIntegration,
+) -> Result<Vec<String>, LaunchError> {
+    (integration.build_args)(request)
+}
+
+fn gemini_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
+    let mut args = vec![
+        "--prompt".to_owned(),
+        request.prompt.clone(),
+        "--skip-trust".to_owned(),
+    ];
+    if let Some(model) = &request.model {
+        args.extend(["--model".to_owned(), model.clone()]);
+    }
+    args.extend([
+        "--approval-mode".to_owned(),
+        match request.access {
+            AccessMode::ReadOnly => "plan".to_owned(),
+            AccessMode::WorkspaceWrite => "auto_edit".to_owned(),
+        },
+        "--output-format".to_owned(),
+        provider_output_format(request).to_owned(),
+    ]);
+    if let Some(session) = &request.resume {
+        args.extend(["--resume".to_owned(), session.clone()]);
+    }
+    Ok(args)
+}
+
+fn claude_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
+    let mut args = vec!["--print".to_owned(), request.prompt.clone()];
+    if let Some(model) = &request.model {
+        args.extend(["--model".to_owned(), model.clone()]);
+    }
+    args.extend([
+        "--permission-mode".to_owned(),
+        match request.access {
+            AccessMode::ReadOnly => "plan".to_owned(),
+            AccessMode::WorkspaceWrite => "acceptEdits".to_owned(),
+        },
+        "--output-format".to_owned(),
+        provider_output_format(request).to_owned(),
+    ]);
+    if let Some(session) = &request.resume {
+        args.extend(["--resume".to_owned(), session.clone()]);
+    }
+    Ok(args)
+}
+
+fn codex_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
+    let mut args = vec!["exec".to_owned()];
+    if let Some(session) = &request.resume {
+        args.extend(["resume".to_owned(), session.clone()]);
+    }
+    if let Some(model) = &request.model {
+        args.extend(["--model".to_owned(), model.clone()]);
+    }
+    args.extend([
+        "--sandbox".to_owned(),
+        match request.access {
+            AccessMode::ReadOnly => "read-only".to_owned(),
+            AccessMode::WorkspaceWrite => "workspace-write".to_owned(),
+        },
+    ]);
+    if request.output != OutputFormat::Text {
+        args.push("--json".to_owned());
+    }
+    args.push(request.prompt.clone());
+    args.insert(1, "--skip-git-repo-check".to_owned());
+    Ok(args)
+}
+
+fn copilot_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
+    if request.access == AccessMode::WorkspaceWrite {
+        return Err(LaunchError::InvalidRequest(
+            "Copilot workspace-write execution is not verified".to_owned(),
+        ));
+    }
+    if request.output == OutputFormat::Jsonl {
+        return Err(LaunchError::InvalidRequest(
+            "Copilot JSONL output is not verified".to_owned(),
+        ));
+    }
+    let mut args = vec![
+        "--prompt".to_owned(),
+        request.prompt.clone(),
+        "--plan".to_owned(),
+    ];
+    if let Some(model) = &request.model {
+        args.extend(["--model".to_owned(), model.clone()]);
+    }
+    args.extend([
+        "--output-format".to_owned(),
+        match request.output {
+            OutputFormat::Text => "text",
+            OutputFormat::Json => "json",
+            OutputFormat::Jsonl => unreachable!("JSONL was rejected above"),
+        }
+        .to_owned(),
+    ]);
+    if let Some(session) = &request.resume {
+        args.extend(["--resume".to_owned(), session.clone()]);
+    }
+    Ok(args)
 }
 
 fn provider_output_format(request: &RunRequest) -> &'static str {

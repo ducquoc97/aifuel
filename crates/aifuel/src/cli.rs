@@ -1,5 +1,5 @@
 use aifuel::launcher;
-use aifuel_core::StatusReport;
+use aifuel_core::{ProviderStatus, StatusReport};
 use aifuel_providers::{CollectionConfig, DiscoveryContext, UsageService};
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -157,7 +157,7 @@ fn render_status_text(report: &StatusReport) -> String {
         output.push('\n');
         output.push_str(&format!(
             "{}  {}  {}\n",
-            if provider.status == "ok" {
+            if provider.status == ProviderStatus::Ok {
                 "●"
             } else {
                 "○"

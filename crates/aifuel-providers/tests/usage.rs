@@ -1,4 +1,4 @@
-use aifuel_core::ProviderKey;
+use aifuel_core::{CollectionOutcome, ProviderKey, ProviderStatus};
 use aifuel_providers::{CollectionConfig, UsageService};
 use std::fs;
 use std::io::{Read, Write};
@@ -138,10 +138,10 @@ async fn gemini_collection_normalizes_live_model_quota() {
 
     assert_eq!(report.providers.len(), 1);
     assert_eq!(report.providers[0].key, ProviderKey::Gemini);
-    assert_eq!(report.providers[0].status, "ok");
+    assert_eq!(report.providers[0].status, ProviderStatus::Ok);
     assert_eq!(report.providers[0].windows[0].label, "gemini-3.5-flash");
     assert_eq!(report.providers[0].windows[0].remaining_percent, Some(50.0));
-    assert_eq!(report.collection.outcome.as_deref(), Some("complete"));
+    assert_eq!(report.collection.outcome, Some(CollectionOutcome::Complete));
     assert!(report.discovery_errors.is_empty());
     assert_eq!(cached, report);
     assert_eq!(

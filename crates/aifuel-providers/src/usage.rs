@@ -130,8 +130,9 @@ impl UsageService {
             .flatten()
             .collect();
 
-        StatusReport::from_usage(unix_timestamp(), providers, discovery_errors)
-            .with_catalog(crate::catalog::statuses())
+        let mut report = StatusReport::from_usage(unix_timestamp(), providers, discovery_errors);
+        report.catalog = crate::catalog::statuses();
+        report
     }
 }
 

@@ -1,4 +1,4 @@
-use aifuel_core::CatalogProviderStatus;
+use aifuel_core::{CapabilityState, CatalogPlatformStatus, CatalogProviderStatus};
 
 pub const PINNED_PROVIDER_IDS: &[&str] = &[
     "codex",
@@ -77,14 +77,36 @@ pub(crate) fn statuses() -> Vec<CatalogProviderStatus> {
         .iter()
         .map(|id| {
             let (monitoring, agent_execution) = match *id {
-                "claude" | "codex" | "copilot" | "gemini" => ("supported", "supported"),
-                "antigravity" => ("supported", "unsupported"),
-                _ => ("unsupported", "unsupported"),
+                "claude" | "codex" | "copilot" | "gemini" => {
+                    (CapabilityState::Supported, CapabilityState::Supported)
+                }
+                "antigravity" => (CapabilityState::Supported, CapabilityState::Unsupported),
+                _ => (CapabilityState::Unsupported, CapabilityState::Unsupported),
             };
+            let implemented = !matches!(monitoring, CapabilityState::Unsupported);
+            let platforms = ["macos", "linux", "windows"]
+                .into_iter()
+                .map(|platform| CatalogPlatformStatus {
+                    platform: platform.to_owned(),
+                    monitoring,
+                    agent_execution,
+                    reason: if implemented {
+                        "Rust adapter is implemented; live support still depends on provider credentials and platform CLI availability".to_owned()
+                    } else {
+                        "No Rust provider adapter is implemented; capability remains explicitly unsupported".to_owned()
+                    },
+                })
+                .collect();
             CatalogProviderStatus {
                 id: (*id).to_owned(),
-                monitoring: monitoring.to_owned(),
-                agent_execution: agent_execution.to_owned(),
+                monitoring,
+                agent_execution,
+                evidence: if implemented {
+                    "Rust provider adapter and fixture coverage".to_owned()
+                } else {
+                    "Pinned provider inventory only; no Rust adapter".to_owned()
+                },
+                platforms,
             }
         })
         .collect()

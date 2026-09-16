@@ -21,51 +21,18 @@ impl CodeAssistPeriod {
 }
 
 pub(crate) async fn collect_gemini(service: &UsageService) -> ProviderUsage {
-    let path = service.home_dir.join(".gemini/oauth_creds.json");
-    let credentials = match read_json(&path) {
-        Ok(value) => value,
-        Err(error) => return ProviderUsage::error(ProviderKey::Gemini, error),
-    };
-    let Some(token) =
-        deep_find(&credentials, &["access_token", "accessToken"]).and_then(Value::as_str)
-    else {
-        return ProviderUsage::error(ProviderKey::Gemini, "No access token in oauth_creds.json");
-    };
-    let project = project_from_environment();
-    let (plan, windows, detail) = collect_code_assist(
+    collect_file_code_assist(
         service,
-        token,
-        project.as_deref(),
+        ProviderKey::Gemini,
+        ".gemini/oauth_creds.json",
+        project_from_environment(),
         "gemini-cli/usage-monitor",
         CodeAssistPeriod::Daily,
     )
-    .await;
-    if let Some(detail) = detail {
-        let mut result = ProviderUsage::error(ProviderKey::Gemini, detail);
-        result.plan = plan;
-        return result;
-    }
-    let mut result = ProviderUsage::success(ProviderKey::Gemini, rank_windows(windows));
-    result.plan = plan;
-    result
+    .await
 }
 
 pub(crate) async fn collect_antigravity(service: &UsageService) -> ProviderUsage {
-    let path = service
-        .home_dir
-        .join(".gemini/antigravity-cli/antigravity-oauth-token");
-    let credentials = match read_json(&path) {
-        Ok(value) => value,
-        Err(error) => return ProviderUsage::error(ProviderKey::Antigravity, error),
-    };
-    let Some(token) =
-        deep_find(&credentials, &["access_token", "accessToken"]).and_then(Value::as_str)
-    else {
-        return ProviderUsage::error(
-            ProviderKey::Antigravity,
-            "No access token in Antigravity credentials",
-        );
-    };
     let project = service
         .home_dir
         .join(".gemini/antigravity-cli/settings.json");
@@ -75,20 +42,42 @@ pub(crate) async fn collect_antigravity(service: &UsageService) -> ProviderUsage
             .and_then(|gcp| gcp.get("project"))
             .and_then(value_string)
     });
-    let (plan, windows, detail) = collect_code_assist(
+    collect_file_code_assist(
         service,
-        token,
-        project.as_deref(),
+        ProviderKey::Antigravity,
+        ".gemini/antigravity-cli/antigravity-oauth-token",
+        project,
         "antigravity/usage-monitor",
         CodeAssistPeriod::Unknown,
     )
-    .await;
+    .await
+}
+
+async fn collect_file_code_assist(
+    service: &UsageService,
+    provider: ProviderKey,
+    credential_relative_path: &str,
+    project: Option<String>,
+    user_agent: &str,
+    period: CodeAssistPeriod,
+) -> ProviderUsage {
+    let credentials = match read_json(&service.home_dir.join(credential_relative_path)) {
+        Ok(value) => value,
+        Err(error) => return ProviderUsage::error(provider, error),
+    };
+    let Some(token) =
+        deep_find(&credentials, &["access_token", "accessToken"]).and_then(Value::as_str)
+    else {
+        return ProviderUsage::error(provider, "No access token in provider credentials");
+    };
+    let (plan, windows, detail) =
+        collect_code_assist(service, token, project.as_deref(), user_agent, period).await;
     if let Some(detail) = detail {
-        let mut result = ProviderUsage::error(ProviderKey::Antigravity, detail);
+        let mut result = ProviderUsage::error(provider, detail);
         result.plan = plan;
         return result;
     }
-    let mut result = ProviderUsage::success(ProviderKey::Antigravity, rank_windows(windows));
+    let mut result = ProviderUsage::success(provider, rank_windows(windows));
     result.plan = plan;
     result
 }

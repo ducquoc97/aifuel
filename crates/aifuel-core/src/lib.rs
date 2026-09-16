@@ -6,8 +6,10 @@ use std::str::FromStr;
 
 mod status;
 pub use status::{
-    CatalogProviderStatus, CollectionScope, CollectionStatus, STATUS_SCHEMA_VERSION, StatusAccount,
-    StatusError, StatusModel, StatusObservation, StatusQuotaPool, StatusReport,
+    CapabilityState, CatalogPlatformStatus, CatalogProviderStatus, CollectionOutcome,
+    CollectionScope, CollectionState, CollectionStatus, FreshnessState, ModelState,
+    ObservationState, Provenance, STATUS_SCHEMA_VERSION, StatusAccount, StatusError,
+    StatusErrorCode, StatusModel, StatusObservation, StatusQuotaPool, StatusReport,
 };
 
 /// The schema version for the initial Rust discovery output.
@@ -245,7 +247,7 @@ impl QuotaWindow {
 pub struct ProviderUsage {
     pub key: ProviderKey,
     pub name: &'static str,
-    pub status: String,
+    pub status: ProviderStatus,
     pub plan: Option<String>,
     pub account_id: Option<String>,
     pub source: Option<String>,
@@ -253,6 +255,22 @@ pub struct ProviderUsage {
     pub windows: Vec<QuotaWindow>,
     pub reset_at: Option<f64>,
     pub reset_credits: Option<ResetCredits>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderStatus {
+    Ok,
+    Error,
+}
+
+impl fmt::Display for ProviderStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok => f.write_str("ok"),
+            Self::Error => f.write_str("error"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -274,7 +292,7 @@ impl ProviderUsage {
         Self {
             key,
             name: key.display_name(),
-            status: "error".to_owned(),
+            status: ProviderStatus::Error,
             plan: None,
             account_id: None,
             source: None,
@@ -293,7 +311,7 @@ impl ProviderUsage {
         Self {
             key,
             name: key.display_name(),
-            status: "ok".to_owned(),
+            status: ProviderStatus::Ok,
             plan: None,
             account_id: None,
             source: Some("live".to_owned()),

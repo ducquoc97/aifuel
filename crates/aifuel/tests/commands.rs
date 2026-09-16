@@ -122,7 +122,6 @@ fn start_gemini_fixture() -> (String, thread::JoinHandle<()>) {
     });
     (format!("http://{address}/"), server)
 }
-
 #[test]
 fn run_delegates_a_prompt_to_the_selected_gemini_integration() {
     let directory = TestDirectory::new("run");
@@ -144,7 +143,6 @@ fn run_delegates_a_prompt_to_the_selected_gemini_integration() {
         "fake gemini response: --prompt hello --skip-trust --approval-mode plan --output-format text"
     );
 }
-
 #[test]
 fn run_emits_a_structured_result_when_json_is_requested() {
     let directory = TestDirectory::new("json-run");
@@ -182,7 +180,6 @@ fn run_emits_a_structured_result_when_json_is_requested() {
             .contains("--output-format json")
     );
 }
-
 #[test]
 fn run_uses_the_selected_claude_integration() {
     let directory = TestDirectory::new("claude-run");
@@ -407,6 +404,10 @@ fn json_status_command_collects_gemini_quota_through_the_real_binary() {
         serde_json::from_slice(&output.stdout).expect("status command should emit JSON");
     assert_eq!(value["schema_version"], 1);
     assert_eq!(value["collection"]["outcome"], "complete");
+    assert_eq!(
+        value["catalog"].as_array().expect("catalog array").len(),
+        69
+    );
     assert_eq!(value["providers"][0]["key"], "gemini");
     assert_eq!(
         value["providers"][0]["windows"][0]["remaining_percent"],

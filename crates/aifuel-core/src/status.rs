@@ -1,4 +1,4 @@
-use super::{DiscoveryFailure, ProviderKey, ProviderUsage};
+use super::{DiscoveryFailure, ProviderKey, ProviderStatus, ProviderUsage};
 use serde::Serialize;
 
 pub const STATUS_SCHEMA_VERSION: u32 = 1;
@@ -20,8 +20,8 @@ pub struct StatusReport {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CollectionStatus {
-    pub state: String,
-    pub outcome: Option<String>,
+    pub state: CollectionState,
+    pub outcome: Option<CollectionOutcome>,
     pub scope: CollectionScope,
     pub coverage: Vec<String>,
     pub errors: Vec<StatusError>,
@@ -37,7 +37,7 @@ pub struct CollectionScope {
 pub struct StatusError {
     pub provider_id: Option<String>,
     pub account_id: Option<String>,
-    pub code: String,
+    pub code: StatusErrorCode,
     pub message: String,
 }
 
@@ -50,8 +50,18 @@ pub struct StatusAccount {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CatalogProviderStatus {
     pub id: String,
-    pub monitoring: String,
-    pub agent_execution: String,
+    pub monitoring: CapabilityState,
+    pub agent_execution: CapabilityState,
+    pub evidence: String,
+    pub platforms: Vec<CatalogPlatformStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CatalogPlatformStatus {
+    pub platform: String,
+    pub monitoring: CapabilityState,
+    pub agent_execution: CapabilityState,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -60,7 +70,7 @@ pub struct StatusModel {
     pub provider_id: String,
     pub account_id: Option<String>,
     pub quota_pool_id: String,
-    pub state: String,
+    pub state: ModelState,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -74,12 +84,71 @@ pub struct StatusQuotaPool {
 pub struct StatusObservation {
     pub id: String,
     pub provider_id: String,
+    pub account_id: Option<String>,
     pub quota_pool_id: String,
-    pub state: String,
+    pub state: ObservationState,
     pub observed_at: Option<f64>,
     pub collected_at: f64,
-    pub freshness: String,
-    pub provenance: String,
+    pub freshness: FreshnessState,
+    pub provenance: Provenance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionState {
+    NotCollected,
+    Collected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionOutcome {
+    Complete,
+    Partial,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusErrorCode {
+    DiscoveryFailure,
+    CollectionFailed,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityState {
+    Supported,
+    Unsupported,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelState {
+    Observed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationState {
+    Known,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FreshnessState {
+    Fresh,
+    Stale,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Provenance {
+    ProviderApi,
 }
 
 impl StatusReport {
@@ -88,7 +157,7 @@ impl StatusReport {
             schema_version: STATUS_SCHEMA_VERSION,
             generated_at,
             collection: CollectionStatus {
-                state: "not_collected".to_owned(),
+                state: CollectionState::NotCollected,
                 outcome: None,
                 scope: CollectionScope {
                     provider_id: None,
@@ -117,7 +186,7 @@ impl StatusReport {
             .map(|failure| StatusError {
                 provider_id: Some(failure.provider.key.as_str().to_owned()),
                 account_id: None,
-                code: "discovery_failure".to_owned(),
+                code: StatusErrorCode::DiscoveryFailure,
                 message: failure.detail.to_owned(),
             })
             .collect::<Vec<_>>();
@@ -125,20 +194,23 @@ impl StatusReport {
             provider.detail.as_ref().map(|detail| StatusError {
                 provider_id: Some(provider.key.as_str().to_owned()),
                 account_id: provider.account_id.clone(),
-                code: "collection_failed".to_owned(),
+                code: StatusErrorCode::CollectionFailed,
                 message: detail.clone(),
             })
         }));
-        let outcome = if providers.iter().any(|provider| provider.status == "ok") {
+        let outcome = if providers
+            .iter()
+            .any(|provider| provider.status == ProviderStatus::Ok)
+        {
             if errors.is_empty() {
-                "complete"
+                CollectionOutcome::Complete
             } else {
-                "partial"
+                CollectionOutcome::Partial
             }
         } else if providers.is_empty() && errors.is_empty() {
-            "complete"
+            CollectionOutcome::Complete
         } else {
-            "failed"
+            CollectionOutcome::Failed
         };
         providers.sort_by(|left, right| {
             let left_remaining = effective_remaining(left);
@@ -176,7 +248,7 @@ impl StatusReport {
                     provider_id: provider.key.as_str().to_owned(),
                     account_id: provider.account_id.clone(),
                     quota_pool_id: quota_pool_id.clone(),
-                    state: "observed".to_owned(),
+                    state: ModelState::Observed,
                 })
             })
             .collect();
@@ -199,16 +271,17 @@ impl StatusReport {
                     .map(move |window| StatusObservation {
                         id: format!("{}:{}", provider.key, window.label),
                         provider_id: provider.key.as_str().to_owned(),
+                        account_id: provider.account_id.clone(),
                         quota_pool_id: quota_pool_id.clone(),
-                        state: if provider.status == "ok" {
-                            "known".to_owned()
+                        state: if provider.status == ProviderStatus::Ok {
+                            ObservationState::Known
                         } else {
-                            "unavailable".to_owned()
+                            ObservationState::Unavailable
                         },
                         observed_at: Some(generated_at),
                         collected_at: generated_at,
-                        freshness: "fresh".to_owned(),
-                        provenance: "provider_api".to_owned(),
+                        freshness: FreshnessState::Fresh,
+                        provenance: Provenance::ProviderApi,
                     })
             })
             .collect();
@@ -216,8 +289,8 @@ impl StatusReport {
             schema_version: STATUS_SCHEMA_VERSION,
             generated_at,
             collection: CollectionStatus {
-                state: "collected".to_owned(),
-                outcome: Some(outcome.to_owned()),
+                state: CollectionState::Collected,
+                outcome: Some(outcome),
                 scope: CollectionScope {
                     provider_id: None,
                     account_id: None,
@@ -236,11 +309,6 @@ impl StatusReport {
             observations,
             discovery_errors,
         }
-    }
-
-    pub fn with_catalog(mut self, catalog: Vec<CatalogProviderStatus>) -> Self {
-        self.catalog = catalog;
-        self
     }
 }
 
