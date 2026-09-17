@@ -2,6 +2,16 @@
 
 use serde::Serialize;
 use std::fmt;
+use std::str::FromStr;
+
+mod status;
+pub use status::{
+    CapabilityKind, CapabilityState, CatalogPlatformStatus, CatalogProviderStatus,
+    CollectionOutcome, CollectionScope, CollectionState, CollectionStatus, FreshnessState,
+    ModelState, ObservationState, Provenance, STATUS_SCHEMA_VERSION, StatusAccount,
+    StatusCapability, StatusEntitlement, StatusError, StatusErrorCode, StatusModel,
+    StatusObservation, StatusQuotaPool, StatusReport,
+};
 
 /// The schema version for the initial Rust discovery output.
 pub const DISCOVERY_SCHEMA_VERSION: u32 = 1;
@@ -73,6 +83,32 @@ impl fmt::Display for ProviderKey {
         f.write_str(self.as_str())
     }
 }
+
+impl FromStr for ProviderKey {
+    type Err = InvalidProviderKey;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "claude" => Ok(Self::Claude),
+            "codex" => Ok(Self::Codex),
+            "copilot" => Ok(Self::Copilot),
+            "gemini" => Ok(Self::Gemini),
+            "antigravity" => Ok(Self::Antigravity),
+            _ => Err(InvalidProviderKey(value.to_owned())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidProviderKey(String);
+
+impl fmt::Display for InvalidProviderKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown provider {:?}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidProviderKey {}
 
 /// The stable identity and display name of a provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -167,6 +203,124 @@ impl DiscoveryReport {
 impl Default for DiscoveryReport {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A quota period reported by a provider.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QuotaWindow {
+    pub label: String,
+    pub period: String,
+    pub used_percent: Option<f64>,
+    pub remaining_percent: Option<f64>,
+    pub used: Option<f64>,
+    pub limit: Option<f64>,
+    pub resets_at: Option<f64>,
+}
+
+impl QuotaWindow {
+    pub fn new(
+        label: impl Into<String>,
+        period: impl Into<String>,
+        used_percent: Option<f64>,
+        remaining_percent: Option<f64>,
+        resets_at: Option<f64>,
+    ) -> Self {
+        let used_percent = used_percent.map(|value| value.clamp(0.0, 100.0));
+        let remaining_percent = remaining_percent
+            .or_else(|| used_percent.map(|value| 100.0 - value))
+            .map(|value| value.clamp(0.0, 100.0));
+        let used_percent = used_percent.or_else(|| remaining_percent.map(|value| 100.0 - value));
+        Self {
+            label: label.into(),
+            period: period.into(),
+            used_percent,
+            remaining_percent,
+            used: None,
+            limit: None,
+            resets_at,
+        }
+    }
+}
+
+/// One provider's normalized usage result.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ProviderUsage {
+    pub key: ProviderKey,
+    pub name: &'static str,
+    pub status: ProviderStatus,
+    pub plan: Option<String>,
+    pub account_id: Option<String>,
+    pub source: Option<String>,
+    pub detail: Option<String>,
+    pub windows: Vec<QuotaWindow>,
+    pub reset_at: Option<f64>,
+    pub reset_credits: Option<ResetCredits>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderStatus {
+    Ok,
+    Error,
+}
+
+impl fmt::Display for ProviderStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok => f.write_str("ok"),
+            Self::Error => f.write_str("error"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ResetCredits {
+    pub available_count: u64,
+    pub credits: Vec<ResetCredit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ResetCredit {
+    pub reset_type: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub expires_at: Option<f64>,
+}
+
+impl ProviderUsage {
+    pub fn error(key: ProviderKey, detail: impl Into<String>) -> Self {
+        Self {
+            key,
+            name: key.display_name(),
+            status: ProviderStatus::Error,
+            plan: None,
+            account_id: None,
+            source: None,
+            detail: Some(detail.into()),
+            windows: Vec::new(),
+            reset_at: None,
+            reset_credits: None,
+        }
+    }
+
+    pub fn success(key: ProviderKey, windows: Vec<QuotaWindow>) -> Self {
+        let reset_at = windows
+            .iter()
+            .filter_map(|window| window.resets_at)
+            .min_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+        Self {
+            key,
+            name: key.display_name(),
+            status: ProviderStatus::Ok,
+            plan: None,
+            account_id: None,
+            source: Some("live".to_owned()),
+            detail: None,
+            windows,
+            reset_at,
+            reset_credits: None,
+        }
     }
 }
 

@@ -1,13 +1,10 @@
 <#
 .SYNOPSIS
-  Install (or remove) `aifuel` — a global launcher for aifuel.py — on Windows.
+  Install (or remove) the native Rust aifuel executable on Windows.
 
 .DESCRIPTION
-  Drops an `aifuel.cmd` shim in a bin dir (default ~\.local\bin) that forwards to
-  this repo's aifuel.py, and puts that dir on your user PATH. After install:
-    aifuel          -> python aifuel.py        (web dashboard)
-    aifuel --json   -> python aifuel.py --json
-    aifuel --text   -> ... and every other flag passes through.
+  Builds the Rust binary and copies aifuel.exe to a bin dir (default
+  ~\.local\bin), then puts that dir on your user PATH.
 
 .EXAMPLE
   .\install.ps1
@@ -22,7 +19,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Cmd = 'aifuel'
-$Launcher = Join-Path $BinDir "$Cmd.cmd"
+$Launcher = Join-Path $BinDir "$Cmd.exe"
 
 if ($Uninstall) {
     if (Test-Path $Launcher) {
@@ -34,41 +31,22 @@ if ($Uninstall) {
     return
 }
 
-# aifuel.py lives in src/ (one level up from scripts/).
-$TargetPy = Join-Path $PSScriptRoot '..\src\aifuel.py'
-if (-not (Test-Path $TargetPy)) {
-    Write-Error "aifuel.py not found next to install.ps1 ($TargetPy)"
-}
-# Canonicalize, then refuse chars that can't be safely baked into a .cmd shim:
-# '%' triggers env-var expansion at runtime (even inside quotes) and '"' would
-# break out of the quoting.
-$TargetPy = (Resolve-Path $TargetPy).Path
-if ($TargetPy -match '["%]') {
-    Write-Error 'install path contains an unsupported character (a double-quote or percent sign); cannot generate a safe launcher.'
+if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+    Write-Error "cargo is required to build the Rust aifuel binary"
 }
 
-# Find a Python interpreter to bake into the shim.
-$Python = $null
-foreach ($cand in @('python', 'python3', 'py')) {
-    if (Get-Command $cand -ErrorAction SilentlyContinue) { $Python = $cand; break }
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$TargetBinary = Join-Path $RepoRoot 'target\release\aifuel.exe'
+& cargo build --release --locked -p aifuel
+if (-not (Test-Path $TargetBinary)) {
+    Write-Error "Rust build did not produce $TargetBinary"
 }
-if (-not $Python) {
-    Write-Error "no python found on PATH (install Python 3 from python.org)"
-}
-# The `py` launcher needs -3 to force Python 3.
-$PyInvoke = if ($Python -eq 'py') { 'py -3' } else { $Python }
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+Copy-Item -Path $TargetBinary -Destination $Launcher -Force
 
-# A .cmd shim runs from cmd, PowerShell, and Explorer alike. ASCII = no BOM,
-# which a .cmd file chokes on. %* forwards every argument through.
-@"
-@echo off
-$PyInvoke "$TargetPy" %*
-"@ | Set-Content -Path $Launcher -Encoding ASCII
-
-Write-Host "Installed $Cmd -> $TargetPy"
-Write-Host "  at $Launcher (via $PyInvoke)"
+Write-Host "Installed $Cmd -> $TargetBinary"
+Write-Host "  at $Launcher"
 
 # Ensure the bin dir is on the persisted user PATH, adding it if missing.
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')

@@ -1,18 +1,24 @@
 //! Built-in provider discovery and initialization.
 //!
-//! This crate only inspects provider-owned source metadata in this slice. It
-//! does not parse credentials, refresh tokens, contact provider APIs, or write
-//! user state. Quota adapters are added by later implementation issues.
+//! This crate owns provider discovery and read-only quota collection.
+//! Discovery inspects provider-owned source metadata without reading its
+//! contents. Collection reads provider credentials only when requested, makes
+//! read-only API calls, and never refreshes or writes user state.
 
 mod discovery;
+mod usage;
+mod usage_helpers;
 
 mod antigravity;
+mod catalog;
 mod claude;
+mod code_assist;
 mod codex;
 mod copilot;
 mod gemini;
 
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
+pub use usage::{CollectionConfig, UsageService};
 
 use aifuel_core::{
     DiscoveryError, DiscoveryFailure, DiscoveryReport, DiscoveryState, ProviderDescriptor,
@@ -293,11 +299,14 @@ mod tests {
     }
 
     #[test]
-    fn an_uninspectable_parent_is_reported_as_a_discovery_failure() {
+    fn an_uninspectable_source_is_reported_as_a_discovery_failure() {
         let home = TestHome::new();
-        home.write_file(".gemini", b"this is a file, not a directory");
+        let gemini = CatalogProvider::file_source(ProviderKey::Gemini, "\0");
+        let antigravity = CatalogProvider::file_source(ProviderKey::Antigravity, "\0");
+        let definitions: [&dyn CatalogProviderDefinition; 2] = [&gemini, &antigravity];
 
-        let selection = default_registry().discover_and_initialize(&home.context());
+        let selection =
+            ProviderRegistry::new(&definitions).discover_and_initialize(&home.context());
         let failures: Vec<_> = selection
             .report()
             .discovery_errors
