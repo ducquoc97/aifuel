@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 aifuel-core = { path = "../aifuel-core" }
+aifuel-app = { path = "../aifuel-app" }
+aifuel-mcp = { path = "../aifuel-mcp" }
 aifuel-providers = { path = "../aifuel-providers" }
 chrono.workspace = true
 serde.workspace = true

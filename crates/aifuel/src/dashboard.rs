@@ -1,5 +1,5 @@
-use aifuel_core::StatusReport;
-use aifuel_providers::{CollectionConfig, UsageService};
+use aifuel_app::MonitoringFacade;
+use aifuel_core::{StatusCollector, StatusReport};
 use std::io::Write;
 use std::process::Command;
 use std::thread;
@@ -8,7 +8,15 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 const INDEX_HTML: &str = include_str!("../../../src/index.html");
 const DASHBOARD_CSS: &str = include_str!("../../../src/dashboard.css");
 
-pub fn serve(host: &str, port: u16, open_browser: bool) -> Result<(), String> {
+pub fn serve<C>(
+    host: &str,
+    port: u16,
+    open_browser: bool,
+    facade: MonitoringFacade<C>,
+) -> Result<(), String>
+where
+    C: StatusCollector,
+{
     let server = Server::http(format!("{host}:{port}"))
         .map_err(|error| format!("could not start dashboard server: {error}"))?;
     let address = server.server_addr().to_string();
@@ -26,9 +34,6 @@ pub fn serve(host: &str, port: u16, open_browser: bool) -> Result<(), String> {
         .flush()
         .map_err(|error| format!("could not flush dashboard address: {error}"))?;
 
-    let context = aifuel_providers::DiscoveryContext::from_environment()
-        .map_err(|error| error.to_string())?;
-    let service = UsageService::new(context.home_dir(), CollectionConfig::from_environment())?;
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("could not start dashboard runtime: {error}"))?;
 
@@ -42,12 +47,18 @@ pub fn serve(host: &str, port: u16, open_browser: bool) -> Result<(), String> {
             );
             continue;
         }
-        handle_request(request, &service, &runtime);
+        handle_request(request, &facade, &runtime);
     }
     Ok(())
 }
 
-fn handle_request(request: Request, service: &UsageService, runtime: &tokio::runtime::Runtime) {
+fn handle_request<C>(
+    request: Request,
+    facade: &MonitoringFacade<C>,
+    runtime: &tokio::runtime::Runtime,
+) where
+    C: StatusCollector,
+{
     let force = request
         .url()
         .split('?')
@@ -60,11 +71,11 @@ fn handle_request(request: Request, service: &UsageService, runtime: &tokio::run
             respond(request, 200, DASHBOARD_CSS, "text/css; charset=utf-8")
         }
         (&Method::Get, "/api/usage") => {
-            let report = runtime.block_on(service.status(force));
+            let report = runtime.block_on(facade.status(force));
             respond_json(request, &report);
         }
         (&Method::Get, "/api/usage/stream") => {
-            let report = runtime.block_on(service.status(force));
+            let report = runtime.block_on(facade.status(force));
             respond_stream(request, &report);
         }
         _ => respond(request, 404, "not found", "text/plain"),

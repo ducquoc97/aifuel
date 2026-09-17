@@ -1,11 +1,10 @@
 use aifuel::launcher;
 use aifuel_core::{ProviderStatus, StatusReport};
-use aifuel_providers::{CollectionConfig, DiscoveryContext, UsageService};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::{dashboard, mcp};
+use crate::dashboard;
 
 pub fn run<I>(args: I) -> Result<u8, String>
 where
@@ -19,7 +18,7 @@ where
         if args.len() > 1 {
             return Err(format!("unknown argument {:?} after mcp", args[1]));
         }
-        mcp::serve()?;
+        aifuel_mcp::serve(aifuel::monitoring_facade()?)?;
         return Ok(0);
     }
 
@@ -53,15 +52,14 @@ where
         return Err("choose either --json or --text, not both".to_owned());
     }
     if !json && !text {
-        dashboard::serve(&host, port, !no_browser)?;
+        dashboard::serve(&host, port, !no_browser, aifuel::monitoring_facade()?)?;
         return Ok(0);
     }
 
-    let context = DiscoveryContext::from_environment().map_err(|error| error.to_string())?;
-    let service = UsageService::new(context.home_dir(), CollectionConfig::from_environment())?;
+    let facade = aifuel::monitoring_facade()?;
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("could not start collection runtime: {error}"))?;
-    let report = runtime.block_on(service.collect());
+    let report = runtime.block_on(facade.collect());
 
     if json {
         println!(

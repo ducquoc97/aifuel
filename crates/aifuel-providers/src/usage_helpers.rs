@@ -1,4 +1,4 @@
-use super::usage::UsageService;
+use super::ProviderMonitoring;
 use aifuel_core::QuotaWindow;
 use chrono::{DateTime, Datelike};
 use serde_json::Value;
@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) async fn post_json(
-    service: &UsageService,
+    service: &ProviderMonitoring,
     url: &str,
     token: &str,
     body: Value,
