@@ -1,6 +1,6 @@
 # Centralize external MCP access through an AI Fuel gateway
 
-Configure external MCP servers once in a per-user AI Fuel catalog and expose them to selected local agents through an MCP Gateway, instead of copying external server definitions into every agent. Keep the gateway separate from AI Fuel's read-only monitoring server because external tools may have effects beyond monitoring. Project-scoped catalogs are outside the initial scope. Transport coverage and authentication remain to be decided.
+Configure external MCP servers once in a per-user AI Fuel catalog and expose them to selected local agents through an MCP Gateway, instead of copying external server definitions into every agent. Keep the gateway separate from AI Fuel's read-only monitoring server because external tools may have effects beyond monitoring. Project-scoped catalogs are outside the initial scope. Transport coverage, authentication, resource routing, and lifecycle rules are resolved in [Resolve gateway protocol and authentication contracts](https://github.com/ducquoc97/aifuel/issues/28#issuecomment-5712328178). The resolution includes the approved review corrections and does not establish runtime support.
 
 Store the central catalog as JSON, matching the common configuration format used by MCP hosts and AI Fuel's existing JSON support. It contains external server definitions, shared defaults, and exact per-agent selections.
 
