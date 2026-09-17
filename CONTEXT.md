@@ -63,3 +63,19 @@ _Avoid_: Session, account usage
 **Execution Availability**:
 An observation of readiness to attempt a selected model through an Agent Integration in a particular account, platform, version, authentication, and permission context. Readiness does not guarantee that the provider will accept the run.
 _Avoid_: Guaranteed execution, catalog availability
+
+**AI Fuel MCP Server**:
+AI Fuel's read-only interface through which an MCP host obtains provider status, model information, and quota observations.
+_Avoid_: External MCP connection, agent launcher
+
+**External MCP Connection**:
+An association through which AI Fuel acts as a client of an external MCP server. It is distinct from the AI Fuel MCP Server and does not by itself establish an Agent Integration.
+_Avoid_: AI Fuel MCP Server, provider account
+
+**AI Fuel MCP Gateway**:
+The per-user shared access point through which selected local agents use external MCP servers configured once in AI Fuel. It is separate from the read-only AI Fuel MCP Server; external tools retain their own capabilities and effects.
+_Avoid_: Provider monitor, agent launcher
+
+**Agent MCP Registration**:
+Configuration in a selected local agent that connects it to the AI Fuel MCP Gateway. External server definitions are managed in AI Fuel rather than repeated in each agent's configuration.
+_Avoid_: Provider credential, external server installation
