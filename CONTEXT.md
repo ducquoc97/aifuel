@@ -77,5 +77,9 @@ The per-user shared access point through which selected local agents use externa
 _Avoid_: Provider monitor, agent launcher
 
 **Agent MCP Registration**:
-Configuration in a selected local agent that connects it to the AI Fuel MCP Gateway. External server definitions are managed in AI Fuel rather than repeated in each agent's configuration.
+Configuration in a selected MCP Host that connects it to the AI Fuel MCP Gateway. External server definitions are managed in AI Fuel rather than repeated in each host's configuration.
 _Avoid_: Provider credential, external server installation
+
+**MCP Host**:
+A local client identified in AI Fuel's gateway configuration that consumes external server capabilities through the gateway. A host may have a registration adapter without supporting Agent Runs or having an Agent Integration.
+_Avoid_: Agent Integration, external MCP server
