@@ -1,65 +1,18 @@
-use super::usage::UsageService;
+use super::ProviderMonitoring;
 use super::usage_helpers::{
-    deep_find, json_metadata, post_json, project_from_environment, project_id, quota_windows,
-    rank_windows, read_json, value_string,
+    deep_find, json_metadata, post_json, project_id, quota_windows, rank_windows, read_json,
+    value_string,
 };
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow};
 use serde_json::Value;
 
-pub(crate) enum CodeAssistPeriod {
-    Daily,
-    Unknown,
-}
-
-impl CodeAssistPeriod {
-    fn as_str(&self) -> Option<&'static str> {
-        match self {
-            Self::Daily => Some("daily"),
-            Self::Unknown => None,
-        }
-    }
-}
-
-pub(crate) async fn collect_gemini(service: &UsageService) -> ProviderUsage {
-    collect_file_code_assist(
-        service,
-        ProviderKey::Gemini,
-        ".gemini/oauth_creds.json",
-        project_from_environment(),
-        "gemini-cli/usage-monitor",
-        CodeAssistPeriod::Daily,
-    )
-    .await
-}
-
-pub(crate) async fn collect_antigravity(service: &UsageService) -> ProviderUsage {
-    let project = service
-        .home_dir
-        .join(".gemini/antigravity-cli/settings.json");
-    let project = read_json(&project).ok().and_then(|value| {
-        value
-            .get("gcp")
-            .and_then(|gcp| gcp.get("project"))
-            .and_then(value_string)
-    });
-    collect_file_code_assist(
-        service,
-        ProviderKey::Antigravity,
-        ".gemini/antigravity-cli/antigravity-oauth-token",
-        project,
-        "antigravity/usage-monitor",
-        CodeAssistPeriod::Unknown,
-    )
-    .await
-}
-
-async fn collect_file_code_assist(
-    service: &UsageService,
+pub(crate) async fn collect(
+    service: &ProviderMonitoring,
     provider: ProviderKey,
     credential_relative_path: &str,
     project: Option<String>,
     user_agent: &str,
-    period: CodeAssistPeriod,
+    period: Option<&str>,
 ) -> ProviderUsage {
     let credentials = match read_json(&service.home_dir.join(credential_relative_path)) {
         Ok(value) => value,
@@ -71,7 +24,7 @@ async fn collect_file_code_assist(
         return ProviderUsage::error(provider, "No access token in provider credentials");
     };
     let (plan, windows, detail) =
-        collect_code_assist(service, token, project.as_deref(), user_agent, period).await;
+        collect_quota(service, token, project.as_deref(), user_agent, period).await;
     if let Some(detail) = detail {
         let mut result = ProviderUsage::error(provider, detail);
         result.plan = plan;
@@ -82,12 +35,12 @@ async fn collect_file_code_assist(
     result
 }
 
-async fn collect_code_assist(
-    service: &UsageService,
+async fn collect_quota(
+    service: &ProviderMonitoring,
     token: &str,
     project_hint: Option<&str>,
     user_agent: &str,
-    period: CodeAssistPeriod,
+    period: Option<&str>,
 ) -> (Option<String>, Vec<QuotaWindow>, Option<String>) {
     let load_url = format!("{}loadCodeAssist", service.config.gemini_api_url);
     let load = match post_json(service, &load_url, token, json_metadata(), user_agent).await {
@@ -143,7 +96,7 @@ async fn collect_code_assist(
         Ok(value) => value,
         Err(error) => return (plan, Vec::new(), Some(format!("retrieveUserQuota {error}"))),
     };
-    let windows = quota_windows(&quota, period.as_str());
+    let windows = quota_windows(&quota, period);
     if windows.is_empty() {
         return (
             plan,

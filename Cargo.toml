@@ -1,7 +1,9 @@
 [workspace]
 members = [
     "crates/aifuel-core",
+    "crates/aifuel-app",
     "crates/aifuel-providers",
+    "crates/aifuel-mcp",
     "crates/aifuel",
 ]
 resolver = "2"
@@ -14,6 +16,7 @@ license = "MIT"
 
 [workspace.dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+futures-util = "0.3"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -1,5 +1,5 @@
-use aifuel_core::{CollectionOutcome, ProviderKey, ProviderStatus};
-use aifuel_providers::{CollectionConfig, UsageService};
+use aifuel_core::{CollectionOutcome, ProviderKey, ProviderStatus, StatusCollector};
+use aifuel_providers::{CollectionConfig, ProviderMonitoring};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -131,9 +131,9 @@ async fn gemini_collection_normalizes_live_model_quota() {
         gemini_api_url: format!("http://{address}/"),
         ..CollectionConfig::default()
     };
-    let service = UsageService::new(&home.path, config).expect("usage service should initialize");
-    let report = service.collect().await;
-    let cached = service.status(false).await;
+    let monitoring =
+        ProviderMonitoring::new(&home.path, config).expect("provider monitoring should initialize");
+    let report = monitoring.collect_status().await;
     server.join().expect("fixture server should finish");
 
     assert_eq!(report.providers.len(), 1);
@@ -143,7 +143,6 @@ async fn gemini_collection_normalizes_live_model_quota() {
     assert_eq!(report.providers[0].windows[0].remaining_percent, Some(50.0));
     assert_eq!(report.collection.outcome, Some(CollectionOutcome::Complete));
     assert!(report.discovery_errors.is_empty());
-    assert_eq!(cached, report);
     assert_eq!(
         fs::read_to_string(home.path.join(".gemini/oauth_creds.json"))
             .expect("credentials should remain readable"),
@@ -167,8 +166,9 @@ async fn claude_collection_normalizes_usage_windows() {
         claude_usage_url: endpoint,
         ..CollectionConfig::default()
     };
-    let service = UsageService::new(&home.path, config).expect("usage service should initialize");
-    let report = service.collect().await;
+    let monitoring =
+        ProviderMonitoring::new(&home.path, config).expect("provider monitoring should initialize");
+    let report = monitoring.collect_status().await;
     server.join().expect("fixture server should finish");
 
     assert_eq!(report.providers[0].key, ProviderKey::Claude);
@@ -191,8 +191,9 @@ async fn codex_collection_normalizes_rate_limit_windows_and_account() {
         codex_usage_url: endpoint,
         ..CollectionConfig::default()
     };
-    let service = UsageService::new(&home.path, config).expect("usage service should initialize");
-    let report = service.collect().await;
+    let monitoring =
+        ProviderMonitoring::new(&home.path, config).expect("provider monitoring should initialize");
+    let report = monitoring.collect_status().await;
     server.join().expect("fixture server should finish");
 
     assert_eq!(report.providers[0].key, ProviderKey::Codex);
@@ -217,8 +218,9 @@ async fn copilot_collection_accepts_comment_lines_and_quota_snapshots() {
         copilot_token_url: endpoint,
         ..CollectionConfig::default()
     };
-    let service = UsageService::new(&home.path, config).expect("usage service should initialize");
-    let report = service.collect().await;
+    let monitoring =
+        ProviderMonitoring::new(&home.path, config).expect("provider monitoring should initialize");
+    let report = monitoring.collect_status().await;
     server.join().expect("fixture server should finish");
 
     assert_eq!(report.providers[0].key, ProviderKey::Copilot);

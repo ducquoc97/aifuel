@@ -2,6 +2,8 @@
 
 use serde::Serialize;
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::str::FromStr;
 
 mod status;
@@ -15,6 +17,14 @@ pub use status::{
 
 /// The schema version for the initial Rust discovery output.
 pub const DISCOVERY_SCHEMA_VERSION: u32 = 1;
+
+/// The read-only monitoring boundary consumed by AI Fuel application workflows.
+///
+/// Implementations collect a fresh normalized status report. Caching and
+/// interface-specific presentation remain outside provider adapters.
+pub trait StatusCollector: Send + Sync {
+    fn collect_status(&self) -> Pin<Box<dyn Future<Output = StatusReport> + Send + '_>>;
+}
 
 /// A provider represented in the built-in Catalog Provider catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize)]

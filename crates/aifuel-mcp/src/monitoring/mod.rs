@@ -1,18 +1,17 @@
-use aifuel_core::StatusReport;
-use aifuel_providers::{CollectionConfig, DiscoveryContext, UsageService};
+use aifuel_app::MonitoringFacade;
+use aifuel_core::{StatusCollector, StatusReport};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn serve() -> Result<(), String> {
-    let context = DiscoveryContext::from_environment().map_err(|error| error.to_string())?;
-    let service = UsageService::new(context.home_dir(), CollectionConfig::from_environment())?;
+pub fn serve<C>(facade: MonitoringFacade<C>) -> Result<(), String>
+where
+    C: StatusCollector,
+{
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("could not start MCP runtime: {error}"))?;
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
-    let mut state = serde_json::to_value(StatusReport::cold(unix_timestamp()))
-        .map_err(|error| format!("could not create MCP status: {error}"))?;
 
     for line in stdin.lock().lines() {
         let line = line.map_err(|error| format!("could not read MCP input: {error}"))?;
@@ -21,21 +20,7 @@ pub fn serve() -> Result<(), String> {
         }
         let request: Value =
             serde_json::from_str(&line).map_err(|error| format!("invalid MCP JSON: {error}"))?;
-        let response_state = if request.get("method").and_then(Value::as_str) == Some("tools/call")
-            && request["params"]["name"].as_str() == Some("get_status")
-        {
-            let refresh = request["params"]["arguments"]["refresh"]
-                .as_bool()
-                .unwrap_or(false);
-            if refresh || state["collection"]["state"] != "collected" {
-                let report = runtime.block_on(service.status(refresh));
-                state = serde_json::to_value(report)
-                    .map_err(|error| format!("could not encode MCP status: {error}"))?;
-            }
-            filter_status(&state, &request["params"]["arguments"])
-        } else {
-            state.clone()
-        };
+        let response_state = status_for_request(&request, &facade, &runtime)?;
         if let Some(response) = dispatch(&request, &response_state) {
             serde_json::to_writer(&mut stdout, &response)
                 .map_err(|error| format!("could not encode MCP response: {error}"))?;
@@ -48,6 +33,34 @@ pub fn serve() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn status_for_request<C>(
+    request: &Value,
+    facade: &MonitoringFacade<C>,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<Value, String>
+where
+    C: StatusCollector,
+{
+    if request.get("method").and_then(Value::as_str) == Some("tools/call")
+        && request["params"]["name"].as_str() == Some("get_status")
+    {
+        let refresh = request["params"]["arguments"]["refresh"]
+            .as_bool()
+            .unwrap_or(false);
+        let report = runtime.block_on(facade.status(refresh));
+        let state = serde_json::to_value(report)
+            .map_err(|error| format!("could not encode MCP status: {error}"))?;
+        return Ok(filter_status(&state, &request["params"]["arguments"]));
+    }
+
+    serde_json::to_value(
+        facade
+            .cached_status()
+            .unwrap_or_else(|| StatusReport::cold(unix_timestamp())),
+    )
+    .map_err(|error| format!("could not create MCP status: {error}"))
 }
 
 fn dispatch(request: &Value, state: &Value) -> Option<Value> {
