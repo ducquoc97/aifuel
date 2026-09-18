@@ -60,10 +60,22 @@ pub fn ai_fuel_config_dir(root: &Path) -> PathBuf {
 }
 
 pub fn run_setup(root: &Path, args: &[&str]) -> Output {
-    let home = codex_home(root);
-    fs::create_dir_all(&home).expect("temporary CODEX_HOME should exist before setup");
+    let codex_home = args
+        .windows(2)
+        .any(|pair| pair[0] == "--agent" && pair[1] == "codex")
+        .then(|| codex_home(root));
+    if let Some(home) = &codex_home {
+        fs::create_dir_all(home).expect("temporary CODEX_HOME should exist before setup");
+    }
+    run_setup_with_codex_home(root, args, codex_home)
+}
+
+fn run_setup_with_codex_home(root: &Path, args: &[&str], codex_home: Option<PathBuf>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aifuel"));
-    command.args(args).env("CODEX_HOME", home);
+    command.args(args);
+    if let Some(codex_home) = codex_home {
+        command.env("CODEX_HOME", codex_home);
+    }
     configure_user_config_root(&mut command, root);
     command.output().expect("aifuel setup command should start")
 }

@@ -24,15 +24,9 @@ pub fn agent_mcp_setup_facade(host_id: &str) -> Result<AgentMcpSetupFacade<'stat
     let adapter = aifuel_providers::agent_mcp_registration_adapter(host_id)
         .ok_or_else(|| format!("MCP Host {host_id:?} has no Agent MCP Registration adapter"))?;
     let user_home = user_home_dir()?;
-    let host_home = env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| user_home.join(".codex"));
-    if !host_home.is_absolute() {
-        return Err("CODEX_HOME must be an absolute path".to_owned());
-    }
-    if !host_home.is_dir() {
-        return Err("Codex home directory must already exist".to_owned());
-    }
+    let host_home = adapter
+        .configuration_home(&user_home)
+        .map_err(|error| error.to_string())?;
     let state_dir = user_config_dir(&user_home)?
         .join("aifuel")
         .join("mcp-registrations");

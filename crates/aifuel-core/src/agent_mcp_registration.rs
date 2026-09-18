@@ -13,6 +13,12 @@ pub trait AgentMcpRegistrationAdapter: Send + Sync {
     /// The independent MCP Host id used to select gateway server definitions.
     fn host_id(&self) -> &'static str;
 
+    /// Resolve the host-specific configuration directory from the user's home.
+    /// Hosts with no separate configuration directory use the user's home.
+    fn configuration_home(&self, user_home: &Path) -> Result<PathBuf, AgentMcpRegistrationError> {
+        Ok(user_home.to_path_buf())
+    }
+
     /// Resolve the host's user-level configuration file from its home directory.
     fn config_file(&self, host_home: &Path) -> PathBuf;
 

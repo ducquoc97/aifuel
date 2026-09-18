@@ -71,6 +71,20 @@ parsing and process behavior; they do not replace live provider acceptance.
   with `message = "codex-gateway-smoke"` returned `fixture-result`; the local
   fixture log recorded that call. The temporary setup wrote no provider
   credentials or upstream server definitions into Codex config.
+- Claude Code 2.1.223 on Linux x86_64 WSL2 loaded the registration written by
+  the public `aifuel mcp setup --agent claude` command in a temporary
+  `~/.claude.json`. `claude mcp list` reported the Gateway as connected. A
+  non-interactive Claude Code session then called
+  `mcp__aifuel-gateway__fixture__echo` through that registration with
+  `message = "claude-gateway-smoke"`; the local fixture recorded the
+  `tools/call` request and returned `fixture-result`. The CLI used a local
+  deterministic Anthropic Messages API stub to request the MCP tool, so this
+  verifies Claude's registration load, MCP handshake, Gateway routing, and
+  tool result handling without claiming a live Anthropic model or account
+  acceptance. Temporary `HOME`, `XDG_CONFIG_HOME`, Gateway catalog, and fixture
+  files were used; saved Claude configuration and credentials were not changed.
+  Claude's user-scope MCP entry follows the
+  [official MCP configuration documentation](https://code.claude.com/docs/en/mcp).
 - A separate model-driven `codex exec --json` check did not call the fixture.
   Without authentication in the temporary Codex home, it exited with HTTP 401.
   A temporary copy of the existing auth file allowed a model turn, but the
