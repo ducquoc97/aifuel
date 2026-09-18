@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use tokio::sync::{Mutex, Notify, RwLock, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+mod event_listener;
 mod http;
 mod messages;
 mod response_sse;

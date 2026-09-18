@@ -87,7 +87,7 @@ pub(super) async fn send_message(
         require_accepted(&state, response, false, &cancellation, deadline).await?;
         state.initialized.store(true, Ordering::Release);
         state.ready.notify_waiters();
-        response_sse::start_common_event_stream(Arc::clone(&state));
+        super::event_listener::start_common_event_stream(Arc::clone(&state));
         return Ok(());
     }
 
