@@ -6,6 +6,8 @@ use std::fs;
 
 mod agent_run;
 pub(crate) use agent_run::ADAPTER as AGENT_RUN_ADAPTER;
+mod registration;
+pub(crate) use registration::COPILOT_REGISTRATION;
 
 pub static DEFINITION: CatalogProvider =
     CatalogProvider::file_source(ProviderKey::Copilot, ".copilot/config.json");
