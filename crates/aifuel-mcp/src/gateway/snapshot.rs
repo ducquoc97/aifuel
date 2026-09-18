@@ -9,21 +9,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub(super) fn make_snapshot(
-    server: &SelectedMcpServer,
-    upstream: Vec<Tool>,
-    limits: &ServerLimits,
-    snapshot_id: u64,
-) -> Result<ToolSnapshot, McpError> {
-    let server_snapshot = Arc::new(make_server_snapshot(server, upstream, limits)?);
-    ToolSnapshot::aggregate(&server.id, &[server_snapshot], snapshot_id)
-}
-
 pub(super) fn make_server_snapshot(
     server: &SelectedMcpServer,
     upstream: Vec<Tool>,
     limits: &ServerLimits,
-) -> Result<ServerToolSnapshot, McpError> {
+) -> Result<ServerToolSnapshot, SnapshotBuildError> {
     let mut tools = Vec::new();
     let mut routes = HashMap::new();
     let mut excluded_task_tools = false;
@@ -47,22 +37,28 @@ pub(super) fn make_server_snapshot(
         let upstream_name = tool.name.to_string();
         let gateway_name = tool_name(&server.id, &upstream_name);
         if routes.insert(gateway_name.clone(), upstream_name).is_some() {
-            return Err(McpError::internal_error(
-                "selected MCP server contains conflicting gateway tool identities",
-                None,
+            return Err(SnapshotBuildError::IdentityConflict(
+                McpError::internal_error(
+                    "selected MCP server contains conflicting gateway tool identities",
+                    None,
+                ),
             ));
         }
         tool.name = Cow::Owned(gateway_name);
         tools.push(tool);
     }
     tools.sort_by(|left, right| left.name.cmp(&right.name));
-    let bytes = serde_json::to_vec(&tools)
-        .map_err(|_| McpError::internal_error("could not encode MCP tool list", None))?;
+    let bytes = serde_json::to_vec(&tools).map_err(|_| {
+        SnapshotBuildError::Invalid(McpError::internal_error(
+            "could not encode MCP tool list",
+            None,
+        ))
+    })?;
     if tools.len() > limits.max_list_entries || bytes.len() > limits.max_list_snapshot_bytes {
-        return Err(McpError::internal_error(
+        return Err(SnapshotBuildError::Invalid(McpError::internal_error(
             "selected MCP server exceeded the configured tool snapshot limit",
             None,
-        ));
+        )));
     }
     if excluded_task_tools {
         eprintln!(
@@ -71,15 +67,20 @@ pub(super) fn make_server_snapshot(
     }
     Ok(ServerToolSnapshot {
         server_id: server.id.clone(),
-        tools,
+        tools: tools.into_iter().map(Arc::new).collect(),
         routes,
     })
 }
 
 pub(super) struct ServerToolSnapshot {
     pub(super) server_id: String,
-    pub(super) tools: Vec<Tool>,
+    pub(super) tools: Vec<Arc<Tool>>,
     pub(super) routes: HashMap<String, String>,
+}
+
+pub(super) enum SnapshotBuildError {
+    IdentityConflict(McpError),
+    Invalid(McpError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -91,11 +92,8 @@ pub(super) struct ToolRoute {
 pub(super) struct ToolSnapshot {
     id: u64,
     cursor_scope: String,
-    pub(super) tools: Vec<Tool>,
-    /// Single-server lookup retained until the state and handler use
-    /// server-qualified routing directly.
-    pub(super) routes: HashMap<String, String>,
-    pub(super) server_routes: HashMap<String, ToolRoute>,
+    pub(super) tools: Vec<Arc<Tool>>,
+    pub(super) routes: HashMap<String, ToolRoute>,
     cursors: Mutex<HashMap<String, usize>>,
 }
 
@@ -110,7 +108,6 @@ impl ToolSnapshot {
 
         let mut tools = Vec::new();
         let mut routes = HashMap::new();
-        let mut server_routes = HashMap::new();
         for snapshot in ordered {
             for tool in &snapshot.tools {
                 let gateway_name = tool.name.to_string();
@@ -123,15 +120,14 @@ impl ToolSnapshot {
                         None,
                     ));
                 }
-                routes.insert(gateway_name.clone(), upstream_name.clone());
-                server_routes.insert(
+                routes.insert(
                     gateway_name,
                     ToolRoute {
                         server_id: snapshot.server_id.clone(),
                         upstream_name: upstream_name.clone(),
                     },
                 );
-                tools.push(tool.clone());
+                tools.push(Arc::clone(tool));
             }
         }
         tools.sort_by(|left, right| left.name.cmp(&right.name));
@@ -140,13 +136,8 @@ impl ToolSnapshot {
             cursor_scope: cursor_scope.to_owned(),
             tools,
             routes,
-            server_routes,
             cursors: Mutex::new(HashMap::new()),
         })
-    }
-
-    pub(super) fn empty() -> Self {
-        Self::empty_for_scope("", 0)
     }
 
     pub(super) fn empty_for_scope(cursor_scope: &str, snapshot_id: u64) -> Self {
@@ -155,7 +146,6 @@ impl ToolSnapshot {
             cursor_scope: cursor_scope.to_owned(),
             tools: Vec::new(),
             routes: HashMap::new(),
-            server_routes: HashMap::new(),
             cursors: Mutex::new(HashMap::new()),
         }
     }
@@ -184,7 +174,7 @@ impl ToolSnapshot {
             if end == self.tools.len() {
                 return Ok(tools_page(page_tools, None));
             }
-            page_tools.push(self.tools[end].clone());
+            page_tools.push(self.tools[end].as_ref().clone());
             let next_offset = end + 1;
             let next_cursor = (next_offset < self.tools.len())
                 .then(|| tool_cursor("tools", &self.cursor_scope, self.id, next_offset));
@@ -261,14 +251,14 @@ mod tests {
             vec!["docs__echo", "memory__echo"]
         );
         assert_eq!(
-            combined.server_routes.get("docs__echo"),
+            combined.routes.get("docs__echo"),
             Some(&ToolRoute {
                 server_id: "docs".to_owned(),
                 upstream_name: "echo".to_owned(),
             })
         );
         assert_eq!(
-            combined.server_routes.get("memory__echo"),
+            combined.routes.get("memory__echo"),
             Some(&ToolRoute {
                 server_id: "memory".to_owned(),
                 upstream_name: "echo".to_owned(),
@@ -299,7 +289,7 @@ mod tests {
     ) -> Arc<ServerToolSnapshot> {
         Arc::new(ServerToolSnapshot {
             server_id: server_id.to_owned(),
-            tools: vec![tool(public_name)],
+            tools: vec![Arc::new(tool(public_name))],
             routes: HashMap::from([(public_name.to_owned(), upstream_name.to_owned())]),
         })
     }

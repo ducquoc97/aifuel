@@ -192,6 +192,9 @@ fn main() {
             return;
         }
         if method == "tools/call" && env::var_os("MCP_FIXTURE_EXIT_AFTER_CALL").is_some() {
+            if let Some(path) = env::var_os("MCP_FIXTURE_OFFLINE_MARKER") {
+                let _ = fs::write(path, "offline");
+            }
             if let Some(path) = env::var_os("MCP_FIXTURE_EXIT_AFTER_CALL_MARKER") {
                 let _ = fs::write(path, "exited after tool call");
             }

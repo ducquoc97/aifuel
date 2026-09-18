@@ -18,13 +18,9 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
-/// Serve one selected local MCP server to an MCP Host over standard input and
-/// output. This process is separate from AI Fuel's read-only monitoring MCP.
+/// Serve the selected external MCP servers to an MCP Host over standard input
+/// and output. This process is separate from AI Fuel's read-only monitoring MCP.
 pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
-    if facade.selected_servers().len() > 1 {
-        return Err("the local gateway currently accepts one selected MCP server".to_owned());
-    }
-
     let limits = facade.gateway_limits().clone();
     let output_budget = Arc::new(Semaphore::new(limits.max_output_buffer_bytes));
     let overflow = CancellationToken::new();
