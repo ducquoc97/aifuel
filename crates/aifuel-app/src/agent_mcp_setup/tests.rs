@@ -414,8 +414,18 @@ fn failed_receipt_write_is_reported_and_does_not_assume_ownership_for_removal() 
     );
     let installed: Value = serde_json::from_slice(&fs::read(setup.config_file()).unwrap()).unwrap();
     assert!(installed["mcpServers"][AIFUEL_GATEWAY_REGISTRATION_NAME].is_object());
+    assert!(setup.pending_path().is_file());
     let config_before_remove = fs::read(setup.config_file()).unwrap();
     let removal = setup.run(setup_options(false, true));
     assert!(removal.is_err());
     assert_eq!(fs::read(setup.config_file()).unwrap(), config_before_remove);
+
+    fs::remove_dir(setup.receipt_path()).unwrap();
+    let recovered = setup.run(AgentMcpSetupOptions::default()).unwrap();
+    assert_eq!(recovered.action, AgentMcpSetupAction::AlreadyConfigured);
+    assert!(setup.receipt_path().is_file());
+    assert!(!setup.pending_path().exists());
+
+    let recovered_removal = setup.run(setup_options(false, true)).unwrap();
+    assert_eq!(recovered_removal.action, AgentMcpSetupAction::Removed);
 }

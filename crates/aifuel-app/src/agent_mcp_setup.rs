@@ -1,6 +1,7 @@
 use aifuel_core::{
     AIFUEL_GATEWAY_REGISTRATION_NAME, AgentMcpRegistrationAdapter, AgentMcpRegistrationError,
 };
+mod recovery;
 mod storage;
 
 use serde::{Deserialize, Serialize};
@@ -81,10 +82,12 @@ impl<'a> AgentMcpSetupFacade<'a> {
         options: AgentMcpSetupOptions,
     ) -> Result<AgentMcpSetupResult, AgentMcpSetupError> {
         if options.dry_run {
+            self.ensure_no_pending()?;
             return self.plan_and_report(options);
         }
 
         let _lock = self.acquire_lock()?;
+        self.reconcile_pending()?;
         self.plan_and_report(options)
     }
 
@@ -211,13 +214,49 @@ impl<'a> AgentMcpSetupFacade<'a> {
                 (AgentMcpSetupAction::WouldClearStaleReceipt, None)
             }
             SetupPlan::Apply { config, entry } => {
-                let backup = self.replace_config(snapshot, &config)?;
-                self.write_receipt(receipt_snapshot, entry, backup.as_deref())?;
+                let backup =
+                    storage::write_backup(&self.config_file, &self.backup_dir(), snapshot)?;
+                let previous_receipt_entry = receipt_snapshot
+                    .receipt
+                    .as_ref()
+                    .map(|receipt| &receipt.entry);
+                let pending = self.write_pending(
+                    snapshot,
+                    &config,
+                    &entry,
+                    previous_receipt_entry,
+                    backup.as_deref(),
+                )?;
+                storage::replace_config_with_backup(
+                    &self.config_file,
+                    snapshot,
+                    &config,
+                    backup.as_deref(),
+                )?;
+                self.finalize_pending(&pending, &entry)?;
                 (AgentMcpSetupAction::Applied, backup)
             }
             SetupPlan::Update { config, entry } => {
-                let backup = self.replace_config(snapshot, &config)?;
-                self.write_receipt(receipt_snapshot, entry, backup.as_deref())?;
+                let backup =
+                    storage::write_backup(&self.config_file, &self.backup_dir(), snapshot)?;
+                let previous_receipt_entry = receipt_snapshot
+                    .receipt
+                    .as_ref()
+                    .map(|receipt| &receipt.entry);
+                let pending = self.write_pending(
+                    snapshot,
+                    &config,
+                    &entry,
+                    previous_receipt_entry,
+                    backup.as_deref(),
+                )?;
+                storage::replace_config_with_backup(
+                    &self.config_file,
+                    snapshot,
+                    &config,
+                    backup.as_deref(),
+                )?;
+                self.finalize_pending(&pending, &entry)?;
                 (AgentMcpSetupAction::Updated, backup)
             }
             SetupPlan::Remove(updated) => {

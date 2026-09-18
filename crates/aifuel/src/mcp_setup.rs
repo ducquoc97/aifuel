@@ -43,7 +43,7 @@ pub fn run(args: &[String]) -> Result<u8, String> {
         AgentMcpSetupAction::Applied => "registration applied",
         AgentMcpSetupAction::Updated => "AI Fuel-managed registration updated",
         AgentMcpSetupAction::AlreadyConfigured => {
-            "identical registration already exists; ownership was not adopted"
+            "identical registration already exists; no configuration change was needed"
         }
         AgentMcpSetupAction::WouldApply => "dry run: would apply registration",
         AgentMcpSetupAction::WouldUpdate => {

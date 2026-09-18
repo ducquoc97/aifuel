@@ -91,7 +91,7 @@ pub(super) fn ensure_snapshot_matches(
 
 pub(super) fn create_private_dir_all(path: &Path) -> Result<(), AgentMcpSetupError> {
     create_directory_all(path, true)?;
-    set_private_directory_permissions(path)
+    protect_private_directory_permissions(path)
         .map_err(|error| io_error("could not protect AI Fuel registration state", error))
 }
 
@@ -117,10 +117,14 @@ fn create_directory_all(path: &Path, private: bool) -> Result<(), AgentMcpSetupE
         .map_err(|error| io_error("could not create configuration directory", error))
 }
 
-fn set_private_directory_permissions(path: &Path) -> io::Result<()> {
+fn protect_private_directory_permissions(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(path)?.permissions().mode();
+        if mode & 0o077 == 0 {
+            return Ok(());
+        }
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
     }
     #[cfg(not(unix))]
@@ -204,45 +208,46 @@ pub(super) fn replace_config(
     snapshot: &FileSnapshot,
     updated: &[u8],
 ) -> Result<Option<PathBuf>, AgentMcpSetupError> {
+    let backup = write_backup(config_file, backup_dir, snapshot)?;
+    replace_config_with_backup(config_file, snapshot, updated, backup.as_deref())?;
+    Ok(backup)
+}
+
+pub(super) fn replace_config_with_backup(
+    config_file: &Path,
+    snapshot: &FileSnapshot,
+    updated: &[u8],
+    backup: Option<&Path>,
+) -> Result<(), AgentMcpSetupError> {
     let parent = config_file.parent().ok_or_else(|| {
         AgentMcpSetupError::new("MCP Host configuration path has no parent directory")
     })?;
     create_directory_all(parent, true)?;
     let temp = write_temp_file(config_file, updated, snapshot.permissions.clone())?;
-    let backup = if snapshot.contents.is_some() {
-        Some(write_backup(config_file, backup_dir, snapshot)?)
-    } else {
-        None
-    };
     if let Err(error) = ensure_snapshot_matches(config_file, snapshot, "MCP Host configuration") {
-        return Err(with_backup(error, backup.as_deref()));
+        return Err(with_backup(error, backup));
     }
     if let Err(error) = fs::rename(temp.path(), config_file) {
         return Err(with_backup(
             io_error("could not atomically replace MCP Host configuration", error),
-            backup.as_deref(),
+            backup,
         ));
     }
     temp.disarm();
     sync_parent(parent);
-    Ok(backup)
+    Ok(())
 }
 
-fn write_backup(
+pub(super) fn write_backup(
     config_file: &Path,
     backup_dir: &Path,
     snapshot: &FileSnapshot,
-) -> Result<PathBuf, AgentMcpSetupError> {
-    let original = snapshot.contents.as_deref().ok_or_else(|| {
-        AgentMcpSetupError::new("MCP Host configuration backup has no source file")
-    })?;
+) -> Result<Option<PathBuf>, AgentMcpSetupError> {
+    let Some(original) = snapshot.contents.as_deref() else {
+        return Ok(None);
+    };
     create_private_dir_all(backup_dir)?;
-    let file_name = config_file
-        .file_name()
-        .unwrap_or_else(|| std::ffi::OsStr::new("config.toml"));
-    let mut name = file_name.to_os_string();
-    name.push(".backup");
-    let path = backup_dir.join(name);
+    let path = backup_path(config_file, backup_dir);
     let previous = read_snapshot(&path, "private MCP Host configuration backup")?;
     let temp = write_temp_file(&path, original, None)?;
     ensure_snapshot_matches(&path, &previous, "private MCP Host configuration backup")?;
@@ -254,7 +259,16 @@ fn write_backup(
     })?;
     temp.disarm();
     sync_parent(backup_dir);
-    Ok(path)
+    Ok(Some(path))
+}
+
+pub(super) fn backup_path(config_file: &Path, backup_dir: &Path) -> PathBuf {
+    let file_name = config_file
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("config.toml"));
+    let mut name = file_name.to_os_string();
+    name.push(".backup");
+    backup_dir.join(name)
 }
 
 pub(super) fn atomic_write(
