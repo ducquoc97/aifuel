@@ -15,10 +15,7 @@ pub(crate) struct CliExecutionAdapter {
     preflight_args: &'static [&'static str],
     required_flags: &'static [&'static str],
     build_args: fn(&RunRequest) -> Result<Vec<String>, AgentRunError>,
-    supports_resume: bool,
-    supports_account_selection: bool,
-    supports_workspace_write: bool,
-    supports_jsonl: bool,
+    capabilities: ExecutionCapabilities,
 }
 
 pub(crate) struct ExecutionCapabilities {
@@ -59,33 +56,32 @@ impl CliExecutionAdapter {
             preflight_args,
             required_flags,
             build_args,
-            supports_resume: capabilities.supports_resume,
-            supports_account_selection: capabilities.supports_account_selection,
-            supports_workspace_write: capabilities.supports_workspace_write,
-            supports_jsonl: capabilities.supports_jsonl,
+            capabilities,
         }
     }
 
     fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
-        if request.resume.is_some() && !self.supports_resume {
+        if request.resume.is_some() && !self.capabilities.supports_resume {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} does not support explicit session continuation",
                 self.provider
             )));
         }
-        if request.account.is_some() && !self.supports_account_selection {
+        if request.account.is_some() && !self.capabilities.supports_account_selection {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} does not expose provider account selection",
                 self.provider
             )));
         }
-        if request.access == AccessMode::WorkspaceWrite && !self.supports_workspace_write {
+        if request.access == AccessMode::WorkspaceWrite
+            && !self.capabilities.supports_workspace_write
+        {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} cannot enforce workspace-write access",
                 self.provider
             )));
         }
-        if request.output == OutputFormat::Jsonl && !self.supports_jsonl {
+        if request.output == OutputFormat::Jsonl && !self.capabilities.supports_jsonl {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} cannot provide verified JSONL output",
                 self.provider
