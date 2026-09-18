@@ -23,6 +23,7 @@
 - Before adopting an MCP SDK transport, check its default framing, shutdown, process-tree, and feature-selected MSRV behavior against the approved contract. An available limit or process wrapper does not mean the default transport uses it.
 - A descendant-process cleanup test must prove the child reached its armed state, then wait past its marker deadline while the marker directory still exists. An immediate absent-marker assertion can pass even when the process survives.
 - Verify host-facing and upstream MCP version negotiation separately. Codex CLI 0.155.0 requests 2025-06-18, and a compatible Gateway must answer with that supported version instead of rejecting every version older than 2025-11-25.
+- When compatibility behavior changes, update the canonical Wayfinder decision and implementation acceptance criteria; merged code and acceptance docs do not revise a closed contract by themselves.
 
 ## Agent Runs
 
