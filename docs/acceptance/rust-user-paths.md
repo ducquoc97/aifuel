@@ -169,7 +169,7 @@ parsing and process behavior; they do not replace live provider acceptance.
   Unauthorized` because its fresh home had no credentials; no model turn was
   sent, and the MCP status/list and direct tool call succeeded. No saved Codex
   config or credentials were read or modified.
-- On rustc 1.97.1, `cargo test --workspace --locked` passed 113 tests across 28
+- On rustc 1.97.1, `cargo test --workspace --locked` passed 123 tests across 29
   suites, and `cargo clippy --workspace --all-targets --locked -- -D warnings`
   completed without issues.
 - A terminal smoke of the built `aifuel mcp gateway --agent codex` binary with
