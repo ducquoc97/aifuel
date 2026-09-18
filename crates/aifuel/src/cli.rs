@@ -15,11 +15,14 @@ where
         return run_launcher(&args[1..]);
     }
     if args.first().map(String::as_str) == Some("mcp") {
-        if args.len() > 1 {
-            return Err(format!("unknown argument {:?} after mcp", args[1]));
-        }
-        aifuel_mcp::serve(aifuel::monitoring_facade()?)?;
-        return Ok(0);
+        return match args.get(1).map(String::as_str) {
+            None => {
+                aifuel_mcp::serve(aifuel::monitoring_facade()?)?;
+                Ok(0)
+            }
+            Some("gateway") => run_mcp_gateway(&args[2..]),
+            Some(unknown) => Err(format!("unknown MCP command {unknown:?}; use --help")),
+        };
     }
 
     let mut json = false;
@@ -85,10 +88,47 @@ fn print_help() {
     println!("Usage: aifuel [--text | --json]");
     println!("       aifuel run --provider PROVIDER_ID [OPTIONS]");
     println!("       aifuel mcp");
+    println!("       aifuel mcp gateway --agent MCP_HOST_ID");
     println!();
     println!("The default command collects live status for discovered providers.");
     println!("run delegates one explicit prompt to a verified provider CLI.");
     println!("mcp serves read-only status over standard input and output.");
+    println!("mcp gateway serves selected external MCP tools over standard input and output.");
+}
+
+fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("Usage: aifuel mcp gateway --agent MCP_HOST_ID");
+        println!();
+        println!("Serves the selected external MCP server over standard input and output.");
+        println!("The central catalog is aifuel/mcp.json in the user config directory.");
+        return Ok(0);
+    }
+
+    let mut agent = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--agent" => {
+                if agent.is_some() {
+                    return Err("gateway accepts one --agent value".to_owned());
+                }
+                agent = Some(next_value(args, &mut index, "--agent")?);
+            }
+            unknown => return Err(format!("unknown argument {unknown:?} for mcp gateway")),
+        }
+        index += 1;
+    }
+    let agent = agent.ok_or_else(|| "mcp gateway requires --agent MCP_HOST_ID".to_owned())?;
+    if agent.trim().is_empty() {
+        return Err("--agent MCP_HOST_ID cannot be empty".to_owned());
+    }
+
+    let facade = aifuel::mcp_gateway_facade(&agent)?;
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("could not start MCP Gateway runtime: {error}"))?;
+    runtime.block_on(aifuel_mcp::gateway::serve(facade))?;
+    Ok(0)
 }
 
 fn run_launcher(args: &[String]) -> Result<u8, String> {

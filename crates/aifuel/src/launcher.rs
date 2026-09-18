@@ -142,13 +142,13 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .map_err(|error| {
             LaunchError::InvalidRequest(format!("working directory is unavailable: {error}"))
         })?;
-    if let Some(directory) = &working_directory {
-        if !directory.is_dir() {
-            return Err(LaunchError::InvalidRequest(format!(
-                "working directory is not an existing directory: {}",
-                directory.display()
-            )));
-        }
+    if let Some(directory) = &working_directory
+        && !directory.is_dir()
+    {
+        return Err(LaunchError::InvalidRequest(format!(
+            "working directory is not an existing directory: {}",
+            directory.display()
+        )));
     }
     let temporary_directory = if working_directory.is_none() {
         Some(TemporaryDirectory::new()?)

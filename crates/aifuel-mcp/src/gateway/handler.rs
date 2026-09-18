@@ -1,0 +1,242 @@
+use super::request::{UpstreamRequestError, await_server_result};
+use super::state::GatewayState;
+use rmcp::ServerHandler;
+use rmcp::model::{
+    CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, Content, ErrorCode,
+    ErrorData as McpError, Implementation, InitializeRequestParams, InitializeResult,
+    ListToolsResult, PaginatedRequestParams, ProtocolVersion, RequestId, ServerCapabilities,
+    ServerJsonRpcMessage, ServerResult,
+};
+use rmcp::service::{PeerRequestOptions, RequestContext, RoleServer};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::Instant;
+
+pub(super) struct GatewayServerHandler {
+    state: Arc<GatewayState>,
+}
+
+impl GatewayServerHandler {
+    pub(super) fn new(state: Arc<GatewayState>) -> Self {
+        Self { state }
+    }
+}
+
+impl ServerHandler for GatewayServerHandler {
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, McpError> {
+        if request.protocol_version != ProtocolVersion::V_2025_11_25 {
+            return Err(McpError::invalid_params(
+                "AI Fuel MCP Gateway supports protocol version 2025-11-25 only",
+                None,
+            ));
+        }
+        self.state.set_host_peer(context.peer).await;
+        Ok(server_info())
+    }
+
+    async fn list_tools(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let cursor = request.and_then(|request| request.cursor);
+        let discovery_deadline = Instant::now()
+            + Duration::from_secs(
+                self.state
+                    .selected_limits()
+                    .map_or(30, |limits| limits.discovery_seconds),
+            );
+        let snapshot = self
+            .state
+            .tool_snapshot(context.ct.clone(), discovery_deadline)
+            .await?;
+        snapshot
+            .page(
+                cursor.as_deref(),
+                context.id,
+                self.state.max_message_bytes(),
+            )
+            .await
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        if request.task.is_some() {
+            return Err(McpError::invalid_params(
+                "task-based tool calls are not supported by this gateway",
+                None,
+            ));
+        }
+        let _request_permit = self.state.try_request_slot()?;
+        let operation_deadline = Instant::now()
+            + Duration::from_secs(
+                self.state
+                    .selected_limits()
+                    .map_or(120, |limits| limits.operation_seconds),
+            );
+        let snapshot = self
+            .state
+            .tool_snapshot(context.ct.clone(), operation_deadline)
+            .await?;
+        let Some(upstream_name) = snapshot.routes.get(request.name.as_ref()).cloned() else {
+            return Err(McpError::new(
+                ErrorCode::METHOD_NOT_FOUND,
+                "unknown gateway tool name",
+                None,
+            ));
+        };
+        let Some(connection) = self
+            .state
+            .connection(context.ct.clone(), operation_deadline)
+            .await?
+        else {
+            return Err(McpError::new(
+                ErrorCode::METHOD_NOT_FOUND,
+                "no external MCP server is selected for this MCP Host",
+                None,
+            ));
+        };
+        let _server_permit = connection.try_request_slot()?;
+        let host_progress = context.meta.get_progress_token().or_else(|| {
+            request
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get_progress_token())
+        });
+        let remaining = operation_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(tool_error("external MCP tool call exceeded its deadline"));
+        }
+        let has_host_progress = host_progress.is_some();
+        if has_host_progress {
+            self.state.progress.begin_request();
+        }
+
+        let mut params = CallToolRequestParams::new(upstream_name);
+        params.arguments = request.arguments;
+        params.meta = request
+            .meta
+            .clone()
+            .or_else(|| (!context.meta.0.is_empty()).then(|| context.meta.clone()));
+        let rpc_request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
+        let mut request_options = PeerRequestOptions::no_options();
+        request_options.timeout = Some(remaining);
+        let handle = match tokio::time::timeout_at(
+            operation_deadline,
+            connection
+                .peer
+                .send_cancellable_request(rpc_request, request_options),
+        )
+        .await
+        {
+            Ok(Ok(handle)) => handle,
+            Ok(Err(_)) => {
+                if has_host_progress {
+                    self.state.progress.cancel_unbound_request();
+                }
+                return Ok(tool_error("selected local MCP server is unavailable"));
+            }
+            Err(_) => {
+                if has_host_progress {
+                    self.state.progress.cancel_unbound_request();
+                }
+                return Ok(tool_error("external MCP tool call exceeded its deadline"));
+            }
+        };
+
+        let upstream_progress = handle.progress_token.clone();
+        if let Some(host_progress) = host_progress {
+            self.state
+                .progress
+                .register(upstream_progress.clone(), context.peer, host_progress)
+                .await;
+        }
+        let result = await_server_result(handle, operation_deadline, context.ct).await;
+        if has_host_progress {
+            self.state.progress.remove(&upstream_progress).await;
+        }
+
+        match result {
+            Ok(ServerResult::CallToolResult(result)) => {
+                if tool_result_bytes(&result, &context.id)? > self.state.max_message_bytes() {
+                    return Ok(tool_error(
+                        "external MCP tool result exceeds the host message byte limit",
+                    ));
+                }
+                Ok(result)
+            }
+            Ok(_) => Err(McpError::internal_error(
+                "external MCP server returned an unexpected response",
+                None,
+            )),
+            Err(UpstreamRequestError::Protocol(error)) => {
+                if rpc_error_bytes(&error, &context.id)? > self.state.max_message_bytes() {
+                    return Err(McpError::internal_error(
+                        "external MCP error exceeds the host message byte limit",
+                        None,
+                    ));
+                }
+                Err(error)
+            }
+            Err(UpstreamRequestError::Cancelled) => Err(McpError::new(
+                ErrorCode(-32800),
+                "external MCP tool call was cancelled",
+                None,
+            )),
+            Err(UpstreamRequestError::TimedOut) => Ok(tool_error(
+                "external MCP tool call timed out; its outcome may be unknown",
+            )),
+            Err(UpstreamRequestError::Disconnected) => Ok(tool_error(
+                "selected local MCP server disconnected; its outcome may be unknown",
+            )),
+        }
+    }
+
+    fn get_info(&self) -> InitializeResult {
+        server_info()
+    }
+}
+
+fn server_info() -> InitializeResult {
+    InitializeResult::new(
+        ServerCapabilities::builder()
+            .enable_tools()
+            .enable_tool_list_changed()
+            .build(),
+    )
+    .with_protocol_version(ProtocolVersion::V_2025_11_25)
+    .with_server_info(Implementation::new(
+        "aifuel-gateway",
+        env!("CARGO_PKG_VERSION"),
+    ))
+}
+
+fn tool_error(message: &'static str) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(message)])
+}
+
+fn tool_result_bytes(result: &CallToolResult, request_id: &RequestId) -> Result<usize, McpError> {
+    serde_json::to_vec(&ServerJsonRpcMessage::response(
+        ServerResult::CallToolResult(result.clone()),
+        request_id.clone(),
+    ))
+    .map(|bytes| bytes.len())
+    .map_err(|_| McpError::internal_error("could not encode the MCP tool response", None))
+}
+
+fn rpc_error_bytes(error: &McpError, request_id: &RequestId) -> Result<usize, McpError> {
+    serde_json::to_vec(&ServerJsonRpcMessage::error(
+        error.clone(),
+        request_id.clone(),
+    ))
+    .map(|bytes| bytes.len())
+    .map_err(|_| McpError::internal_error("could not encode the MCP error response", None))
+}

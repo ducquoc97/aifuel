@@ -6,7 +6,7 @@ You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity... so which o
 
 One native binary. Runs on **Windows, Linux, and macOS** in your browser, terminal, or an MCP host.
 
-![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-000000)
+![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-000000)
 ![Native binary](https://img.shields.io/badge/runtime-native%20binary-3ddc97)
 ![Platforms: Windows · Linux · macOS](https://img.shields.io/badge/platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-8a94a6)
 ![Providers modularized](https://img.shields.io/badge/providers-modular-6ea8fe)
@@ -18,8 +18,8 @@ One native binary. Runs on **Windows, Linux, and macOS** in your browser, termin
 ## Why aifuel?
 
 You can't manage a limit you can't see. `aifuel` combines a local
-terminal summary, a browser dashboard, explicit provider execution, and a
-read-only MCP status server.
+terminal summary, a browser dashboard, explicit provider execution, a
+read-only MCP status server, and an MCP Gateway for external tools.
 
 - 🖥️ **Cross-platform *and* visual.** A real auto-refreshing dashboard on Windows, Linux **and** macOS - not just a Mac menu bar.
 - 📦 **Single binary.** Build once with Cargo, then run without Python, Node.js,
@@ -47,8 +47,8 @@ For a reusable binary, run `cargo build --release -p aifuel` and use
 
 The Cargo workspace contains the native application. The default command collects
 live status for discovered provider integrations. `run` delegates one
-explicit prompt to a selected installed provider CLI, and `mcp` serves
-read-only status over stdio.
+explicit prompt to a selected installed provider CLI. `mcp` serves read-only
+status over stdio, while `mcp gateway` serves selected external tools.
 
 ```bash
 aifuel --text
@@ -102,6 +102,8 @@ the command has no separately installed language runtime requirement.
 
 ## MCP host setup
 
+### AI Fuel read-only MCP Server
+
 Configure an MCP host to start the local read-only server over stdio:
 
 ```json
@@ -118,6 +120,52 @@ Configure an MCP host to start the local read-only server over stdio:
 The server exposes `get_status` and the `aifuel://status`
 resource. It reports provider status, quota, freshness, provenance, and errors.
 It does not execute prompts or edit files.
+
+### AI Fuel MCP Gateway
+
+The MCP Gateway exposes tools from one selected local stdio MCP server. You
+provide the server executable and runtime; AI Fuel does not install it or run a
+background daemon. It snapshots environment references when it starts and gives
+the child only a small platform allowlist plus configured values. Explicit
+values replace same-named inherited values, case-insensitively on Windows.
+External tools keep their own behavior and may change data.
+
+Save the central catalog as `aifuel/mcp.json` in your user config directory:
+
+- Windows: `%APPDATA%/aifuel/mcp.json`
+- macOS: `~/Library/Application Support/aifuel/mcp.json`
+- Linux: `$XDG_CONFIG_HOME/aifuel/mcp.json`, or `~/.config/aifuel/mcp.json`
+
+Select one existing local server for Codex:
+
+```json
+{
+  "servers": {
+    "local-docs": {
+      "transport": "stdio",
+      "command": "/absolute/path/to/mcp-server",
+      "args": []
+    }
+  },
+  "defaults": [],
+  "agents": {
+    "codex": { "servers": ["local-docs"] }
+  }
+}
+```
+
+Add this registration to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.aifuel-gateway]
+command = "aifuel"
+args = ["mcp", "gateway", "--agent", "codex"]
+```
+
+Restart Codex after saving the registration. The current gateway supports MCP
+2025-11-25 tools over local stdio. It does not route resources or prompts,
+remote Streamable HTTP, or task-based tool calls. The existing `aifuel mcp`
+read-only status server remains separate.
 
 ## What it tracks
 
@@ -140,6 +188,7 @@ It does not execute prompts or edit files.
 | `aifuel --json` | **Normalized JSON** for scripts, status bars, and piping |
 | `aifuel run --provider ... --prompt ...` | Explicit prompt delegation to an installed provider CLI |
 | `aifuel mcp` | Read-only MCP status server over stdio |
+| `aifuel mcp gateway --agent codex` | Selected external tools through the AI Fuel MCP Gateway |
 
 Because `--json` is a stable, structured feed, it drops cleanly into a tmux / polybar / Sketchybar / starship status line - pipe it and surface "what runs out first" wherever you already look.
 
