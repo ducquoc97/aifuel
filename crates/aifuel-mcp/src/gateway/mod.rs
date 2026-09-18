@@ -4,8 +4,11 @@ mod host_transport;
 mod identity;
 mod process;
 mod progress;
+mod remote_endpoint;
+mod remote_transport;
 mod request;
 mod snapshot;
+mod sse;
 mod state;
 mod transport;
 
@@ -18,11 +21,11 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
-/// Serve one selected local MCP server to an MCP Host over standard input and
+/// Serve one selected MCP server to an MCP Host over standard input and
 /// output. This process is separate from AI Fuel's read-only monitoring MCP.
 pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
     if facade.selected_servers().len() > 1 {
-        return Err("the local gateway currently accepts one selected MCP server".to_owned());
+        return Err("MCP Gateway currently accepts one selected MCP server".to_owned());
     }
 
     let limits = facade.gateway_limits().clone();

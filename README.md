@@ -123,12 +123,14 @@ It does not execute prompts or edit files.
 
 ### AI Fuel MCP Gateway
 
-The MCP Gateway exposes tools from one selected local stdio MCP server. You
-provide the server executable and runtime; AI Fuel does not install it or run a
-background daemon. It snapshots environment references when it starts and gives
-the child only a small platform allowlist plus configured values. Explicit
-values replace same-named inherited values, case-insensitively on Windows.
-External tools keep their own behavior and may change data.
+The MCP Gateway exposes tools from one external MCP server selected for an
+agent. The upstream server can run as a local stdio child process or use remote
+Streamable HTTP. Servers keep their own behavior and may change data.
+For local stdio, you provide the server executable and runtime; AI Fuel does
+not install it or run a background daemon. The gateway snapshots environment
+references at startup and gives the child a small platform allowlist plus
+configured values. Explicit values replace same-named inherited values,
+case-insensitively on Windows.
 
 Save the central catalog as `aifuel/mcp.json` in your user config directory:
 
@@ -136,7 +138,8 @@ Save the central catalog as `aifuel/mcp.json` in your user config directory:
 - macOS: `~/Library/Application Support/aifuel/mcp.json`
 - Linux: `$XDG_CONFIG_HOME/aifuel/mcp.json`, or `~/.config/aifuel/mcp.json`
 
-Select one existing local server for Codex:
+Select a remote server for Codex. The same catalog can also include local
+stdio servers:
 
 ```json
 {
@@ -145,11 +148,15 @@ Select one existing local server for Codex:
       "transport": "stdio",
       "command": "/absolute/path/to/mcp-server",
       "args": []
+    },
+    "remote-docs": {
+      "transport": "streamable-http",
+      "url": "https://mcp.deepwiki.com/mcp"
     }
   },
   "defaults": [],
   "agents": {
-    "codex": { "servers": ["local-docs"] }
+    "codex": { "servers": ["remote-docs"] }
   }
 }
 ```
@@ -164,10 +171,18 @@ env_vars = ["XDG_CONFIG_HOME"]
 ```
 
 Restart Codex after saving the registration. The gateway negotiates MCP
-2025-06-18 and 2025-11-25 with hosts, including Codex CLI 0.155.0. Its current
-upstream client requires MCP 2025-11-25 from the selected local server. It does
-not route resources or prompts, remote Streamable HTTP, or task-based tool
-calls. The existing `aifuel mcp` read-only status server remains separate.
+2025-06-18 and 2025-11-25 with hosts. Upstream servers must support MCP
+2025-11-25. Remote Streamable HTTP accepts JSON and SSE responses, maintains
+server sessions, resumes SSE with GET and `Last-Event-ID`, honors the server's
+retry delay, and never replays a tool POST after a failure. A session-specific
+404 starts a fresh session without replaying the failed operation.
+
+Remote endpoints must use HTTPS or plain HTTP on loopback. Redirects are
+rejected, so configure the final endpoint URL. Remote authentication and secret
+headers are not supported yet; use a public endpoint or a server that does not
+require them. The gateway routes tools only. It does not route resources or
+prompts, or support task-based tool calls. The existing `aifuel mcp` read-only
+status server remains separate.
 
 ## What it tracks
 

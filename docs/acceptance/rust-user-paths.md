@@ -51,6 +51,29 @@ parsing and process behavior; they do not replace live provider acceptance.
   2025-11-25, counteroffers for unsupported host versions, local tool listing
   and calls, errors, deadlines, cancellation, bounded output, and cleanup of the
   gateway-owned process tree. The upstream fixture negotiates 2025-11-25.
+- The remote Streamable HTTP fixture tests run the real `aifuel mcp gateway
+  --agent codex` binary. They cover upstream 2025-11-25 initialization, JSON
+  tool calls, SSE delivery and GET resumption with `Last-Event-ID`, duplicate
+  event suppression, concurrent calls, cancellation and late-response discard,
+  60,000 ms retry versus an absolute operation deadline, session-specific 404
+  reinitialization without tool POST replay, response-size limits, malformed
+  JSON, redirect rejection, non-loopback plain HTTP rejection, and session
+  shutdown.
+- On 2026-09-18 in Linux 6.6.87.2 WSL2 (x86_64), the real gateway process
+  connected to `https://mcp.deepwiki.com/mcp`, negotiated its supported
+  2025-11-25 upstream profile, and listed the live `ask_question`,
+  `read_wiki_contents`, and `read_wiki_structure` tools. A call to
+  `read_wiki_structure` for `modelcontextprotocol/rust-sdk` returned its
+  documentation structure with `isError: false`. A call for `ducquoc97/aifuel`
+  also reached DeepWiki, which returned the server error `Error fetching wiki
+  for ducquoc97/aifuel: Repository not found. Visit
+  https://deepwiki.com/ducquoc97/aifuel to index it.` This verifies the remote
+  transport and tool roundtrip while recording the unindexed-repository case.
+  It does not establish that Codex loaded a remote registration. The smoke used
+  a temporary AI Fuel catalog and did not change the saved Codex configuration.
+- On rustc 1.97.1, `cargo test --workspace --locked` passed 64 tests across 24
+  suites, and `cargo clippy --workspace --all-targets --locked -- -D warnings`
+  completed without issues.
 - A terminal smoke of the built `aifuel mcp gateway --agent codex` binary with
   the local fixture returned protocol 2025-11-25, listed `local__echo`, and
   returned the fixture tool result.
@@ -70,9 +93,10 @@ parsing and process behavior; they do not replace live provider acceptance.
 
 ### Manual Codex acceptance path
 
-1. Use a local MCP server executable that is already installed.
-2. Add its local `stdio` definition and the `codex` selection to the central
-   `aifuel/mcp.json` catalog shown in the README.
+1. Use an installed local MCP server executable or an unauthenticated remote
+   Streamable HTTP server.
+2. Add its `stdio` or `streamable-http` definition and the `codex` selection to
+   the central `aifuel/mcp.json` catalog shown in the README.
 3. Add the `[mcp_servers.aifuel-gateway]` entry from the README to
    `~/.codex/config.toml`, then restart Codex.
 4. Confirm the gateway appears in Codex's MCP server list and ask Codex to call

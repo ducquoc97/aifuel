@@ -32,6 +32,7 @@ impl GatewayState {
         let process_environments = facade
             .selected_servers()
             .iter()
+            .filter(|server| matches!(&server.definition, McpServerDefinition::Stdio(_)))
             .map(|server| (server.id.clone(), snapshot_environment(server)))
             .collect();
         let events = Arc::new(GatewayEvents::default());
@@ -114,16 +115,9 @@ impl GatewayState {
         let Some(server) = self.facade.selected_servers().first().cloned() else {
             return Ok(None);
         };
-        if matches!(&server.definition, McpServerDefinition::StreamableHttp(_)) {
-            return Err(McpError::internal_error(
-                "selected server requires the remote Streamable HTTP transport",
-                None,
-            ));
-        }
-
         let mut current = tokio::select! {
             result = tokio::time::timeout_at(request_deadline, self.connection.lock()) => {
-                result.map_err(|_| McpError::internal_error("local MCP server discovery timed out", None))?
+                result.map_err(|_| McpError::internal_error("MCP server connection timed out", None))?
             }
             _ = cancellation.cancelled() => {
                 return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
@@ -138,14 +132,10 @@ impl GatewayState {
             let _ = tokio::time::timeout_at(request_deadline, stale.shutdown()).await;
         }
 
-        let process_environment = self
-            .process_environments
-            .get(&server.id)
-            .cloned()
-            .expect("selected server has a startup environment snapshot");
+        let process_environment = self.process_environments.get(&server.id).cloned();
         let connection = ConnectedGatewayServer::connect(
             server,
-            Some(process_environment),
+            process_environment,
             Duration::from_secs(self.limits.output_stall_seconds),
             Arc::clone(&self.events),
             Arc::clone(&self.progress),
@@ -167,7 +157,7 @@ impl GatewayState {
         }
         let mut current = tokio::select! {
             result = tokio::time::timeout_at(operation_deadline, self.snapshot.lock()) => {
-                result.map_err(|_| McpError::internal_error("local MCP server discovery timed out", None))?
+                result.map_err(|_| McpError::internal_error("MCP server discovery timed out", None))?
             }
             _ = cancellation.cancelled() => {
                 return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
@@ -215,7 +205,7 @@ impl GatewayState {
             Err(_error) if current.is_some() => {
                 self.events.tools_dirty.store(true, Ordering::Release);
                 eprintln!(
-                    "aifuel: selected local MCP server is unavailable; retaining its last tool list"
+                    "aifuel: selected MCP server is unavailable; retaining its last tool list"
                 );
                 Ok(Arc::clone(current.as_ref().expect("snapshot exists")))
             }
