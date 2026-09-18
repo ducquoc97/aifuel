@@ -4,6 +4,13 @@ use aifuel_core::{StatusCollector, StatusReport};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+mod gateway;
+pub use gateway::{
+    GatewayConfigError, GatewayLimits, McpGatewayFacade, McpServerDefinition, NamedSecretHeader,
+    SelectedMcpServer, ServerLimits, StdioServerDefinition, StreamableHttpServerDefinition,
+    default_cwd,
+};
+
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// Shared monitoring workflow for text, JSON, dashboard, and MCP interfaces.
@@ -26,14 +33,12 @@ where
     /// Return cached monitoring status when it remains fresh, or collect and
     /// cache a new report. `refresh` always performs a new collection.
     pub async fn status(&self, refresh: bool) -> StatusReport {
-        if !refresh {
-            if let Some((created_at, report)) =
+        if !refresh
+            && let Some((created_at, report)) =
                 self.cache.lock().expect("status cache mutex").as_ref()
-            {
-                if created_at.elapsed() < STATUS_CACHE_TTL {
-                    return report.clone();
-                }
-            }
+            && created_at.elapsed() < STATUS_CACHE_TTL
+        {
+            return report.clone();
         }
 
         let report = self.collector.collect_status().await;

@@ -101,10 +101,11 @@ pub(crate) fn deep_find<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value
     match value {
         Value::Object(object) => {
             for key in keys {
-                if let Some(value) = object.get(*key) {
-                    if !value.is_null() && value != "" {
-                        return Some(value);
-                    }
+                if let Some(value) = object.get(*key)
+                    && !value.is_null()
+                    && value != ""
+                {
+                    return Some(value);
                 }
             }
             object.values().find_map(|value| deep_find(value, keys))

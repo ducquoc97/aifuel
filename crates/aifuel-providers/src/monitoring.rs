@@ -43,10 +43,10 @@ impl CollectionConfig {
 }
 
 fn replace_from_env(target: &mut String, name: &str) {
-    if let Ok(value) = std::env::var(name) {
-        if !value.trim().is_empty() {
-            *target = value;
-        }
+    if let Ok(value) = std::env::var(name)
+        && !value.trim().is_empty()
+    {
+        *target = value;
     }
 }
 

@@ -142,13 +142,13 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
         .map_err(|error| {
             LaunchError::InvalidRequest(format!("working directory is unavailable: {error}"))
         })?;
-    if let Some(directory) = &working_directory {
-        if !directory.is_dir() {
-            return Err(LaunchError::InvalidRequest(format!(
-                "working directory is not an existing directory: {}",
-                directory.display()
-            )));
-        }
+    if let Some(directory) = &working_directory
+        && !directory.is_dir()
+    {
+        return Err(LaunchError::InvalidRequest(format!(
+            "working directory is not an existing directory: {}",
+            directory.display()
+        )));
     }
     let temporary_directory = if working_directory.is_none() {
         Some(TemporaryDirectory::new()?)
@@ -174,7 +174,7 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
 
     let mut child = command.spawn().map_err(|error| match error.kind() {
         io::ErrorKind::NotFound => {
-            LaunchError::InvalidRequest(format!("provider executable {:?} was not found", program))
+            LaunchError::InvalidRequest(format!("provider executable {program:?} was not found"))
         }
         _ => LaunchError::Io(error),
     })?;
@@ -229,7 +229,7 @@ pub fn execute(request: &RunRequest) -> Result<RunResult, LaunchError> {
     } else if let Some(diagnostics) = &diagnostics {
         Some(diagnostics.clone())
     } else {
-        Some(format!("provider exited with {:?}", exit_code))
+        Some(format!("provider exited with {exit_code:?}"))
     };
     Ok(RunResult {
         run_id,

@@ -17,3 +17,7 @@
 - Let each provider definition own its provider-specific source markers. A present marker initializes an identity-only adapter without validating its contents.
 - Recompute discovery for each collection. Initialize only present providers; report inspection failures separately with safe, path-free diagnostics.
 - Keep the static provider catalog separate from the discovered set. Preserve empty discovery as a successful empty result and keep provider-owned authentication boundaries explicit.
+
+## MCP Gateway
+
+- Before adopting an MCP SDK transport, check its default framing, shutdown, process-tree, and feature-selected MSRV behavior against the approved contract. An available limit or process wrapper does not mean the default transport uses it.

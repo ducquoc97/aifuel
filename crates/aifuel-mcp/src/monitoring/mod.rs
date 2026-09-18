@@ -167,17 +167,17 @@ fn filter_status(state: &Value, arguments: &Value) -> Value {
             provider_id.is_none_or(|id| provider["key"].as_str() == Some(id))
                 && account_id.is_none_or(|id| provider["account_id"].as_str() == Some(id))
         });
-        if providers.is_empty() {
-            if let Some(collection) = filtered.get_mut("collection") {
-                collection["outcome"] = Value::String("failed".to_owned());
-                if let Some(errors) = collection.get_mut("errors").and_then(Value::as_array_mut) {
-                    errors.push(json!({
-                        "provider_id": provider_id,
-                        "account_id": account_id,
-                        "code": "unavailable",
-                        "message": "requested provider or account is not currently discovered"
-                    }));
-                }
+        if providers.is_empty()
+            && let Some(collection) = filtered.get_mut("collection")
+        {
+            collection["outcome"] = Value::String("failed".to_owned());
+            if let Some(errors) = collection.get_mut("errors").and_then(Value::as_array_mut) {
+                errors.push(json!({
+                    "provider_id": provider_id,
+                    "account_id": account_id,
+                    "code": "unavailable",
+                    "message": "requested provider or account is not currently discovered"
+                }));
             }
         }
     }
