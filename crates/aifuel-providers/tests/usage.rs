@@ -4,8 +4,10 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_TEST_HOME_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TestHome {
     path: PathBuf,
@@ -13,10 +15,7 @@ struct TestHome {
 
 impl TestHome {
     fn new() -> Self {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock should be after the unix epoch")
-            .as_nanos();
+        let suffix = NEXT_TEST_HOME_ID.fetch_add(1, Ordering::Relaxed);
         let path =
             std::env::temp_dir().join(format!("aifuel-usage-test-{}-{suffix}", std::process::id()));
         fs::create_dir_all(path.join(".gemini")).expect("test home should be creatable");
