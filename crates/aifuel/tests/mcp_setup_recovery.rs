@@ -158,17 +158,11 @@ fn public_setup_recovers_an_interrupted_receipt_update() {
     let previous_entry = previous_receipt["entry"].clone();
     let target_config = fs::read_to_string(&config).unwrap();
     let previous_command = "previous-gateway-command";
-    let base = target_config
-        .replace(
-            &format!(
-                "command = {:?}",
-                previous_entry["value"]["command"]["value"]
-                    .as_str()
-                    .unwrap()
-            ),
-            &format!("command = {previous_command:?}"),
-        )
-        .into_bytes();
+    let mut base_config: toml_edit::DocumentMut = target_config
+        .parse()
+        .expect("setup should write valid Codex TOML");
+    base_config["mcp_servers"]["aifuel-gateway"]["command"] = toml_edit::value(previous_command);
+    let base = base_config.to_string().into_bytes();
     assert_ne!(base, target_config.as_bytes());
     let mut previous_entry = previous_entry;
     previous_entry["value"]["command"]["value"] = json!(previous_command);
