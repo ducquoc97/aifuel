@@ -185,3 +185,117 @@ fn public_setup_refuses_to_remove_a_registration_edited_after_apply() {
     assert!(String::from_utf8_lossy(&remove.stderr).contains("edited after AI Fuel created it"));
     assert_eq!(fs::read(&config).unwrap(), edited.as_bytes());
 }
+
+#[test]
+fn public_claude_setup_uses_user_scope_json_and_preserves_other_settings() {
+    let directory = TestDirectory::new("mcp-setup-claude-public");
+    let root = directory.path();
+    let config = root.join(".claude.json");
+    let config_dir = ai_fuel_config_dir(root);
+    fs::write(
+        &config,
+        br#"{
+  "userID": "temporary-user",
+  "projects": {
+    "/work/example": {
+      "hasTrustDialogAccepted": true,
+      "mcpServers": {"project-tools": {"type": "stdio", "command": "project-tool"}}
+    }
+  },
+  "mcpServers": {
+    "notes": {"type": "stdio", "command": "notes", "args": [], "env": {}}
+  }
+}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("mcp.json"),
+        br#"{"servers":{"private":{"transport":"stdio","command":"fixture","env":{"TOKEN":{"value":"fixture-secret"}}}},"defaults":["private"]}"#,
+    )
+    .unwrap();
+    let original = fs::read(&config).unwrap();
+
+    let preview = run_setup(root, &["mcp", "setup", "--agent", "claude", "--dry-run"]);
+
+    assert!(preview.status.success());
+    assert!(String::from_utf8_lossy(&preview.stdout).contains("dry run: would apply"));
+    assert_eq!(fs::read(&config).unwrap(), original);
+    assert!(!config_dir.join("mcp-registrations").exists());
+
+    let apply = run_setup(root, &["mcp", "setup", "--agent", "claude"]);
+
+    assert!(
+        apply.status.success(),
+        "Claude setup should apply: {}",
+        String::from_utf8_lossy(&apply.stderr)
+    );
+    assert!(String::from_utf8_lossy(&apply.stdout).contains("registration applied"));
+    let apply_backup = backup_path(&apply);
+    assert_eq!(fs::read(&apply_backup).unwrap(), original);
+    let updated: serde_json::Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    assert_eq!(updated["userID"], "temporary-user");
+    assert_eq!(
+        updated["projects"]["/work/example"]["hasTrustDialogAccepted"],
+        true
+    );
+    assert_eq!(
+        updated["projects"]["/work/example"]["mcpServers"]["project-tools"]["command"],
+        "project-tool"
+    );
+    assert_eq!(updated["mcpServers"]["notes"]["command"], "notes");
+    assert_eq!(updated["mcpServers"]["aifuel-gateway"]["type"], "stdio");
+    assert_eq!(
+        updated["mcpServers"]["aifuel-gateway"]["command"],
+        env!("CARGO_BIN_EXE_aifuel")
+    );
+    assert_eq!(
+        updated["mcpServers"]["aifuel-gateway"]["args"],
+        serde_json::json!(["mcp", "gateway", "--agent", "claude"])
+    );
+    assert_eq!(
+        updated["mcpServers"]["aifuel-gateway"]["env"],
+        serde_json::json!({})
+    );
+    let updated_text = String::from_utf8(fs::read(&config).unwrap()).unwrap();
+    assert!(!updated_text.contains("fixture-secret"));
+    assert!(!updated_text.contains("private"));
+
+    let repeated = run_setup(root, &["mcp", "setup", "--agent", "claude"]);
+    assert!(repeated.status.success());
+    assert!(
+        String::from_utf8_lossy(&repeated.stdout).contains("no configuration change was needed")
+    );
+    assert_eq!(backup_files(&config_dir).len(), 1);
+
+    let remove = run_setup(root, &["mcp", "setup", "--agent", "claude", "--remove"]);
+    assert!(
+        remove.status.success(),
+        "Claude removal should succeed: {}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let removed: serde_json::Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    assert!(removed["mcpServers"].get("aifuel-gateway").is_none());
+    assert_eq!(removed["mcpServers"]["notes"]["command"], "notes");
+    assert_eq!(
+        removed["projects"]["/work/example"]["mcpServers"]["project-tools"]["command"],
+        "project-tool"
+    );
+    assert_eq!(backup_path(&remove), apply_backup);
+    assert_eq!(backup_files(&config_dir).len(), 1);
+}
+
+#[test]
+fn public_claude_setup_rejects_an_unowned_gateway_conflict() {
+    let directory = TestDirectory::new("mcp-setup-claude-conflict");
+    let root = directory.path();
+    let config = root.join(".claude.json");
+    let original = br#"{"mcpServers":{"aifuel-gateway":{"type":"stdio","command":"user-owned","args":["mcp","gateway","--agent","claude"],"env":{}}}}"#;
+    fs::write(&config, original).unwrap();
+
+    let setup = run_setup(root, &["mcp", "setup", "--agent", "claude"]);
+
+    assert_eq!(setup.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&setup.stderr).contains("different or unowned"));
+    assert_eq!(fs::read(&config).unwrap(), original);
+}

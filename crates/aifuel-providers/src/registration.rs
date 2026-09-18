@@ -9,6 +9,7 @@ pub fn agent_mcp_registration_adapter(
 ) -> Option<&'static dyn AgentMcpRegistrationAdapter> {
     match host_id {
         "codex" => Some(&codex::CODEX_REGISTRATION),
+        "claude" => Some(&crate::claude::MCP_REGISTRATION_ADAPTER),
         _ => None,
     }
 }

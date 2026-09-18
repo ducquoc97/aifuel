@@ -16,6 +16,19 @@ impl AgentMcpRegistrationAdapter for CodexMcpRegistration {
         "codex"
     }
 
+    fn configuration_home(&self, user_home: &Path) -> Result<PathBuf, AgentMcpRegistrationError> {
+        let home = std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| user_home.join(".codex"));
+        if !home.is_absolute() {
+            return Err(config_error("CODEX_HOME must be an absolute path"));
+        }
+        if !home.is_dir() {
+            return Err(config_error("Codex home directory must already exist"));
+        }
+        Ok(home)
+    }
+
     fn config_file(&self, host_home: &Path) -> PathBuf {
         host_home.join("config.toml")
     }
