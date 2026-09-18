@@ -2,6 +2,7 @@ use aifuel_core::{
     AIFUEL_GATEWAY_REGISTRATION_NAME, AgentMcpRegistrationAdapter, AgentMcpRegistrationError,
 };
 use serde_json::{Map, Value as JsonValue};
+use std::env;
 use std::path::{Path, PathBuf};
 
 pub(crate) static COPILOT_REGISTRATION: CopilotMcpRegistration = CopilotMcpRegistration;
@@ -12,6 +13,10 @@ pub struct CopilotMcpRegistration;
 impl AgentMcpRegistrationAdapter for CopilotMcpRegistration {
     fn host_id(&self) -> &'static str {
         "copilot"
+    }
+
+    fn configuration_home(&self, user_home: &Path) -> Result<PathBuf, AgentMcpRegistrationError> {
+        resolve_configuration_home(user_home, env::var_os("COPILOT_HOME").map(PathBuf::from))
     }
 
     fn config_file(&self, host_home: &Path) -> PathBuf {
@@ -100,6 +105,17 @@ impl CopilotMcpRegistration {
         }
         Ok(document)
     }
+}
+
+fn resolve_configuration_home(
+    user_home: &Path,
+    copilot_home: Option<PathBuf>,
+) -> Result<PathBuf, AgentMcpRegistrationError> {
+    let home = copilot_home.unwrap_or_else(|| user_home.join(".copilot"));
+    if !home.is_absolute() {
+        return Err(config_error("COPILOT_HOME must be an absolute path"));
+    }
+    Ok(home)
 }
 
 fn serialize_config(document: &JsonValue) -> Result<Vec<u8>, AgentMcpRegistrationError> {

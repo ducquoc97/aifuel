@@ -24,6 +24,22 @@ fn copilot_registration_uses_its_documented_user_config_and_gateway_command() {
 }
 
 #[test]
+fn copilot_configuration_home_defaults_to_dot_copilot_and_accepts_an_absolute_override() {
+    let user_home = Path::new("/tmp/user-home");
+    let override_home = PathBuf::from("/tmp/custom-copilot-home");
+
+    assert_eq!(
+        resolve_configuration_home(user_home, None).unwrap(),
+        user_home.join(".copilot")
+    );
+    assert_eq!(
+        resolve_configuration_home(user_home, Some(override_home.clone())).unwrap(),
+        override_home
+    );
+    assert!(resolve_configuration_home(user_home, Some(PathBuf::from("relative-home"))).is_err());
+}
+
+#[test]
 fn writes_only_the_gateway_entry_and_preserves_other_servers_and_settings() {
     let original = br#"{
   "appearance": {"theme": "light"},
