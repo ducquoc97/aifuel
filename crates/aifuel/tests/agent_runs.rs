@@ -313,7 +313,7 @@ fn install_failing_command(directory: &std::path::Path, command_name: &str) {
 fn install_failing_command(directory: &std::path::Path, command_name: &str) {
     fs::write(
         directory.join(format!("{command_name}.cmd")),
-        "@echo off\nif \"%~1\"==\"--help\" (echo --prompt --approval-mode --output-format & exit /b 0)\necho partial provider output\necho provider failure detail 1>&2\nexit /b 17\n",
+        "@echo off\nif \"%~1\"==\"--help\" (echo --prompt --approval-mode --output-format & exit /b 0)\necho partial provider output\n>&2 echo provider failure detail\nexit /b 17\n",
     )
     .expect("fake failing executable should be writable");
 }
