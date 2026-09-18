@@ -1,3 +1,4 @@
+mod connection;
 mod handler;
 mod host_transport;
 mod identity;
