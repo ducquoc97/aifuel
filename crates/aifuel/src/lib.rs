@@ -43,32 +43,32 @@ fn user_home_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "the user's home directory could not be resolved".to_owned())
 }
 
+#[cfg(windows)]
+fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
+    env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| {
+            "the user's application configuration directory could not be resolved".to_owned()
+        })
+}
+
+#[cfg(target_os = "macos")]
 fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
-    #[cfg(windows)]
+    Ok(user_home.join("Library").join("Application Support"))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
+    if let Some(config_home) = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
+        && config_home.is_absolute()
     {
-        env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .ok_or_else(|| {
-                "the user's application configuration directory could not be resolved".to_owned()
-            });
+        return Ok(config_home);
     }
-    #[cfg(target_os = "macos")]
-    {
-        Ok(user_home.join("Library").join("Application Support"))
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Some(config_home) = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
-            && config_home.is_absolute()
-        {
-            return Ok(config_home);
-        }
-        Ok(user_home.join(".config"))
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = user_home;
-        Err("the user's application configuration directory could not be resolved".to_owned())
-    }
+    Ok(user_home.join(".config"))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
+    Err("the user's application configuration directory could not be resolved".to_owned())
 }
