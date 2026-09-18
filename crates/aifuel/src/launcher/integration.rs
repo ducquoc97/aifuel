@@ -222,8 +222,7 @@ fn claude_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
 }
 
 fn codex_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
-    let mut args = vec!["exec".to_owned()];
-    append_resume(&mut args, request);
+    let mut args = vec!["exec".to_owned(), "--skip-git-repo-check".to_owned()];
     append_model(&mut args, request);
     args.extend([
         "--sandbox".to_owned(),
@@ -235,8 +234,10 @@ fn codex_args(request: &RunRequest) -> Result<Vec<String>, LaunchError> {
     if request.output != OutputFormat::Text {
         args.push("--json".to_owned());
     }
+    if let Some(session) = &request.resume {
+        args.extend(["resume".to_owned(), session.clone()]);
+    }
     args.push(request.prompt.clone());
-    args.insert(1, "--skip-git-repo-check".to_owned());
     Ok(args)
 }
 
