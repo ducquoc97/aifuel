@@ -127,9 +127,13 @@ fn protect_private_directory_permissions(path: &Path) -> io::Result<()> {
         }
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
         let mut permissions = fs::metadata(path)?.permissions();
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "On Windows this clears FILE_ATTRIBUTE_READONLY; Unix permissions use the PermissionsExt branch above."
+        )]
         permissions.set_readonly(false);
         fs::set_permissions(path, permissions)
     }
