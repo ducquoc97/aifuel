@@ -4,6 +4,7 @@ mod gateway_support;
 #[path = "support/remote_gateway.rs"]
 mod remote_gateway_support;
 #[path = "support/streamable_http.rs"]
+#[allow(dead_code)]
 mod streamable_http;
 #[allow(dead_code)]
 mod support;
@@ -85,10 +86,7 @@ fn remote_session_expiry_during_get_resume_reinitializes_without_replaying_tool_
             .unwrap()
             .contains("session expired")
     );
-    assert!(matches!(
-        fixture.next_request(Duration::from_millis(200)),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-    ));
+    assert_no_upstream_post(&fixture, Duration::from_millis(200));
 
     send_message(
         &mut stdin,
@@ -115,6 +113,99 @@ fn remote_session_expiry_during_get_resume_reinitializes_without_replaying_tool_
     assert_eq!(result["result"]["content"][0]["text"], "new-session-result");
 
     finish_gateway(&mut gateway, stdin, &fixture, "fresh-session");
+}
+
+#[test]
+fn remote_session_expiry_on_tool_post_reinitializes_without_replaying_call() {
+    let temporary = TestDirectory::new("mcp-gateway-remote-post-expired");
+    let fixture = StreamableHttpFixture::start();
+    let config_root = temporary.path().join("config");
+    write_remote_catalog(&config_root, &fixture.url(), json!({}));
+    let (mut gateway, responses) = start_gateway(&config_root);
+    let mut stdin = gateway.stdin.take().expect("gateway stdin should be piped");
+    initialize_host(&mut stdin, &responses);
+    send_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    );
+    initialize_remote(&fixture, "post-expired-session");
+    respond_tools_list(&fixture, "post-expired-session");
+    let listed = response_with_id(&responses, 2);
+    assert_eq!(listed["result"]["tools"][0]["name"], "docs__echo");
+
+    send_message(
+        &mut stdin,
+        json!({
+            "jsonrpc":"2.0",
+            "id":3,
+            "method":"tools/call",
+            "params":{"name":"docs__echo","arguments":{"message":"do not replay"}}
+        }),
+    );
+    let call = next_remote_post(&fixture, "tools/call", Duration::from_secs(5));
+    let original_call_id = call.json()["id"].clone();
+    assert_eq!(call.header("mcp-session-id"), Some("post-expired-session"));
+    call.respond(404, None, Vec::new(), Vec::new());
+
+    let reinitialize = next_remote_post(&fixture, "initialize", Duration::from_secs(5));
+    assert_eq!(reinitialize.header("mcp-session-id"), None);
+    assert_eq!(reinitialize.header("mcp-protocol-version"), None);
+    let reinitialize_id = reinitialize.json()["id"].clone();
+    assert_ne!(reinitialize_id, original_call_id);
+    reinitialize.respond_json(
+        200,
+        vec![("MCP-Session-Id".to_owned(), "post-fresh-session".to_owned())],
+        initialize_result(reinitialize_id),
+    );
+    let initialized = next_remote_post(
+        &fixture,
+        "notifications/initialized",
+        Duration::from_secs(5),
+    );
+    assert_eq!(
+        initialized.header("mcp-session-id"),
+        Some("post-fresh-session")
+    );
+    initialized.respond(202, None, Vec::new(), Vec::new());
+
+    let failed_call = response_with_id_timeout(&responses, 3, Duration::from_secs(5));
+    assert_eq!(failed_call["error"]["code"], -32603);
+    assert!(
+        failed_call["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("session expired")
+    );
+    assert_no_upstream_post(&fixture, Duration::from_millis(200));
+
+    send_message(
+        &mut stdin,
+        json!({
+            "jsonrpc":"2.0",
+            "id":4,
+            "method":"tools/call",
+            "params":{"name":"docs__echo","arguments":{"message":"fresh call"}}
+        }),
+    );
+    let next_call = next_remote_post(&fixture, "tools/call", Duration::from_secs(5));
+    assert_eq!(
+        next_call.header("mcp-session-id"),
+        Some("post-fresh-session")
+    );
+    let next_call_id = next_call.json()["id"].clone();
+    next_call.respond_json(
+        200,
+        Vec::new(),
+        json!({
+            "jsonrpc":"2.0",
+            "id":next_call_id,
+            "result":{"content":[{"type":"text","text":"post-fresh-result"}],"isError":false}
+        }),
+    );
+    let result = response_with_id(&responses, 4);
+    assert_eq!(result["result"]["content"][0]["text"], "post-fresh-result");
+
+    finish_gateway(&mut gateway, stdin, &fixture, "post-fresh-session");
 }
 
 #[test]

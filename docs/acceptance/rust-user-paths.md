@@ -55,23 +55,119 @@ parsing and process behavior; they do not replace live provider acceptance.
   --agent codex` binary. They cover upstream 2025-11-25 initialization, JSON
   tool calls, SSE delivery and GET resumption with `Last-Event-ID`, duplicate
   event suppression, concurrent calls, cancellation and late-response discard,
-  60,000 ms retry versus an absolute operation deadline, session-specific 404
-  reinitialization without tool POST replay, response-size limits, malformed
-  JSON, redirect rejection, non-loopback plain HTTP rejection, and session
-  shutdown.
-- On 2026-09-18 in Linux 6.6.87.2 WSL2 (x86_64), the real gateway process
-  connected to `https://mcp.deepwiki.com/mcp`, negotiated its supported
-  2025-11-25 upstream profile, and listed the live `ask_question`,
-  `read_wiki_contents`, and `read_wiki_structure` tools. A call to
-  `read_wiki_structure` for `modelcontextprotocol/rust-sdk` returned its
-  documentation structure with `isError: false`. A call for `ducquoc97/aifuel`
-  also reached DeepWiki, which returned the server error `Error fetching wiki
-  for ducquoc97/aifuel: Repository not found. Visit
-  https://deepwiki.com/ducquoc97/aifuel to index it.` This verifies the remote
-  transport and tool roundtrip while recording the unindexed-repository case.
-  It does not establish that Codex loaded a remote registration. The smoke used
-  a temporary AI Fuel catalog and did not change the saved Codex configuration.
-- On rustc 1.97.1, `cargo test --workspace --locked` passed 64 tests across 24
+  60,000 ms retry versus absolute deadlines and after failed resumed GETs in
+  finite and shared streams, session-specific 404 reinitialization for GET and
+  tool POST without replay followed by an explicit fresh-session call, chunked
+  SSE parsing and oversized SSE event rejection, response-size limits,
+  malformed JSON, redirect rejection, non-loopback plain HTTP rejection, and
+  successful DELETE shutdown.
+- On 2026-09-18 in Linux 6.6.87.2 WSL2 (x86_64), a direct stdio run of the real
+  `aifuel mcp gateway --agent codex` binary connected to
+  `https://mcp.deepwiki.com/mcp`, negotiated MCP 2025-11-25, and listed
+  `ask_question`, `read_wiki_contents`, and `read_wiki_structure`. The
+  `read_wiki_structure` call for `modelcontextprotocol/rust-sdk` returned its
+  documentation structure with `isError: false`. The same call for
+  `ducquoc97/aifuel` reached DeepWiki but returned `Error fetching wiki for
+  ducquoc97/aifuel: Repository not found. Visit
+  https://deepwiki.com/ducquoc97/aifuel to index it.` This is a DeepWiki
+  repository-indexing error, not a gateway transport failure. The smoke used a
+  temporary AI Fuel catalog and did not change Codex configuration.
+- On 2026-09-18, Codex App Server 0.155.0 on Linux 6.6.87.2 WSL2 (x86_64,
+  Ubuntu 24.4.0 user agent) loaded the gateway from a fresh temporary
+  `CODEX_HOME` at `/tmp/aifuel-issue30-codex-home.IwAF0z` and an isolated
+  `XDG_CONFIG_HOME` at `/tmp/aifuel-issue30-xdg-home.XFCaSQ`. Its temporary
+  `config.toml` registered the built branch binary:
+
+  ```toml
+  [mcp_servers.aifuel-gateway]
+  command = "/home/willnguyen/Developer/aifuel-issue-30/target/debug/aifuel"
+  args = ["mcp", "gateway", "--agent", "codex"]
+  env_vars = ["XDG_CONFIG_HOME"]
+  ```
+
+  The temporary catalog at
+  `/tmp/aifuel-issue30-xdg-home.XFCaSQ/aifuel/mcp.json` selected public
+  DeepWiki:
+
+  ```json
+  {
+    "servers": {
+      "deepwiki": {
+        "transport": "streamable-http",
+        "url": "https://mcp.deepwiki.com/mcp",
+        "limits": {
+          "connectSeconds": 15,
+          "discoverySeconds": 30,
+          "operationSeconds": 30
+        }
+      }
+    },
+    "defaults": [],
+    "agents": {"codex": {"servers": ["deepwiki"]}}
+  }
+  ```
+
+  `mcpServerStatus/list` with `detail: toolsAndAuthOnly` reported gateway
+  serverInfo `aifuel-gateway` version `0.1.0`, three tools, and
+  `authStatus: unsupported`. After `thread/start` created ephemeral thread
+  `01a0b53b-1aed-7a33-9a6d-a52ea9e841f2`, a direct
+  `mcpServer/tool/call` for `deepwiki__read_5Fwiki_5Fstructure` with
+  `repoName: modelcontextprotocol/rust-sdk` succeeded without a model turn. The
+  exact tool result text was:
+
+  ```text
+  Available pages for modelcontextprotocol/rust-sdk:
+
+  - 1 Overview
+    - 1.1 Getting Started
+    - 1.2 Workspace Structure
+  - 2 Core Framework
+    - 2.1 Service and Peer Framework
+    - 2.2 JSON-RPC Message Protocol
+    - 2.3 Capabilities System
+    - 2.4 Tool System
+    - 2.5 Resources and Prompts
+    - 2.6 Sampling and Elicitation
+    - 2.7 Metadata and Extensions
+  - 3 Transport Layer
+    - 3.1 Transport Abstraction
+    - 3.2 Standard I/O and Child Process
+    - 3.3 Streamable HTTP Transport
+    - 3.4 Worker Pattern
+    - 3.5 Additional Transports
+  - 4 Authentication
+    - 4.1 OAuth 2.0 Framework
+    - 4.2 Authorization Flows
+    - 4.3 SEP-991 URL-Based Client IDs
+  - 5 Server Development
+    - 5.1 ServerHandler Implementation
+    - 5.2 Tool Definition with Macros
+    - 5.3 Task Management
+    - 5.4 Server Examples
+  - 6 Client Development
+    - 6.1 Client Service Setup
+    - 6.2 Transport Selection
+    - 6.3 Tool Discovery and Invocation
+    - 6.4 Handling Server Requests
+    - 6.5 Client Examples
+  - 7 Reference
+    - 7.1 Message Schema Reference
+    - 7.2 Feature Configuration
+    - 7.3 Content Type System
+    - 7.4 Error Handling
+    - 7.5 Cancellation and Progress
+    - 7.6 CI/CD and Development Workflow
+    - 7.7 Integration Examples
+  - 8 Glossary
+  ```
+
+  App Server returned `isError: false`. A direct unauthenticated initialize
+  probe reported DeepWiki version `2.14.3` and protocol `2025-11-25`. The
+  temporary App Server also logged a background Responses WebSocket `401
+  Unauthorized` because its fresh home had no credentials; no model turn was
+  sent, and the MCP status/list and direct tool call succeeded. No saved Codex
+  config or credentials were read or modified.
+- On rustc 1.97.1, `cargo test --workspace --locked` passed 68 tests across 25
   suites, and `cargo clippy --workspace --all-targets --locked -- -D warnings`
   completed without issues.
 - A terminal smoke of the built `aifuel mcp gateway --agent codex` binary with
@@ -103,6 +199,6 @@ parsing and process behavior; they do not replace live provider acceptance.
    one selected tool. Record the Codex version, OS, negotiated protocol, and
    returned result before marking that host combination verified.
 
-The live host check used a separately compiled local fixture server rather than
-an installed third-party MCP server. Codex's user-level configuration remained
-unchanged.
+The earlier Codex CLI host check used a separately compiled local fixture
+server. The App Server follow-up above used public DeepWiki. Both checks used
+temporary Codex homes and left the saved Codex configuration unchanged.

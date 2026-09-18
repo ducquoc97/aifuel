@@ -118,11 +118,12 @@ fn remote_sse_response_resumes_with_get_and_deduplicates_redelivery() {
         "method":"notifications/progress",
         "params":{"progressToken":progress_token,"progress":1,"total":2}
     });
-    call.respond(
+    let priming = sse_event("event-1", Some(1), &progress).into_bytes();
+    call.respond_chunked(
         200,
         Some("text/event-stream"),
         Vec::new(),
-        sse_event("event-1", Some(1), &progress),
+        priming.chunks(7).map(|chunk| chunk.to_vec()).collect(),
     );
 
     let resumed = match next_resume_get(&fixture, "event-1", Duration::from_secs(5)) {
@@ -161,15 +162,20 @@ fn remote_sse_response_resumes_with_get_and_deduplicates_redelivery() {
         "id":upstream_id,
         "result":{"content":[{"type":"text","text":"resumed-result"}],"isError":false}
     });
-    resumed.respond(
+    let resumed_body = format!(
+        "{}{}",
+        sse_event("event-1", None, &progress),
+        sse_event("event-2", None, &tool_result)
+    )
+    .into_bytes();
+    resumed.respond_chunked(
         200,
         Some("text/event-stream"),
         Vec::new(),
-        format!(
-            "{}{}",
-            sse_event("event-1", None, &progress),
-            sse_event("event-2", None, &tool_result)
-        ),
+        resumed_body
+            .chunks(11)
+            .map(|chunk| chunk.to_vec())
+            .collect(),
     );
 
     let host_deadline = Instant::now() + Duration::from_secs(5);

@@ -129,3 +129,58 @@ fn remote_malformed_and_oversized_json_are_reported_as_failures() {
         finish_gateway(&mut gateway, stdin, &fixture, "body-limit-session");
     }
 }
+
+#[test]
+fn oversized_chunked_sse_event_is_rejected() {
+    let temporary = TestDirectory::new("mcp-gateway-remote-sse-body-limit");
+    let fixture = StreamableHttpFixture::start();
+    let config_root = temporary.path().join("config");
+    write_remote_catalog(&config_root, &fixture.url(), json!({"maxMessageBytes":512}));
+    let (mut gateway, responses) = start_gateway(&config_root);
+    let mut stdin = gateway.stdin.take().expect("gateway stdin should be piped");
+    initialize_host(&mut stdin, &responses);
+    send_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    );
+    initialize_remote(&fixture, "sse-body-limit-session");
+    respond_tools_list(&fixture, "sse-body-limit-session");
+    let listed = response_with_id(&responses, 2);
+    assert_eq!(listed["result"]["tools"][0]["name"], "docs__echo");
+
+    send_message(
+        &mut stdin,
+        json!({
+            "jsonrpc":"2.0",
+            "id":3,
+            "method":"tools/call",
+            "params":{"name":"docs__echo","arguments":{"message":"too large"}}
+        }),
+    );
+    let call = next_remote_post(&fixture, "tools/call", Duration::from_secs(5));
+    let result = json!({
+        "jsonrpc":"2.0",
+        "id":call.json()["id"],
+        "result":{"content":[{"type":"text","text":"x".repeat(2048)}],"isError":false}
+    });
+    let oversized_event = sse_event("oversized-event", None, &result).into_bytes();
+    call.respond_chunked(
+        200,
+        Some("text/event-stream"),
+        Vec::new(),
+        oversized_event
+            .chunks(64)
+            .map(|chunk| chunk.to_vec())
+            .collect(),
+    );
+
+    let failure = response_with_id_timeout(&responses, 3, Duration::from_secs(5));
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("event exceeds the configured byte limit"),
+        "{failure}"
+    );
+    finish_gateway(&mut gateway, stdin, &fixture, "sse-body-limit-session");
+}

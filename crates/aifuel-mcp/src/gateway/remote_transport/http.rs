@@ -1,5 +1,5 @@
 pub(super) use super::messages::{
-    cancel_pending_except, cancel_upstream_request, deliver, deliver_expected,
+    cancel_pending_except, cancel_upstream_request, deliver, deliver_expected, reject_redirect,
     response_content_type, send_error, shutdown_remote,
 };
 use super::messages::{
@@ -39,11 +39,7 @@ pub(super) async fn send_message(
                 "remote MCP server accepted initialize without a result",
             ));
         }
-        if response.status().is_redirection() {
-            return Err(RemoteHttpError::Message(
-                "remote MCP endpoint returned a redirect; configure its final endpoint",
-            ));
-        }
+        reject_redirect(&response)?;
         if !response.status().is_success() {
             return handle_http_error(
                 &state,
@@ -137,11 +133,7 @@ pub(super) async fn send_message(
             "remote MCP server accepted a request without a result",
         ));
     }
-    if response.status().is_redirection() {
-        return Err(RemoteHttpError::Message(
-            "remote MCP endpoint returned a redirect; configure its final endpoint",
-        ));
-    }
+    reject_redirect(&response)?;
     if !response.status().is_success() {
         return handle_http_error(
             &state,

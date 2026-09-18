@@ -65,6 +65,10 @@ pub fn initialize_result(request_id: Value) -> Value {
 
 pub fn respond_tools_list(fixture: &StreamableHttpFixture, session_id: &str) {
     let request = next_remote_post(fixture, "tools/list", Duration::from_secs(10));
+    respond_tools_list_request(request, session_id);
+}
+
+pub fn respond_tools_list_request(request: PendingRequest, session_id: &str) {
     assert_eq!(request.header("mcp-session-id"), Some(session_id));
     assert_eq!(request.header("mcp-protocol-version"), Some("2025-11-25"));
     let request_id = request.json()["id"].clone();
@@ -136,6 +140,27 @@ pub fn next_resume_get(
     }
 }
 
+pub fn assert_no_upstream_post(fixture: &StreamableHttpFixture, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    loop {
+        match fixture.next_request(deadline.saturating_duration_since(Instant::now())) {
+            Ok(request) if request.method == "GET" => {
+                assert_eq!(request.header("accept"), Some("text/event-stream"));
+                request.respond(405, None, Vec::new(), Vec::new());
+            }
+            Ok(request) if request.method == "POST" => {
+                panic!(
+                    "unexpected upstream POST during no-replay window: {}",
+                    request.json()["method"]
+                );
+            }
+            Ok(request) => panic!("unexpected upstream request {}", request.method),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return,
+            Err(error) => panic!("remote fixture stopped unexpectedly: {error}"),
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub fn sse_event(event_id: &str, retry_ms: Option<u64>, message: &Value) -> String {
     let mut event = format!("id: {event_id}\n");
@@ -175,6 +200,6 @@ pub fn finish_gateway(
     assert_eq!(delete.method, "DELETE");
     assert_eq!(delete.header("mcp-session-id"), Some(session_id));
     assert_eq!(delete.header("mcp-protocol-version"), Some("2025-11-25"));
-    delete.respond(405, None, Vec::new(), Vec::new());
+    delete.respond(200, None, Vec::new(), Vec::new());
     assert!(wait_for_exit(gateway, Duration::from_secs(5)).success());
 }

@@ -26,7 +26,12 @@ pub struct PendingRequest {
 struct HttpResponse {
     status: u16,
     headers: Vec<(String, String)>,
-    body: Vec<u8>,
+    body: ResponseBody,
+}
+
+enum ResponseBody {
+    Fixed(Vec<u8>),
+    Chunked(Vec<Vec<u8>>),
 }
 
 impl StreamableHttpFixture {
@@ -114,8 +119,30 @@ impl PendingRequest {
         let response = HttpResponse {
             status,
             headers,
-            body: body.into(),
+            body: ResponseBody::Fixed(body.into()),
         };
+        self.send_response(response);
+    }
+
+    pub fn respond_chunked(
+        mut self,
+        status: u16,
+        content_type: Option<&str>,
+        mut headers: Vec<(String, String)>,
+        chunks: Vec<Vec<u8>>,
+    ) {
+        if let Some(content_type) = content_type {
+            headers.push(("Content-Type".to_owned(), content_type.to_owned()));
+        }
+        let response = HttpResponse {
+            status,
+            headers,
+            body: ResponseBody::Chunked(chunks),
+        };
+        self.send_response(response);
+    }
+
+    fn send_response(&mut self, response: HttpResponse) {
         self.response
             .take()
             .expect("fixture response is available")
@@ -196,12 +223,31 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) {
         _ => "Fixture Response",
     };
     let mut headers = response.headers;
-    headers.push(("Content-Length".to_owned(), response.body.len().to_string()));
+    match &response.body {
+        ResponseBody::Fixed(body) => {
+            headers.push(("Content-Length".to_owned(), body.len().to_string()));
+        }
+        ResponseBody::Chunked(_) => {
+            headers.push(("Transfer-Encoding".to_owned(), "chunked".to_owned()));
+        }
+    }
     headers.push(("Connection".to_owned(), "close".to_owned()));
     let _ = write!(stream, "HTTP/1.1 {} {reason}\r\n", response.status);
     for (name, value) in headers {
         let _ = write!(stream, "{name}: {value}\r\n");
     }
     let _ = write!(stream, "\r\n");
-    let _ = stream.write_all(&response.body);
+    match response.body {
+        ResponseBody::Fixed(body) => {
+            let _ = stream.write_all(&body);
+        }
+        ResponseBody::Chunked(chunks) => {
+            for chunk in chunks {
+                let _ = write!(stream, "{:X}\r\n", chunk.len());
+                let _ = stream.write_all(&chunk);
+                let _ = stream.write_all(b"\r\n");
+            }
+            let _ = stream.write_all(b"0\r\n\r\n");
+        }
+    }
 }

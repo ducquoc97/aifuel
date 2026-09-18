@@ -206,11 +206,7 @@ pub(super) async fn handle_http_error(
     deadline: Instant,
 ) -> Result<(), RemoteHttpError> {
     let status = response.status();
-    if status.is_redirection() {
-        return Err(RemoteHttpError::Message(
-            "remote MCP endpoint returned a redirect; configure its final endpoint",
-        ));
-    }
+    reject_redirect(&response)?;
     if response_content_type(&response) == Some("application/json") {
         let body = read_bounded_body(state, &mut response, cancellation, deadline).await?;
         if let Some(message) = json_rpc_error(&body, request_id) {
@@ -369,6 +365,16 @@ pub(super) fn response_content_type(response: &Response) -> Option<&'static str>
     }
 }
 
+pub(super) fn reject_redirect(response: &Response) -> Result<(), RemoteHttpError> {
+    if response.status().is_redirection() {
+        Err(RemoteHttpError::Message(
+            "remote MCP endpoint returned a redirect; configure its final endpoint",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 pub(super) async fn require_accepted(
     state: &RemoteHttpState,
     response: Response,
@@ -386,11 +392,8 @@ pub(super) async fn require_accepted(
                 "remote MCP notification response must have an empty body",
             ))
         }
-    } else if response.status().is_redirection() {
-        Err(RemoteHttpError::Message(
-            "remote MCP endpoint returned a redirect; configure its final endpoint",
-        ))
     } else {
+        reject_redirect(&response)?;
         if !response.status().is_success() {
             return Err(RemoteHttpError::HttpStatus(response.status().as_u16()));
         }

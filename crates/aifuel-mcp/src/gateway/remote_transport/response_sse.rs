@@ -87,9 +87,7 @@ pub(super) async fn read_request_response(
                     {
                         Ok(response) if response.status().is_server_error() => {
                             retry_attempt += 1;
-                            let delay = retry_delay
-                                .take()
-                                .unwrap_or_else(|| backoff(retry_attempt - 1));
+                            let delay = retry_delay.unwrap_or_else(|| backoff(retry_attempt - 1));
                             wait_before_retry(
                                 &state,
                                 &cancellation,
@@ -105,9 +103,7 @@ pub(super) async fn read_request_response(
                         }
                         Err(error) => {
                             retry_attempt += 1;
-                            let delay = retry_delay
-                                .take()
-                                .unwrap_or_else(|| backoff(retry_attempt - 1));
+                            let delay = retry_delay.unwrap_or_else(|| backoff(retry_attempt - 1));
                             wait_before_retry(
                                 &state,
                                 &cancellation,
@@ -142,11 +138,7 @@ pub(super) async fn read_request_response(
                         "remote MCP server does not support SSE response resumption",
                     ));
                 }
-                if response.status().is_redirection() {
-                    return Err(RemoteHttpError::Message(
-                        "remote MCP endpoint returned a redirect; configure its final endpoint",
-                    ));
-                }
+                http::reject_redirect(&response)?;
                 if !response.status().is_success() {
                     return Err(RemoteHttpError::HttpStatus(response.status().as_u16()));
                 }
@@ -208,14 +200,14 @@ async fn run_common_event_stream(
                 continue;
             }
             Err(_) => {
-                retry_delay = None;
                 retry_attempt = retry_attempt.saturating_add(1);
+                let delay = retry_delay.unwrap_or_else(|| backoff(retry_attempt - 1));
                 wait_before_retry(
                     &state,
                     &cancellation,
                     recovery_deadline,
                     recovery_deadline,
-                    backoff(retry_attempt - 1),
+                    delay,
                 )
                 .await?;
                 continue;
@@ -237,19 +229,16 @@ async fn run_common_event_stream(
             event_ids = EventIdSet::new();
             continue;
         }
-        if response.status().is_redirection() {
-            return Err(RemoteHttpError::Message(
-                "remote MCP endpoint returned a redirect; configure its final endpoint",
-            ));
-        }
+        http::reject_redirect(&response)?;
         if !response.status().is_success() {
             retry_attempt = retry_attempt.saturating_add(1);
+            let delay = retry_delay.unwrap_or_else(|| backoff(retry_attempt - 1));
             wait_before_retry(
                 &state,
                 &cancellation,
                 recovery_deadline,
                 recovery_deadline,
-                backoff(retry_attempt - 1),
+                delay,
             )
             .await?;
             continue;
@@ -295,9 +284,7 @@ async fn run_common_event_stream(
             }
         }
         retry_attempt = retry_attempt.saturating_add(1);
-        let delay = retry_delay
-            .take()
-            .unwrap_or_else(|| backoff(retry_attempt - 1));
+        let delay = retry_delay.unwrap_or_else(|| backoff(retry_attempt - 1));
         wait_before_retry(
             &state,
             &cancellation,
