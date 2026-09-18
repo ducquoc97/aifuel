@@ -107,10 +107,21 @@ pub fn start_gateway(config_root: &Path) -> (Child, Receiver<String>) {
 }
 
 pub fn initialize_host(stdin: &mut impl Write, responses: &Receiver<String>) {
-    send_message(stdin, initialize_request(1));
+    initialize_host_with_protocol_version(stdin, responses, "2025-11-25");
+}
+
+pub fn initialize_host_with_protocol_version(
+    stdin: &mut impl Write,
+    responses: &Receiver<String>,
+    protocol_version: &str,
+) {
+    send_message(
+        stdin,
+        initialize_request_with_protocol_version(1, protocol_version),
+    );
     assert_eq!(
         response_with_id(responses, 1)["result"]["protocolVersion"],
-        "2025-11-25"
+        protocol_version
     );
     send_message(
         stdin,
@@ -119,12 +130,16 @@ pub fn initialize_host(stdin: &mut impl Write, responses: &Receiver<String>) {
 }
 
 pub fn initialize_request(id: u64) -> Value {
+    initialize_request_with_protocol_version(id, "2025-11-25")
+}
+
+pub fn initialize_request_with_protocol_version(id: u64, protocol_version: &str) -> Value {
     json!({
         "jsonrpc":"2.0",
         "id":id,
         "method":"initialize",
         "params":{
-            "protocolVersion":"2025-11-25",
+            "protocolVersion":protocol_version,
             "capabilities":{},
             "clientInfo":{"name":"fixture-host","version":"1"}
         }
