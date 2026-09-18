@@ -56,6 +56,9 @@ parsing and process behavior; they do not replace live provider acceptance.
 - Codex CLI 0.155.0 listed an `mcp_servers.aifuel-gateway` registration
   supplied with CLI `--config` overrides. This confirms config parsing only; it
   does not verify a live gateway handshake or tool call.
+- Two Codex CLI `exec` attempts with inline gateway configuration stopped before
+  a tool call. Codex tried to initialize another remote MCP server, received
+  an authentication challenge, and reported the local gateway tool unavailable.
 - The `rmcp` 1.6.0 dependency uses let-chain syntax, stabilized in Rust 1.88
   ([Rust 1.88 release notes](https://blog.rust-lang.org/2025/06/26/Rust-1.88.0/)).
   Rust 1.85.0 fails while compiling that dependency, so the workspace manifest,
