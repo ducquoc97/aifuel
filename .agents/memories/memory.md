@@ -24,3 +24,9 @@
 - A descendant-process cleanup test must prove the child reached its armed state, then wait past its marker deadline while the marker directory still exists. An immediate absent-marker assertion can pass even when the process survives.
 - Verify host-facing and upstream MCP version negotiation separately. Codex CLI 0.155.0 requests 2025-06-18, and a compatible Gateway must answer with that supported version instead of rejecting every version older than 2025-11-25.
 - When compatibility behavior changes, update the canonical Wayfinder decision and implementation acceptance criteria; merged code and acceptance docs do not revise a closed contract by themselves.
+
+## Agent Runs
+
+- Keep Agent Run execution independent from Provider Discovery, quota monitoring, and Agent MCP Registration. A user-selected provider runs only through its matching registered execution adapter; unsupported capability requests stay explicit.
+- The execution adapter owns any child process it starts. Cancellation must stop and reap the process, and completed results retain captured output without inventing provider session, account, or effective-model identity.
+- Verify the real `aifuel run` process with controlled provider executables and a temporary home. A credential file marker establishes local presence only; authenticated prompt acceptance requires a separate live result, recorded without changing saved user configuration.

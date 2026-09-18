@@ -1,7 +1,6 @@
 pub mod launcher;
 
-use aifuel_app::McpGatewayFacade;
-use aifuel_app::MonitoringFacade;
+use aifuel_app::{AgentRunFacade, McpGatewayFacade, MonitoringFacade};
 use aifuel_providers::{CollectionConfig, DiscoveryContext, ProviderMonitoring};
 use std::env;
 use std::fs;
@@ -13,6 +12,11 @@ pub fn monitoring_facade() -> Result<MonitoringFacade<ProviderMonitoring>, Strin
     let monitoring =
         ProviderMonitoring::new(context.home_dir(), CollectionConfig::from_environment())?;
     Ok(MonitoringFacade::new(monitoring))
+}
+
+/// Compose the shared Agent Run facade with the compiled provider adapters.
+pub fn agent_run_facade() -> AgentRunFacade<'static> {
+    AgentRunFacade::new(aifuel_providers::agent_run_adapters())
 }
 
 /// Load and resolve the central gateway catalog at the executable boundary.

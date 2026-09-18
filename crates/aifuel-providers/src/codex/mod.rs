@@ -6,6 +6,9 @@ use crate::usage_helpers::{
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow, ResetCredit, ResetCredits};
 use serde_json::Value;
 
+mod agent_run;
+pub(crate) use agent_run::ADAPTER as AGENT_RUN_ADAPTER;
+
 pub static DEFINITION: CatalogProvider =
     CatalogProvider::file_source(ProviderKey::Codex, ".codex/auth.json");
 

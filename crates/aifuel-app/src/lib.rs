@@ -4,7 +4,9 @@ use aifuel_core::{StatusCollector, StatusReport};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+mod execution;
 mod gateway;
+pub use execution::AgentRunFacade;
 pub use gateway::{
     GatewayConfigError, GatewayLimits, McpGatewayFacade, McpServerDefinition, NamedSecretHeader,
     SelectedMcpServer, ServerLimits, StdioServerDefinition, StreamableHttpServerDefinition,

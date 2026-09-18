@@ -82,3 +82,24 @@ parsing and process behavior; they do not replace live provider acceptance.
 The live host check used a separately compiled local fixture server rather than
 an installed third-party MCP server. Codex's user-level configuration remained
 unchanged.
+
+## Agent Runs through registered execution adapters
+
+- Workspace tests invoke the real `aifuel` process with controlled executables
+  for Claude Code, Codex CLI, GitHub Copilot CLI, and Gemini CLI. They cover
+  explicit provider selection, provider-specific model/access/output arguments,
+  unsupported capabilities, nonzero exits, captured output, timeouts,
+  continuation, stdin prompts, and working-directory behavior.
+- The public application facade passes cancellation to the selected adapter.
+  The provider process test confirms cancellation stops and reaps its child
+  process while retaining output produced before cancellation.
+- A live Gemini Agent Run was attempted on Linux x86_64 WSL2 with Gemini CLI
+  0.42.0 and explicit model `gemini-2.5-flash`. The prompt was “Reply with
+  exactly OK. Do not use tools.” The built `aifuel` binary ran with a private
+  temporary `HOME`, workspace, and temporary copy of the Gemini OAuth file;
+  the saved user configuration and `.env` files were not changed.
+- The live command returned exit code 4 after 23.2 seconds because provider
+  authentication was rejected. No successful authenticated Agent Run was
+  verified in this attempt. Fake-executable process tests do not replace that
+  live acceptance, and no provider account, effective model, or session
+  identity is inferred from the failed attempt.
