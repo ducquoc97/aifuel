@@ -253,4 +253,44 @@ mod tests {
         assert_eq!(state.pending_bytes, 0);
         assert!(!overflow.is_cancelled());
     }
+
+    #[tokio::test]
+    async fn equal_progress_tokens_from_different_servers_stay_separate() {
+        let overflow = CancellationToken::new();
+        let routes = ProgressRoutes::new(1024, overflow);
+        routes.begin_request("docs").await;
+        routes.begin_request("search").await;
+        let notification: ProgressNotificationParam = serde_json::from_value(json!({
+            "progressToken": "same-token",
+            "progress": 1,
+            "total": 1,
+            "message": "working"
+        }))
+        .expect("fixture progress notification should deserialize");
+
+        routes.forward("docs", notification.clone()).await;
+        routes.forward("search", notification).await;
+        {
+            let state = routes.state.lock().await;
+            assert_eq!(state.early.len(), 2);
+            assert!(state.early.keys().any(|(server_id, _)| server_id == "docs"));
+            assert!(
+                state
+                    .early
+                    .keys()
+                    .any(|(server_id, _)| server_id == "search")
+            );
+        }
+
+        routes.cancel_unbound_request("docs").await;
+        {
+            let state = routes.state.lock().await;
+            assert_eq!(state.early.len(), 1);
+            assert_eq!(state.early.keys().next().unwrap().0, "search");
+        }
+        routes.cancel_unbound_request("search").await;
+        let state = routes.state.lock().await;
+        assert!(state.early.is_empty());
+        assert_eq!(state.pending_bytes, 0);
+    }
 }
