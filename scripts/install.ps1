@@ -36,8 +36,9 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 }
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$Manifest = Join-Path $RepoRoot 'Cargo.toml'
 $TargetBinary = Join-Path $RepoRoot 'target\release\aifuel.exe'
-& cargo build --release --locked -p aifuel
+& cargo build --release --locked --manifest-path $Manifest -p aifuel
 if (-not (Test-Path $TargetBinary)) {
     Write-Error "Rust build did not produce $TargetBinary"
 }

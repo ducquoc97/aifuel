@@ -34,7 +34,7 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 1
 fi
 
-cargo build --release --locked -p aifuel
+cargo build --release --locked --manifest-path "$REPO_ROOT/Cargo.toml" -p aifuel
 if [ ! -x "$TARGET_BIN" ]; then
     echo "error: Rust build did not produce an executable at $TARGET_BIN" >&2
     exit 1
