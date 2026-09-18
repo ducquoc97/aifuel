@@ -83,7 +83,14 @@ fn local_gateway_lists_and_calls_a_selected_server_tool() {
     assert_eq!(tool["execution"]["taskSupport"], "forbidden");
     let start_details = fs::read_to_string(&server_start)
         .expect("server startup should record its process context");
-    assert!(start_details.contains(&format!("cwd={}", config_root.display())));
+    let actual_cwd = start_details
+        .lines()
+        .find_map(|line| line.strip_prefix("cwd="))
+        .expect("server startup should record its current directory");
+    assert_eq!(
+        fs::canonicalize(actual_cwd).expect("server current directory should resolve"),
+        fs::canonicalize(&config_root).expect("configured home directory should resolve")
+    );
     assert!(start_details.contains("args=[\"literal argument\"]"));
     assert!(start_details.contains("path_present=true"));
     assert!(start_details.contains("unlisted_secret_present=false"));
