@@ -11,4 +11,5 @@ chrono.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
+toml_edit = "0.25.15"
 tokio.workspace = true

@@ -2,6 +2,9 @@ use super::{CatalogProvider, MonitoringFuture, ProviderMonitoring};
 use crate::usage_helpers::project_from_environment;
 use aifuel_core::{ProviderKey, ProviderUsage};
 
+mod agent_run;
+pub(crate) use agent_run::ADAPTER as AGENT_RUN_ADAPTER;
+
 pub static DEFINITION: CatalogProvider =
     CatalogProvider::file_source(ProviderKey::Gemini, ".gemini/oauth_creds.json");
 

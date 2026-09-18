@@ -4,7 +4,14 @@ use aifuel_core::{StatusCollector, StatusReport};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+mod agent_mcp_setup;
+mod execution;
 mod gateway;
+pub use agent_mcp_setup::{
+    AgentMcpSetupAction, AgentMcpSetupError, AgentMcpSetupFacade, AgentMcpSetupOptions,
+    AgentMcpSetupResult,
+};
+pub use execution::AgentRunFacade;
 pub use gateway::{
     GatewayConfigError, GatewayLimits, McpGatewayFacade, McpServerDefinition, NamedSecretHeader,
     SelectedMcpServer, ServerLimits, StdioServerDefinition, StreamableHttpServerDefinition,

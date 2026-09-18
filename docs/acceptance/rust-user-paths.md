@@ -74,20 +74,18 @@ parsing and process behavior; they do not replace live provider acceptance.
   temporary AI Fuel catalog and did not change Codex configuration.
 - On 2026-09-18, Codex App Server 0.155.0 on Linux 6.6.87.2 WSL2 (x86_64,
   Ubuntu 24.4.0 user agent) loaded the gateway from a fresh temporary
-  `CODEX_HOME` at `/tmp/aifuel-issue30-codex-home.IwAF0z` and an isolated
-  `XDG_CONFIG_HOME` at `/tmp/aifuel-issue30-xdg-home.XFCaSQ`. Its temporary
-  `config.toml` registered the built branch binary:
+  `CODEX_HOME` and an isolated `XDG_CONFIG_HOME`, both created under the
+  system temporary directory. Its temporary `config.toml` registered the
+  built branch binary (path redacted here):
 
   ```toml
   [mcp_servers.aifuel-gateway]
-  command = "/home/willnguyen/Developer/aifuel-issue-30/target/debug/aifuel"
+  command = "<absolute path to built branch binary>"
   args = ["mcp", "gateway", "--agent", "codex"]
   env_vars = ["XDG_CONFIG_HOME"]
   ```
 
-  The temporary catalog at
-  `/tmp/aifuel-issue30-xdg-home.XFCaSQ/aifuel/mcp.json` selected public
-  DeepWiki:
+  The catalog at `$XDG_CONFIG_HOME/aifuel/mcp.json` selected public DeepWiki:
 
   ```json
   {
@@ -110,7 +108,7 @@ parsing and process behavior; they do not replace live provider acceptance.
   `mcpServerStatus/list` with `detail: toolsAndAuthOnly` reported gateway
   serverInfo `aifuel-gateway` version `0.1.0`, three tools, and
   `authStatus: unsupported`. After `thread/start` created ephemeral thread
-  `01a0b53b-1aed-7a33-9a6d-a52ea9e841f2`, a direct
+  (App Server requires an ephemeral thread ID for its direct tool-call API), a
   `mcpServer/tool/call` for `deepwiki__read_5Fwiki_5Fstructure` with
   `repoName: modelcontextprotocol/rust-sdk` succeeded without a model turn. The
   exact tool result text was:
@@ -180,6 +178,37 @@ parsing and process behavior; they do not replace live provider acceptance.
   the call. The run used `--disable plugins` to isolate the local host path and
   did not change the saved Codex configuration. Codex also logged a non-fatal
   model-catalog refresh timeout, but exited successfully after the tool call.
+- Agent MCP Registration acceptance on 2026-09-18 used Codex CLI 0.155.0 on
+  Linux x86_64 WSL2, with a temporary `CODEX_HOME`, temporary `HOME`, and
+  temporary `XDG_CONFIG_HOME`. The public `aifuel mcp setup --agent codex`
+  command wrote `[mcp_servers.aifuel-gateway]` with the built `aifuel` command,
+  `mcp gateway --agent codex` arguments, and Codex's documented
+  `env_vars = ["XDG_CONFIG_HOME"]` forwarding rule. Codex App Server loaded the
+  registration, listed `fixture__echo`, and its `mcpServer/tool/call` request
+  with `message = "codex-gateway-smoke"` returned `fixture-result`; the local
+  fixture log recorded that call. The temporary setup wrote no provider
+  credentials or upstream server definitions into Codex config.
+- Claude Code 2.1.223 on Linux x86_64 WSL2 loaded the registration written by
+  the public `aifuel mcp setup --agent claude` command in a temporary
+  `~/.claude.json`. `claude mcp list` reported the Gateway as connected. A
+  non-interactive Claude Code session then called
+  `mcp__aifuel-gateway__fixture__echo` through that registration with
+  `message = "claude-gateway-smoke"`; the local fixture recorded the
+  `tools/call` request and returned `fixture-result`. The CLI used a local
+  deterministic Anthropic Messages API stub to request the MCP tool, so this
+  verifies Claude's registration load, MCP handshake, Gateway routing, and
+  tool result handling without claiming a live Anthropic model or account
+  acceptance. Temporary `HOME`, `XDG_CONFIG_HOME`, Gateway catalog, and fixture
+  files were used; saved Claude configuration and credentials were not changed.
+  Claude's user-scope MCP entry follows the
+  [official MCP configuration documentation](https://code.claude.com/docs/en/mcp).
+- A separate model-driven `codex exec --json` check did not call the fixture.
+  Without authentication in the temporary Codex home, it exited with HTTP 401.
+  A temporary copy of the existing auth file allowed a model turn, but the
+  headless run reported the fixture tool unavailable and logged an OAuth
+  requirement for the hosted Cloudflare MCP service; no fixture process started.
+  The direct App Server MCP call above verifies the registration and tool path
+  independently of model authentication.
 - The `rmcp` 1.6.0 dependency uses let-chain syntax, stabilized in Rust 1.88
   ([Rust 1.88 release notes](https://blog.rust-lang.org/2025/06/26/Rust-1.88.0/)).
   Rust 1.85.0 fails while compiling that dependency, so the workspace manifest,
@@ -202,3 +231,24 @@ parsing and process behavior; they do not replace live provider acceptance.
 The earlier Codex CLI host check used a separately compiled local fixture
 server. The App Server follow-up above used public DeepWiki. Both checks used
 temporary Codex homes and left the saved Codex configuration unchanged.
+
+## Agent Runs through registered execution adapters
+
+- Workspace tests invoke the real `aifuel` process with controlled executables
+  for Claude Code, Codex CLI, GitHub Copilot CLI, and Gemini CLI. They cover
+  explicit provider selection, provider-specific model/access/output arguments,
+  unsupported capabilities, nonzero exits, captured output, timeouts,
+  continuation, stdin prompts, and working-directory behavior.
+- The public application facade passes cancellation to the selected adapter.
+  The provider process test confirms cancellation stops and reaps its child
+  process while retaining output produced before cancellation.
+- A live Gemini Agent Run was attempted on Linux x86_64 WSL2 with Gemini CLI
+  0.42.0 and explicit model `gemini-2.5-flash`. The prompt was “Reply with
+  exactly OK. Do not use tools.” The built `aifuel` binary ran with a private
+  temporary `HOME`, workspace, and temporary copy of the Gemini OAuth file;
+  the saved user configuration and `.env` files were not changed.
+- The live command returned exit code 4 after 23.2 seconds because provider
+  authentication was rejected. No successful authenticated Agent Run was
+  verified in this attempt. Fake-executable process tests do not replace that
+  live acceptance, and no provider account, effective model, or session
+  identity is inferred from the failed attempt.
