@@ -45,6 +45,8 @@ where
 {
     if request.get("method").and_then(Value::as_str) == Some("tools/call")
         && request["params"]["name"].as_str() == Some("get_status")
+        && request.get("id").is_some()
+        && valid_status_arguments(&request["params"]["arguments"])
     {
         let refresh = request["params"]["arguments"]["refresh"]
             .as_bool()
@@ -242,7 +244,7 @@ fn matches_scope(value: &Value, provider_id: Option<&str>, account_id: Option<&s
 
 fn valid_status_arguments(arguments: &Value) -> bool {
     let Some(arguments) = arguments.as_object() else {
-        return true;
+        return arguments.is_null();
     };
     arguments
         .keys()
