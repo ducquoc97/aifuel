@@ -59,8 +59,12 @@ parsing and process behavior; they do not replace live provider acceptance.
   finite and shared streams, session-specific 404 reinitialization for GET and
   tool POST without replay followed by an explicit fresh-session call, chunked
   SSE parsing and oversized SSE event rejection, response-size limits,
-  malformed JSON, redirect rejection, non-loopback plain HTTP rejection, and
-  successful DELETE shutdown.
+  malformed JSON, redirect rejection during reinitialization without following
+  its target, non-loopback plain HTTP rejection, and successful DELETE
+  shutdown. A live shared GET stream is also tested across a tool-POST 404; its
+  replacement GET must use the fresh session and omit the old event ID. Tool
+  results with `isError: true` remain CallToolResults, while upstream
+  JSON-RPC errors remain protocol errors.
 - On 2026-09-18 in Linux 6.6.87.2 WSL2 (x86_64), a direct stdio run of the real
   `aifuel mcp gateway --agent codex` binary connected to
   `https://mcp.deepwiki.com/mcp`, negotiated MCP 2025-11-25, and listed
@@ -165,7 +169,7 @@ parsing and process behavior; they do not replace live provider acceptance.
   Unauthorized` because its fresh home had no credentials; no model turn was
   sent, and the MCP status/list and direct tool call succeeded. No saved Codex
   config or credentials were read or modified.
-- On rustc 1.97.1, `cargo test --workspace --locked` passed 68 tests across 25
+- On rustc 1.97.1, `cargo test --workspace --locked` passed 113 tests across 28
   suites, and `cargo clippy --workspace --all-targets --locked -- -D warnings`
   completed without issues.
 - A terminal smoke of the built `aifuel mcp gateway --agent codex` binary with

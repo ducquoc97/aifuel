@@ -124,9 +124,7 @@ pub(super) async fn read_request_response(
                         if allow_reinitializing {
                             return Err(RemoteHttpError::SessionExpired);
                         }
-                        state
-                            .session_expired
-                            .store(true, std::sync::atomic::Ordering::Release);
+                        state.mark_session_expired();
                         http::cancel_pending_except(&state, Some(&request_id)).await;
                         http::recover_session(&state, deadline).await?;
                         return Err(RemoteHttpError::SessionExpired);
@@ -176,72 +174,108 @@ async fn run_common_event_stream(
     let mut retry_attempt: usize = 0;
     let mut recovery_deadline = Instant::now() + RECOVERY_WINDOW;
     let mut event_ids = EventIdSet::new();
+    let mut session_generation = state.session_generation.subscribe();
 
-    loop {
-        let response = match http::open_event_stream(
-            &state,
-            last_event_id.as_deref(),
-            &cancellation,
-            None,
-            false,
-        )
-        .await
-        {
+    'session: loop {
+        let response = tokio::select! {
+            biased;
+            changed = session_generation.changed() => {
+                if changed.is_err() {
+                    return Ok(());
+                }
+                reset_shared_stream_state(
+                    &mut last_event_id,
+                    &mut retry_delay,
+                    &mut retry_attempt,
+                    &mut recovery_deadline,
+                    &mut event_ids,
+                );
+                continue 'session;
+            }
+            response = http::open_event_stream(
+                &state,
+                last_event_id.as_deref(),
+                &cancellation,
+                None,
+                false,
+            ) => response,
+        };
+        let response = match response {
             Ok(response) => response,
             Err(RemoteHttpError::Cancelled | RemoteHttpError::Closed) => return Ok(()),
             Err(RemoteHttpError::SessionExpired) => {
                 http::cancel_pending_except(&state, None).await;
                 http::recover_session(&state, recovery_deadline).await?;
-                last_event_id = None;
-                retry_delay = None;
-                retry_attempt = 0;
-                recovery_deadline = Instant::now() + RECOVERY_WINDOW;
-                event_ids = EventIdSet::new();
-                continue;
+                reset_shared_stream_state(
+                    &mut last_event_id,
+                    &mut retry_delay,
+                    &mut retry_attempt,
+                    &mut recovery_deadline,
+                    &mut event_ids,
+                );
+                continue 'session;
             }
             Err(_) => {
                 retry_attempt = retry_attempt.saturating_add(1);
                 let delay = retry_delay.unwrap_or_else(|| backoff(retry_attempt - 1));
-                wait_before_retry(
+                if !wait_before_common_retry(
                     &state,
                     &cancellation,
-                    recovery_deadline,
+                    &mut session_generation,
                     recovery_deadline,
                     delay,
                 )
-                .await?;
-                continue;
+                .await?
+                {
+                    reset_shared_stream_state(
+                        &mut last_event_id,
+                        &mut retry_delay,
+                        &mut retry_attempt,
+                        &mut recovery_deadline,
+                        &mut event_ids,
+                    );
+                }
+                continue 'session;
             }
         };
         if response.status() == StatusCode::METHOD_NOT_ALLOWED {
             return Ok(());
         }
         if response.status() == StatusCode::NOT_FOUND && state.session_id.lock().await.is_some() {
-            state
-                .session_expired
-                .store(true, std::sync::atomic::Ordering::Release);
+            state.mark_session_expired();
             http::cancel_pending_except(&state, None).await;
             http::recover_session(&state, recovery_deadline).await?;
-            last_event_id = None;
-            retry_delay = None;
-            retry_attempt = 0;
-            recovery_deadline = Instant::now() + RECOVERY_WINDOW;
-            event_ids = EventIdSet::new();
-            continue;
+            reset_shared_stream_state(
+                &mut last_event_id,
+                &mut retry_delay,
+                &mut retry_attempt,
+                &mut recovery_deadline,
+                &mut event_ids,
+            );
+            continue 'session;
         }
         http::reject_redirect(&response)?;
         if !response.status().is_success() {
             retry_attempt = retry_attempt.saturating_add(1);
             let delay = retry_delay.unwrap_or_else(|| backoff(retry_attempt - 1));
-            wait_before_retry(
+            if !wait_before_common_retry(
                 &state,
                 &cancellation,
-                recovery_deadline,
+                &mut session_generation,
                 recovery_deadline,
                 delay,
             )
-            .await?;
-            continue;
+            .await?
+            {
+                reset_shared_stream_state(
+                    &mut last_event_id,
+                    &mut retry_delay,
+                    &mut retry_attempt,
+                    &mut recovery_deadline,
+                    &mut event_ids,
+                );
+            }
+            continue 'session;
         }
         if http::response_content_type(&response) != Some("text/event-stream") {
             return Err(RemoteHttpError::Message(
@@ -251,7 +285,24 @@ async fn run_common_event_stream(
 
         let mut reader = SseReader::new(response, state.limits.max_message_bytes);
         loop {
-            match next_common_event(&state, &mut reader, &cancellation).await {
+            let next_event = tokio::select! {
+                biased;
+                changed = session_generation.changed() => {
+                    if changed.is_err() {
+                        return Ok(());
+                    }
+                    reset_shared_stream_state(
+                        &mut last_event_id,
+                        &mut retry_delay,
+                        &mut retry_attempt,
+                        &mut recovery_deadline,
+                        &mut event_ids,
+                    );
+                    continue 'session;
+                }
+                event = next_common_event(&state, &mut reader, &cancellation) => event,
+            };
+            match next_event {
                 Ok(Some(event)) => {
                     if let Some(retry) = event.retry {
                         retry_delay = Some(retry);
@@ -285,14 +336,63 @@ async fn run_common_event_stream(
         }
         retry_attempt = retry_attempt.saturating_add(1);
         let delay = retry_delay.unwrap_or_else(|| backoff(retry_attempt - 1));
-        wait_before_retry(
+        if !wait_before_common_retry(
             &state,
             &cancellation,
-            recovery_deadline,
+            &mut session_generation,
             recovery_deadline,
             delay,
         )
-        .await?;
+        .await?
+        {
+            reset_shared_stream_state(
+                &mut last_event_id,
+                &mut retry_delay,
+                &mut retry_attempt,
+                &mut recovery_deadline,
+                &mut event_ids,
+            );
+        }
+    }
+}
+
+fn reset_shared_stream_state(
+    last_event_id: &mut Option<String>,
+    retry_delay: &mut Option<Duration>,
+    retry_attempt: &mut usize,
+    recovery_deadline: &mut Instant,
+    event_ids: &mut EventIdSet,
+) {
+    *last_event_id = None;
+    *retry_delay = None;
+    *retry_attempt = 0;
+    *recovery_deadline = Instant::now() + RECOVERY_WINDOW;
+    *event_ids = EventIdSet::new();
+}
+
+async fn wait_before_common_retry(
+    state: &RemoteHttpState,
+    cancellation: &CancellationToken,
+    session_generation: &mut tokio::sync::watch::Receiver<u64>,
+    recovery_deadline: Instant,
+    delay: Duration,
+) -> Result<bool, RemoteHttpError> {
+    tokio::select! {
+        biased;
+        changed = session_generation.changed() => {
+            changed.map_err(|_| RemoteHttpError::Closed)?;
+            Ok(false)
+        }
+        result = wait_before_retry(
+            state,
+            cancellation,
+            recovery_deadline,
+            recovery_deadline,
+            delay,
+        ) => {
+            result?;
+            Ok(true)
+        }
     }
 }
 

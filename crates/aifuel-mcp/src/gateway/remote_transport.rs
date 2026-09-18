@@ -10,7 +10,7 @@ use std::future::Future;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use tokio::sync::{Mutex, Notify, RwLock, mpsc};
+use tokio::sync::{Mutex, Notify, RwLock, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 mod http;
@@ -68,11 +68,25 @@ pub(super) struct RemoteHttpState {
     pub(super) initialized: AtomicBool,
     pub(super) ready: Notify,
     pub(super) session_expired: AtomicBool,
+    pub(super) session_generation: watch::Sender<u64>,
     pub(super) session_gate: RwLock<()>,
     pub(super) reinitialize: Mutex<()>,
     pub(super) next_initialize_id: AtomicU64,
     pub(super) event_listener_started: AtomicBool,
     pub(super) delete_started: AtomicBool,
+}
+
+impl RemoteHttpState {
+    pub(super) fn mark_session_expired(&self) {
+        if !self
+            .session_expired
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.session_generation.send_modify(|generation| {
+                *generation = generation.wrapping_add(1);
+            });
+        }
+    }
 }
 
 impl RemoteHttpTransport {
@@ -82,6 +96,7 @@ impl RemoteHttpTransport {
         limits: ServerLimits,
     ) -> (Self, RemoteSession) {
         let (response_tx, response_rx) = mpsc::channel(1);
+        let (session_generation, _) = watch::channel(0);
         let state = Arc::new(RemoteHttpState {
             server_id,
             endpoint: endpoint.url,
@@ -97,6 +112,7 @@ impl RemoteHttpTransport {
             initialized: AtomicBool::new(false),
             ready: Notify::new(),
             session_expired: AtomicBool::new(false),
+            session_generation,
             session_gate: RwLock::new(()),
             reinitialize: Mutex::new(()),
             next_initialize_id: AtomicU64::new(1),

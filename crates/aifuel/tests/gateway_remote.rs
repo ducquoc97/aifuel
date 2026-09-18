@@ -75,6 +75,80 @@ fn remote_gateway_negotiates_2025_and_calls_a_selected_server_tool() {
 }
 
 #[test]
+fn remote_tool_result_errors_remain_distinct_from_jsonrpc_errors() {
+    let temporary = TestDirectory::new("mcp-gateway-remote-tool-errors");
+    let fixture = StreamableHttpFixture::start();
+    let config_root = temporary.path().join("config");
+    write_remote_catalog(&config_root, &fixture.url(), json!({}));
+    let (mut gateway, responses) = start_gateway(&config_root);
+    let mut stdin = gateway.stdin.take().expect("gateway stdin should be piped");
+    initialize_host(&mut stdin, &responses);
+    send_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    );
+    initialize_remote(&fixture, "tool-error-session");
+    respond_tools_list(&fixture, "tool-error-session");
+    let listed = response_with_id(&responses, 2);
+    assert_eq!(listed["result"]["tools"][0]["name"], "docs__echo");
+
+    send_message(
+        &mut stdin,
+        json!({
+            "jsonrpc":"2.0",
+            "id":3,
+            "method":"tools/call",
+            "params":{"name":"docs__echo","arguments":{"message":"tool error"}}
+        }),
+    );
+    let tool_call = next_remote_post(&fixture, "tools/call", Duration::from_secs(5));
+    let upstream_id = tool_call.json()["id"].clone();
+    tool_call.respond_json(
+        200,
+        Vec::new(),
+        json!({
+            "jsonrpc":"2.0",
+            "id":upstream_id,
+            "result":{"content":[{"type":"text","text":"upstream tool error"}],"isError":true}
+        }),
+    );
+    let tool_error = response_with_id(&responses, 3);
+    assert!(tool_error["error"].is_null());
+    assert_eq!(tool_error["result"]["isError"], true);
+    assert_eq!(
+        tool_error["result"]["content"][0]["text"],
+        "upstream tool error"
+    );
+
+    send_message(
+        &mut stdin,
+        json!({
+            "jsonrpc":"2.0",
+            "id":4,
+            "method":"tools/call",
+            "params":{"name":"docs__echo","arguments":{"message":"protocol error"}}
+        }),
+    );
+    let protocol_error = next_remote_post(&fixture, "tools/call", Duration::from_secs(5));
+    let upstream_id = protocol_error.json()["id"].clone();
+    protocol_error.respond_json(
+        200,
+        Vec::new(),
+        json!({
+            "jsonrpc":"2.0",
+            "id":upstream_id,
+            "error":{"code":-32602,"message":"upstream JSON-RPC error"}
+        }),
+    );
+    let jsonrpc_error = response_with_id(&responses, 4);
+    assert!(jsonrpc_error["result"].is_null());
+    assert_eq!(jsonrpc_error["error"]["code"], -32602);
+    assert_eq!(jsonrpc_error["error"]["message"], "upstream JSON-RPC error");
+
+    finish_gateway(&mut gateway, stdin, &fixture, "tool-error-session");
+}
+
+#[test]
 fn remote_sse_response_resumes_with_get_and_deduplicates_redelivery() {
     let temporary = TestDirectory::new("mcp-gateway-remote-sse");
     let fixture = StreamableHttpFixture::start();

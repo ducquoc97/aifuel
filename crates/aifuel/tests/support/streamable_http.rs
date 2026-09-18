@@ -23,6 +23,18 @@ pub struct PendingRequest {
     response: Option<SyncSender<HttpResponse>>,
 }
 
+#[allow(dead_code)]
+pub struct StreamingResponse {
+    chunks: SyncSender<Vec<u8>>,
+}
+
+#[allow(dead_code)]
+impl StreamingResponse {
+    pub fn send_chunk(&self, chunk: Vec<u8>) -> Result<(), mpsc::SendError<Vec<u8>>> {
+        self.chunks.send(chunk)
+    }
+}
+
 struct HttpResponse {
     status: u16,
     headers: Vec<(String, String)>,
@@ -32,6 +44,8 @@ struct HttpResponse {
 enum ResponseBody {
     Fixed(Vec<u8>),
     Chunked(Vec<Vec<u8>>),
+    #[allow(dead_code)]
+    Streaming(Receiver<Vec<u8>>),
 }
 
 impl StreamableHttpFixture {
@@ -142,6 +156,26 @@ impl PendingRequest {
         self.send_response(response);
     }
 
+    #[allow(dead_code)]
+    pub fn respond_streaming(
+        mut self,
+        status: u16,
+        content_type: Option<&str>,
+        mut headers: Vec<(String, String)>,
+    ) -> StreamingResponse {
+        if let Some(content_type) = content_type {
+            headers.push(("Content-Type".to_owned(), content_type.to_owned()));
+        }
+        let (chunks, receiver) = mpsc::sync_channel(1);
+        let response = HttpResponse {
+            status,
+            headers,
+            body: ResponseBody::Streaming(receiver),
+        };
+        self.send_response(response);
+        StreamingResponse { chunks }
+    }
+
     fn send_response(&mut self, response: HttpResponse) {
         self.response
             .take()
@@ -230,6 +264,9 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) {
         ResponseBody::Chunked(_) => {
             headers.push(("Transfer-Encoding".to_owned(), "chunked".to_owned()));
         }
+        ResponseBody::Streaming(_) => {
+            headers.push(("Transfer-Encoding".to_owned(), "chunked".to_owned()));
+        }
     }
     headers.push(("Connection".to_owned(), "close".to_owned()));
     let _ = write!(stream, "HTTP/1.1 {} {reason}\r\n", response.status);
@@ -246,6 +283,18 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) {
                 let _ = write!(stream, "{:X}\r\n", chunk.len());
                 let _ = stream.write_all(&chunk);
                 let _ = stream.write_all(b"\r\n");
+            }
+            let _ = stream.write_all(b"0\r\n\r\n");
+        }
+        ResponseBody::Streaming(chunks) => {
+            while let Ok(chunk) = chunks.recv() {
+                let _ = write!(stream, "{:X}\r\n", chunk.len());
+                if stream.write_all(&chunk).is_err()
+                    || stream.write_all(b"\r\n").is_err()
+                    || stream.flush().is_err()
+                {
+                    return;
+                }
             }
             let _ = stream.write_all(b"0\r\n\r\n");
         }

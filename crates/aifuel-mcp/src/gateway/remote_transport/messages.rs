@@ -109,7 +109,7 @@ pub(super) async fn cancel_upstream_request(
     )
     .await?;
     if response.status() == StatusCode::NOT_FOUND {
-        state.session_expired.store(true, Ordering::Release);
+        state.mark_session_expired();
         drop(session_guard);
         cancel_pending_except(state, Some(request_id)).await;
         http::recover_session(state, deadline).await?;
@@ -421,5 +421,13 @@ pub(super) async fn shutdown_remote(state: &Arc<RemoteHttpState>) {
         .header("MCP-Protocol-Version", PROTOCOL_VERSION)
         .header("MCP-Session-Id", session_id)
         .timeout(timeout);
-    let _ = tokio::time::timeout(timeout, request.send()).await;
+    if let Ok(Ok(response)) = tokio::time::timeout(timeout, request.send()).await
+        && let Err(error) = reject_redirect(&response)
+    {
+        eprintln!(
+            "aifuel: remote MCP server {}: {}",
+            state.server_id,
+            error.message()
+        );
+    }
 }

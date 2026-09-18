@@ -80,7 +80,7 @@ pub(super) async fn send_message(
         )
         .await?;
         if response.status() == StatusCode::NOT_FOUND && session_id.is_some() {
-            state.session_expired.store(true, Ordering::Release);
+            state.mark_session_expired();
             recover_session(&state, deadline).await?;
             return Ok(());
         }
@@ -115,7 +115,7 @@ pub(super) async fn send_message(
         )
         .await?;
         if response.status() == StatusCode::NOT_FOUND && session_id.is_some() {
-            state.session_expired.store(true, Ordering::Release);
+            state.mark_session_expired();
             drop(session_guard);
             cancel_pending_except(&state, request_id.as_ref()).await;
             recover_session(&state, deadline).await?;
@@ -349,6 +349,7 @@ pub(super) async fn recover_session(
             reinit_deadline,
         )
         .await?;
+        reject_redirect(&response)?;
         if !response.status().is_success() || response.status() == StatusCode::ACCEPTED {
             return Err(RemoteHttpError::Message(
                 "remote MCP session reinitialization failed",
@@ -381,6 +382,7 @@ pub(super) async fn recover_session(
             reinit_deadline,
         )
         .await?;
+        reject_redirect(&response)?;
         if response.status() != StatusCode::ACCEPTED {
             return Err(RemoteHttpError::Message(
                 "remote MCP server rejected session initialization",
@@ -398,7 +400,7 @@ pub(super) async fn recover_session(
             Ok(())
         }
         Err(error) => {
-            state.session_expired.store(true, Ordering::Release);
+            state.mark_session_expired();
             state.ready.notify_waiters();
             Err(error)
         }
