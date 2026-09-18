@@ -70,6 +70,21 @@ pub fn run_setup(root: &Path, args: &[&str]) -> Output {
     run_setup_with_codex_home(root, args, codex_home)
 }
 
+#[allow(dead_code)]
+pub fn run_setup_with_copilot_home(
+    root: &Path,
+    args: &[&str],
+    copilot_home: Option<&Path>,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aifuel"));
+    command.args(args).env_remove("COPILOT_HOME");
+    if let Some(copilot_home) = copilot_home {
+        command.env("COPILOT_HOME", copilot_home);
+    }
+    configure_user_config_root(&mut command, root);
+    command.output().expect("aifuel setup command should start")
+}
+
 fn run_setup_with_codex_home(root: &Path, args: &[&str], codex_home: Option<PathBuf>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aifuel"));
     command.args(args);
