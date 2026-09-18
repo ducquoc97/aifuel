@@ -46,7 +46,7 @@ fn user_home_dir() -> Result<PathBuf, String> {
 fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
-        return env::var_os("APPDATA")
+        env::var_os("APPDATA")
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
             .ok_or_else(|| {
@@ -55,7 +55,7 @@ fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
     }
     #[cfg(target_os = "macos")]
     {
-        return Ok(user_home.join("Library").join("Application Support"));
+        Ok(user_home.join("Library").join("Application Support"))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
