@@ -17,3 +17,9 @@
 - Let each provider definition own its provider-specific source markers. A present marker initializes an identity-only adapter without validating its contents.
 - Recompute discovery for each collection. Initialize only present providers; report inspection failures separately with safe, path-free diagnostics.
 - Keep the static provider catalog separate from the discovered set. Preserve empty discovery as a successful empty result and keep provider-owned authentication boundaries explicit.
+
+## MCP Gateway
+
+- Before adopting an MCP SDK transport, check its default framing, shutdown, process-tree, and feature-selected MSRV behavior against the approved contract. An available limit or process wrapper does not mean the default transport uses it.
+- A descendant-process cleanup test must prove the child reached its armed state, then wait past its marker deadline while the marker directory still exists. An immediate absent-marker assertion can pass even when the process survives.
+- Verify host-facing and upstream MCP version negotiation separately. Codex CLI 0.155.0 requests 2025-06-18, and a compatible Gateway must answer with that supported version instead of rejecting every version older than 2025-11-25.

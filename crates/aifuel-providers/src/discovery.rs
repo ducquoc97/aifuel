@@ -28,14 +28,16 @@ impl DiscoveryContext {
     /// Resolve the platform home directory for the executable boundary.
     pub fn from_environment() -> Result<Self, DiscoveryContextError> {
         #[cfg(windows)]
-        let home = env::var_os("USERPROFILE").or_else(|| {
-            let drive = env::var_os("HOMEDRIVE")?;
-            let path = env::var_os("HOMEPATH")?;
-            Some(PathBuf::from(drive).join(path))
-        });
+        let home = env::var_os("AIFUEL_HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
+            .or_else(|| {
+                let drive = env::var_os("HOMEDRIVE")?;
+                let path = env::var_os("HOMEPATH")?;
+                Some(PathBuf::from(drive).join(path).into())
+            });
 
         #[cfg(not(windows))]
-        let home = env::var_os("HOME");
+        let home = env::var_os("AIFUEL_HOME").or_else(|| env::var_os("HOME"));
 
         home.map(Self::new)
             .ok_or(DiscoveryContextError::HomeDirectoryUnavailable)
