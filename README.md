@@ -160,12 +160,14 @@ Add this registration to `~/.codex/config.toml`:
 [mcp_servers.aifuel-gateway]
 command = "aifuel"
 args = ["mcp", "gateway", "--agent", "codex"]
+env_vars = ["XDG_CONFIG_HOME"]
 ```
 
-Restart Codex after saving the registration. The current gateway supports MCP
-2025-11-25 tools over local stdio. It does not route resources or prompts,
-remote Streamable HTTP, or task-based tool calls. The existing `aifuel mcp`
-read-only status server remains separate.
+Restart Codex after saving the registration. The gateway negotiates MCP
+2025-06-18 and 2025-11-25 with hosts, including Codex CLI 0.155.0. Its current
+upstream client requires MCP 2025-11-25 from the selected local server. It does
+not route resources or prompts, remote Streamable HTTP, or task-based tool
+calls. The existing `aifuel mcp` read-only status server remains separate.
 
 ## What it tracks
 

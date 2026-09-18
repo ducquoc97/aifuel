@@ -47,18 +47,20 @@ parsing and process behavior; they do not replace live provider acceptance.
   Clippy passed on Rust 1.97.1. The gateway tests
   launch the real `aifuel mcp gateway --agent codex` binary and a separately
   compiled local MCP server fixture.
-- The gateway/server process tests cover exact MCP 2025-11-25 negotiation,
-  local tool listing and calls, errors, deadlines, cancellation, bounded output,
-  and cleanup of the gateway-owned process tree.
+- The gateway/server process tests cover host negotiation for MCP 2025-06-18 and
+  2025-11-25, counteroffers for unsupported host versions, local tool listing
+  and calls, errors, deadlines, cancellation, bounded output, and cleanup of the
+  gateway-owned process tree. The upstream fixture negotiates 2025-11-25.
 - A terminal smoke of the built `aifuel mcp gateway --agent codex` binary with
   the local fixture returned protocol 2025-11-25, listed `local__echo`, and
   returned the fixture tool result.
-- Codex CLI 0.155.0 listed an `mcp_servers.aifuel-gateway` registration
-  supplied with CLI `--config` overrides. This confirms config parsing only; it
-  does not verify a live gateway handshake or tool call.
-- Two Codex CLI `exec` attempts with inline gateway configuration stopped before
-  a tool call. Codex tried to initialize another remote MCP server, received
-  an authentication challenge, and reported the local gateway tool unavailable.
+- Codex CLI 0.155.0 completed a live call through a temporary
+  `mcp_servers.aifuel-gateway` registration and temporary Codex home. It
+  negotiated MCP 2025-06-18, called `fixture__echo` with
+  `codex-gateway-smoke`, and returned `fixture-result`; the fixture log recorded
+  the call. The run used `--disable plugins` to isolate the local host path and
+  did not change the saved Codex configuration. Codex also logged a non-fatal
+  model-catalog refresh timeout, but exited successfully after the tool call.
 - The `rmcp` 1.6.0 dependency uses let-chain syntax, stabilized in Rust 1.88
   ([Rust 1.88 release notes](https://blog.rust-lang.org/2025/06/26/Rust-1.88.0/)).
   Rust 1.85.0 fails while compiling that dependency, so the workspace manifest,
@@ -77,5 +79,6 @@ parsing and process behavior; they do not replace live provider acceptance.
    one selected tool. Record the Codex version, OS, negotiated protocol, and
    returned result before marking that host combination verified.
 
-This worktree has not yet recorded a live Codex tool invocation. The process
-fixture verifies the gateway protocol and call path independently.
+The live host check used a separately compiled local fixture server rather than
+an installed third-party MCP server. Codex's user-level configuration remained
+unchanged.

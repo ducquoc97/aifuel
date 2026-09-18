@@ -12,7 +12,7 @@ use std::time::Duration;
 use support::TestDirectory;
 
 #[test]
-fn local_gateway_lists_and_calls_a_selected_server_tool() {
+fn local_gateway_negotiates_codex_protocol_and_calls_a_selected_server_tool() {
     let temporary = TestDirectory::new("mcp-gateway");
     let server = compile_local_mcp_server(temporary.path());
     let server_log = temporary.path().join("server-request.json");
@@ -47,29 +47,7 @@ fn local_gateway_lists_and_calls_a_selected_server_tool() {
     let (mut gateway, responses) = start_gateway(&config_root);
     let mut stdin = gateway.stdin.take().expect("gateway stdin should be piped");
 
-    send_message(
-        &mut stdin,
-        json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "fixture-host", "version": "1"}
-            }
-        }),
-    );
-    let initialized = response_with_id(&responses, 1);
-    assert_eq!(initialized["result"]["protocolVersion"], "2025-11-25");
-
-    send_message(
-        &mut stdin,
-        json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized"
-        }),
-    );
+    initialize_host_with_protocol_version(&mut stdin, &responses, "2025-06-18");
     send_message(
         &mut stdin,
         json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
@@ -124,7 +102,7 @@ fn local_gateway_lists_and_calls_a_selected_server_tool() {
 }
 
 #[test]
-fn gateway_rejects_hosts_that_do_not_negotiate_the_approved_protocol() {
+fn gateway_counteroffers_its_latest_protocol_to_an_unsupported_host_version() {
     let temporary = TestDirectory::new("mcp-gateway-host-version");
     let config_root = temporary.path().join("config");
     write_catalog(&config_root, json!({}));
@@ -146,12 +124,11 @@ fn gateway_rejects_hosts_that_do_not_negotiate_the_approved_protocol() {
     );
     let response = response_with_id(&responses, 1);
 
-    assert_eq!(response["error"]["code"], -32602);
-    assert!(response["result"].is_null());
+    assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
     drop(stdin);
     assert_eq!(
         wait_for_exit(&mut gateway, Duration::from_secs(5)).code(),
-        Some(2)
+        Some(0)
     );
 }
 

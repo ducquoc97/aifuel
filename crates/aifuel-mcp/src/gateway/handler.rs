@@ -28,14 +28,9 @@ impl ServerHandler for GatewayServerHandler {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        if request.protocol_version != ProtocolVersion::V_2025_11_25 {
-            return Err(McpError::invalid_params(
-                "AI Fuel MCP Gateway supports protocol version 2025-11-25 only",
-                None,
-            ));
-        }
+        let protocol_version = negotiate_protocol_version(&request.protocol_version);
         self.state.set_host_peer(context.peer).await;
-        Ok(server_info())
+        Ok(server_info(protocol_version))
     }
 
     async fn list_tools(
@@ -201,18 +196,26 @@ impl ServerHandler for GatewayServerHandler {
     }
 
     fn get_info(&self) -> InitializeResult {
-        server_info()
+        server_info(ProtocolVersion::V_2025_11_25)
     }
 }
 
-fn server_info() -> InitializeResult {
+fn negotiate_protocol_version(requested: &ProtocolVersion) -> ProtocolVersion {
+    if requested == &ProtocolVersion::V_2025_06_18 {
+        ProtocolVersion::V_2025_06_18
+    } else {
+        ProtocolVersion::V_2025_11_25
+    }
+}
+
+fn server_info(protocol_version: ProtocolVersion) -> InitializeResult {
     InitializeResult::new(
         ServerCapabilities::builder()
             .enable_tools()
             .enable_tool_list_changed()
             .build(),
     )
-    .with_protocol_version(ProtocolVersion::V_2025_11_25)
+    .with_protocol_version(protocol_version)
     .with_server_info(Implementation::new(
         "aifuel-gateway",
         env!("CARGO_PKG_VERSION"),
