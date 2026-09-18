@@ -223,15 +223,22 @@ pub(super) async fn wait_before_retry(
     recovery_deadline: Instant,
     delay: Duration,
 ) -> Result<(), RemoteHttpError> {
-    let delay_deadline = Instant::now() + delay;
+    let now = Instant::now();
     let effective_deadline = deadline.min(recovery_deadline);
-    if delay_deadline >= effective_deadline {
-        tokio::select! {
-            _ = cancellation.cancelled() => return Err(RemoteHttpError::Cancelled),
-            _ = state.cancellation.cancelled() => return Err(RemoteHttpError::Closed),
-            _ = tokio::time::sleep_until(effective_deadline) => return Err(RemoteHttpError::TimedOut),
-        }
+    if delay >= effective_deadline.saturating_duration_since(now) {
+        return tokio::select! {
+            _ = cancellation.cancelled() => Err(RemoteHttpError::Cancelled),
+            _ = state.cancellation.cancelled() => Err(RemoteHttpError::Closed),
+            _ = tokio::time::sleep_until(effective_deadline) => Err(RemoteHttpError::TimedOut),
+        };
     }
+    let Some(delay_deadline) = now.checked_add(delay) else {
+        return tokio::select! {
+            _ = cancellation.cancelled() => Err(RemoteHttpError::Cancelled),
+            _ = state.cancellation.cancelled() => Err(RemoteHttpError::Closed),
+            _ = tokio::time::sleep_until(effective_deadline) => Err(RemoteHttpError::TimedOut),
+        };
+    };
     tokio::select! {
         _ = cancellation.cancelled() => Err(RemoteHttpError::Cancelled),
         _ = state.cancellation.cancelled() => Err(RemoteHttpError::Closed),

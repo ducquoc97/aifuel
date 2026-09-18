@@ -55,8 +55,10 @@ parsing and process behavior; they do not replace live provider acceptance.
   --agent codex` binary. They cover upstream 2025-11-25 initialization, JSON
   tool calls, SSE delivery and GET resumption with `Last-Event-ID`, duplicate
   event suppression, concurrent calls, cancellation and late-response discard,
-  60,000 ms retry versus absolute deadlines and after failed resumed GETs in
-  finite and shared streams, session-specific 404 reinitialization for GET and
+  persistent 60,000 ms retries after failed resumed GETs in finite and shared
+  streams, and extreme `u64::MAX` retry values against absolute deadlines
+  without panic or early reconnect. Session-specific 404 reinitialization for
+  GET and
   tool POST without replay followed by an explicit fresh-session call, chunked
   SSE parsing and oversized SSE event rejection, response-size limits,
   malformed JSON, redirect rejection during reinitialization without following
@@ -169,7 +171,7 @@ parsing and process behavior; they do not replace live provider acceptance.
   Unauthorized` because its fresh home had no credentials; no model turn was
   sent, and the MCP status/list and direct tool call succeeded. No saved Codex
   config or credentials were read or modified.
-- On rustc 1.97.1, `cargo test --workspace --locked` passed 123 tests across 29
+- On rustc 1.97.1, `cargo test --workspace --locked` passed 125 tests across 30
   suites, and `cargo clippy --workspace --all-targets --locked -- -D warnings`
   completed without issues.
 - A terminal smoke of the built `aifuel mcp gateway --agent codex` binary with

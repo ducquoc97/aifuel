@@ -1,6 +1,7 @@
 use super::streamable_http::{PendingRequest, StreamableHttpFixture};
 use crate::gateway_support::{wait_for_exit, write_catalog};
 use serde_json::{Value, json};
+use std::io::Read;
 use std::path::Path;
 use std::process::{Child, ChildStdin};
 use std::time::{Duration, Instant};
@@ -202,4 +203,19 @@ pub fn finish_gateway(
     assert_eq!(delete.header("mcp-protocol-version"), Some("2025-11-25"));
     delete.respond(200, None, Vec::new(), Vec::new());
     assert!(wait_for_exit(gateway, Duration::from_secs(5)).success());
+}
+
+#[allow(dead_code)]
+pub fn finish_gateway_with_stderr(
+    gateway: &mut Child,
+    stdin: ChildStdin,
+    fixture: &StreamableHttpFixture,
+    session_id: &str,
+) -> String {
+    finish_gateway(gateway, stdin, fixture, session_id);
+    let mut stderr = String::new();
+    if let Some(mut pipe) = gateway.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    stderr
 }
