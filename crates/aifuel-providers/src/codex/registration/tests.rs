@@ -25,6 +25,10 @@ fn codex_registration_uses_the_documented_user_config_and_gateway_command() {
             {"type":"string", "value":"codex"}
         ])
     );
+    assert_eq!(
+        table["env_vars"]["value"],
+        serde_json::json!([{"type":"string", "value":"XDG_CONFIG_HOME"}])
+    );
 }
 
 #[test]
@@ -81,10 +85,12 @@ fn semantic_entry_equality_ignores_formatting_and_key_order_but_keeps_args_order
     let same_entry = br#"[mcp_servers.aifuel-gateway]
 args = [ "mcp", "gateway", "--agent", "codex" ]
 command = "/opt/aifuel" # harmless formatting
+env_vars = ["XDG_CONFIG_HOME"]
 "#;
     let reordered_args = br#"[mcp_servers.aifuel-gateway]
 command = "/opt/aifuel"
 args = ["mcp", "gateway", "codex", "--agent"]
+env_vars = ["XDG_CONFIG_HOME"]
 "#;
 
     assert_eq!(

@@ -393,13 +393,7 @@ impl<'a> AgentMcpSetupFacade<'a> {
         snapshot: &FileSnapshot,
         updated: &[u8],
     ) -> Result<Option<PathBuf>, AgentMcpSetupError> {
-        storage::replace_config(
-            &self.config_file,
-            &self.backup_dir(),
-            &self.registration_key(),
-            snapshot,
-            updated,
-        )
+        storage::replace_config(&self.config_file, &self.backup_dir(), snapshot, updated)
     }
 }
 

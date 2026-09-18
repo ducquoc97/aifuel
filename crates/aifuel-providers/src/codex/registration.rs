@@ -120,6 +120,9 @@ impl CodexMcpRegistration {
             args.push(argument);
         }
         entry.insert("args", Value::Array(args).into());
+        let mut env_vars = Array::new();
+        env_vars.push("XDG_CONFIG_HOME");
+        entry.insert("env_vars", Value::Array(env_vars).into());
         Ok(entry)
     }
 }

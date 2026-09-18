@@ -4,7 +4,6 @@ use std::fs::{self, File, Metadata, OpenOptions, Permissions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -201,8 +200,7 @@ fn write_temp_file(
 
 pub(super) fn replace_config(
     config_file: &Path,
-    backup_root: &Path,
-    registration_key: &str,
+    backup_dir: &Path,
     snapshot: &FileSnapshot,
     updated: &[u8],
 ) -> Result<Option<PathBuf>, AgentMcpSetupError> {
@@ -212,12 +210,7 @@ pub(super) fn replace_config(
     create_directory_all(parent, true)?;
     let temp = write_temp_file(config_file, updated, snapshot.permissions.clone())?;
     let backup = if snapshot.contents.is_some() {
-        Some(write_backup(
-            config_file,
-            backup_root,
-            registration_key,
-            snapshot,
-        )?)
+        Some(write_backup(config_file, backup_dir, snapshot)?)
     } else {
         None
     };
@@ -237,53 +230,31 @@ pub(super) fn replace_config(
 
 fn write_backup(
     config_file: &Path,
-    backup_root: &Path,
-    registration_key: &str,
+    backup_dir: &Path,
     snapshot: &FileSnapshot,
 ) -> Result<PathBuf, AgentMcpSetupError> {
     let original = snapshot.contents.as_deref().ok_or_else(|| {
         AgentMcpSetupError::new("MCP Host configuration backup has no source file")
     })?;
-    let directory = backup_root.join(registration_key);
-    create_private_dir_all(&directory)?;
+    create_private_dir_all(backup_dir)?;
     let file_name = config_file
         .file_name()
         .unwrap_or_else(|| std::ffi::OsStr::new("config.toml"));
-    for _ in 0..10 {
-        let mut name = file_name.to_os_string();
-        name.push(format!(
-            ".backup.{}.{}.{}",
-            timestamp_nanos(),
-            std::process::id(),
-            NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        let path = directory.join(name);
-        match open_private_file(&path, false) {
-            Ok(mut file) => {
-                let backup = TempFile::new(path.clone());
-                file.write_all(original)
-                    .and_then(|()| file.sync_all())
-                    .map_err(|error| {
-                        io_error(
-                            "could not save the private MCP Host configuration backup",
-                            error,
-                        )
-                    })?;
-                backup.disarm();
-                return Ok(path);
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(io_error(
-                    "could not create the private MCP Host configuration backup",
-                    error,
-                ));
-            }
-        }
-    }
-    Err(AgentMcpSetupError::new(
-        "could not choose a unique private MCP Host configuration backup name",
-    ))
+    let mut name = file_name.to_os_string();
+    name.push(".backup");
+    let path = backup_dir.join(name);
+    let previous = read_snapshot(&path, "private MCP Host configuration backup")?;
+    let temp = write_temp_file(&path, original, None)?;
+    ensure_snapshot_matches(&path, &previous, "private MCP Host configuration backup")?;
+    fs::rename(temp.path(), &path).map_err(|error| {
+        io_error(
+            "could not atomically save the private MCP Host configuration backup",
+            error,
+        )
+    })?;
+    temp.disarm();
+    sync_parent(backup_dir);
+    Ok(path)
 }
 
 pub(super) fn atomic_write(
@@ -360,13 +331,6 @@ fn sync_parent(parent: &Path) {
     }
     #[cfg(not(unix))]
     let _ = parent;
-}
-
-fn timestamp_nanos() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default()
 }
 
 pub(super) fn with_backup(error: AgentMcpSetupError, backup: Option<&Path>) -> AgentMcpSetupError {
