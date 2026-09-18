@@ -24,8 +24,13 @@ pub(crate) fn tool_name(server_id: &str, upstream_name: &str) -> String {
     shortened
 }
 
-pub(crate) fn cursor(server_id: &str, snapshot_id: u64, offset: usize) -> String {
-    let input = format!("{server_id}\0{snapshot_id}\0{offset}");
+pub(crate) fn cursor(
+    listing_kind: &str,
+    gateway_scope: &str,
+    snapshot_id: u64,
+    offset: usize,
+) -> String {
+    let input = format!("{listing_kind}\0{gateway_scope}\0{snapshot_id}\0{offset}");
     let digest = Sha256::digest(input.as_bytes());
     let mut cursor = String::with_capacity(67);
     cursor.push_str("g1-");
@@ -49,7 +54,7 @@ fn encode_component(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::tool_name;
+    use super::{cursor, tool_name};
 
     #[test]
     fn tool_name_keeps_the_server_and_tool_pair_unambiguous() {
@@ -67,5 +72,14 @@ mod tests {
         assert_eq!(&name[..62], &original[..62]);
         assert_eq!(&name[62..64], "__");
         assert!(name[64..].bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn cursors_are_scoped_to_the_listing_and_gateway_session() {
+        let tools = cursor("tools", "gateway-one", 3, 4);
+
+        assert_ne!(tools, cursor("resources", "gateway-one", 3, 4));
+        assert_ne!(tools, cursor("tools", "gateway-two", 3, 4));
+        assert_ne!(tools, cursor("tools", "gateway-one", 3, 5));
     }
 }

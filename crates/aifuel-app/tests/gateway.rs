@@ -29,6 +29,44 @@ fn gateway_facade_uses_an_exact_host_selection_and_default_inheritance() {
 }
 
 #[test]
+fn explicit_host_selection_does_not_change_when_defaults_change() {
+    let first_catalog = br#"{
+        "servers": {
+            "docs": {"transport":"stdio","command":"docs-mcp"},
+            "memory": {"transport":"stdio","command":"memory-mcp"}
+        },
+        "defaults": ["docs"],
+        "agents": {"codex": {"servers":["memory"]}}
+    }"#;
+    let next_catalog = br#"{
+        "servers": {
+            "docs": {"transport":"stdio","command":"docs-mcp"},
+            "memory": {"transport":"stdio","command":"memory-mcp"}
+        },
+        "defaults": ["memory"],
+        "agents": {"codex": {"servers":["memory"]}}
+    }"#;
+
+    let before = McpGatewayFacade::from_json(first_catalog, "codex", "/home/test")
+        .expect("first catalog should be valid");
+    let after = McpGatewayFacade::from_json(next_catalog, "codex", "/home/test")
+        .expect("updated defaults should keep the catalog valid");
+
+    let before_ids = before
+        .selected_servers()
+        .iter()
+        .map(|server| server.id.as_str())
+        .collect::<Vec<_>>();
+    let after_ids = after
+        .selected_servers()
+        .iter()
+        .map(|server| server.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(before_ids, ["memory"]);
+    assert_eq!(after_ids, ["memory"]);
+}
+
+#[test]
 fn gateway_facade_rejects_dangling_server_references() {
     let catalog = br#"{
         "servers": {},
