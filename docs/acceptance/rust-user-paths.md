@@ -134,3 +134,49 @@ unchanged.
   verified in this attempt. Fake-executable process tests do not replace that
   live acceptance, and no provider account, effective model, or session
   identity is inferred from the failed attempt.
+
+## GitHub Copilot CLI Agent MCP Registration
+
+- On 2026-09-18, the public `aifuel mcp setup --agent copilot` command applied
+  the documented `mcpServers.aifuel-gateway` local registration to temporary
+  Copilot configuration. Both the default `~/.copilot/mcp-config.json` path and
+  a `COPILOT_HOME` override are covered by the public setup tests. The entry
+  uses the built `aifuel` executable, `mcp gateway --agent copilot`, the
+  documented all-tools selection, and `${XDG_CONFIG_HOME}` forwarding.
+  The path and JSON schema follow [GitHub's Copilot CLI MCP configuration
+  documentation](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
+  and [configuration directory reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference).
+- GitHub Copilot CLI 1.0.85 and 1.0.86 were exercised on Linux x86_64 WSL2.
+  Version 1.0.85 was installed from the official v1.0.85 Linux x64 release; its
+  archive matched the release `SHA256SUMS.txt` value
+  `6f235cea897645eef67e8f480e36a15b5d9c9f7a6165ebc9b6b1c28afc8bcdda`.
+  `COPILOT_AUTO_UPDATE=false` kept that binary at 1.0.85 during the run.
+- Both versions loaded the temporary user registration, then sent an MCP
+  `server/discover` request before `initialize`. The captured requests were:
+
+  ```json
+  {"jsonrpc":"2.0","id":0,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"copilot-cli","version":"1.0.85"},"io.modelcontextprotocol/clientCapabilities":{"sampling":{},"elicitation":{"form":{},"url":{}}}}}}
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"sampling":{},"elicitation":{"form":{},"url":{}}},"clientInfo":{"name":"copilot-cli","version":"1.0.85"}}}
+  ```
+
+  Copilot CLI 1.0.86 sent the same requests with `clientInfo.version` set to
+  `1.0.86`. The current Gateway exits with code 2 on the pre-initialize
+  discover request and reports
+  `MCP Gateway could not initialize the host protocol session`.
+- A loopback OpenAI-compatible streaming stub with `COPILOT_OFFLINE=true`
+  provided a deterministic BYOK model without GitHub authentication, and all
+  GitHub token environment variables were unset. The Gateway error prevented
+  the fixture tool from appearing in the model request, so no MCP
+  `tools/list` or `tools/call` reached the fixture. The fixture start and call
+  logs remained absent. The MCP connection and fixture tool call are therefore
+  not verified for either Copilot CLI version.
+- An initial model-driven attempt without BYOK or GitHub credentials returned
+  `Error: No authentication information found.` No `/login`, GitHub CLI
+  authentication, provider credentials, or saved user configuration were used.
+- The accepted Gateway contract in [issue #28](https://github.com/ducquoc97/aifuel/issues/28)
+  supports host protocol versions 2025-06-18 and 2025-11-25; MCP
+  2026-07-28 and general protocol-version translation are out of scope. Copilot
+  CLI 1.0.85 and 1.0.86 send that pre-initialize discovery exchange, so their
+  registration and Gateway handshake remain unverified pending a separate
+  compatibility decision. Issue #39 remains open until that host path is
+  accepted.
