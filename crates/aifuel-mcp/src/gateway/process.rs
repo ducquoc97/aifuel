@@ -55,7 +55,7 @@ impl SpawnedLocalServer {
         #[cfg(unix)]
         command.wrap(ProcessGroup::leader());
         #[cfg(windows)]
-        command.wrap(JobObject::new());
+        command.wrap(JobObject);
         #[cfg(any(unix, windows))]
         command.wrap(KillOnDrop);
         #[cfg(not(any(unix, windows)))]
