@@ -61,6 +61,23 @@ parsing and process behavior; they do not replace live provider acceptance.
   the call. The run used `--disable plugins` to isolate the local host path and
   did not change the saved Codex configuration. Codex also logged a non-fatal
   model-catalog refresh timeout, but exited successfully after the tool call.
+- Agent MCP Registration acceptance on 2026-09-18 used Codex CLI 0.155.0 on
+  Linux x86_64 WSL2, with a temporary `CODEX_HOME`, temporary `HOME`, and
+  temporary `XDG_CONFIG_HOME`. The public `aifuel mcp setup --agent codex`
+  command wrote `[mcp_servers.aifuel-gateway]` with the built `aifuel` command,
+  `mcp gateway --agent codex` arguments, and Codex's documented
+  `env_vars = ["XDG_CONFIG_HOME"]` forwarding rule. Codex App Server loaded the
+  registration, listed `fixture__echo`, and its `mcpServer/tool/call` request
+  with `message = "codex-gateway-smoke"` returned `fixture-result`; the local
+  fixture log recorded that call. The temporary setup wrote no provider
+  credentials or upstream server definitions into Codex config.
+- A separate model-driven `codex exec --json` check did not call the fixture.
+  Without authentication in the temporary Codex home, it exited with HTTP 401.
+  A temporary copy of the existing auth file allowed a model turn, but the
+  headless run reported the fixture tool unavailable and logged an OAuth
+  requirement for the hosted Cloudflare MCP service; no fixture process started.
+  The direct App Server MCP call above verifies the registration and tool path
+  independently of model authentication.
 - The `rmcp` 1.6.0 dependency uses let-chain syntax, stabilized in Rust 1.88
   ([Rust 1.88 release notes](https://blog.rust-lang.org/2025/06/26/Rust-1.88.0/)).
   Rust 1.85.0 fails while compiling that dependency, so the workspace manifest,

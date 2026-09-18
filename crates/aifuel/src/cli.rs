@@ -21,6 +21,7 @@ where
                 Ok(0)
             }
             Some("gateway") => run_mcp_gateway(&args[2..]),
+            Some("setup") => crate::mcp_setup::run(&args[2..]),
             Some(unknown) => Err(format!("unknown MCP command {unknown:?}; use --help")),
         };
     }
@@ -89,11 +90,13 @@ fn print_help() {
     println!("       aifuel run --provider PROVIDER_ID [OPTIONS]");
     println!("       aifuel mcp");
     println!("       aifuel mcp gateway --agent MCP_HOST_ID");
+    println!("       aifuel mcp setup --agent MCP_HOST_ID [--dry-run] [--remove]");
     println!();
     println!("The default command collects live status for discovered providers.");
     println!("run delegates one explicit prompt to a verified provider CLI.");
     println!("mcp serves read-only status over standard input and output.");
     println!("mcp gateway serves selected external MCP tools over standard input and output.");
+    println!("mcp setup previews, applies, or removes an AI Fuel Gateway registration.");
 }
 
 fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
@@ -355,7 +358,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
     })
 }
 
-fn next_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
+pub(super) fn next_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
     *index += 1;
     args.get(*index)
         .cloned()
