@@ -304,8 +304,7 @@ impl<'a> AgentMcpSetupFacade<'a> {
 
     fn edited_registration_error(&self) -> AgentMcpSetupError {
         AgentMcpSetupError::new(format!(
-            "{} registration was edited after AI Fuel created it; preserve the entry and reconcile its ownership receipt before setup or removal",
-            AIFUEL_GATEWAY_REGISTRATION_NAME
+            "{AIFUEL_GATEWAY_REGISTRATION_NAME} registration was edited after AI Fuel created it; preserve the entry and reconcile its ownership receipt before setup or removal"
         ))
     }
 

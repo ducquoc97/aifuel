@@ -10,6 +10,7 @@ pub fn agent_mcp_registration_adapter(
     match host_id {
         "codex" => Some(&codex::CODEX_REGISTRATION),
         "claude" => Some(&crate::claude::MCP_REGISTRATION_ADAPTER),
+        "copilot" => Some(&crate::copilot::COPILOT_REGISTRATION),
         _ => None,
     }
 }
