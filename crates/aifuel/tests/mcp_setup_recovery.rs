@@ -72,7 +72,11 @@ fn public_setup_recovers_when_config_replacement_was_interrupted() {
     assert!(completed.status.success());
     let target = fs::read(&config).unwrap();
     let receipt = ownership_receipt(&config_dir);
-    let backup = backup_path(&completed);
+    let reported_backup = backup_path(&completed);
+    let backup = backup_files(&config_dir)
+        .pop()
+        .expect("setup should retain its private backup");
+    assert_eq!(backup, reported_backup);
     let journal =
         write_interrupted_transaction(&config_dir, &config, &receipt, base, &target, &backup);
 
