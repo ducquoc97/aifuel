@@ -38,7 +38,7 @@ pub(super) fn make_snapshot(
         let gateway_name = tool_name(&server.id, &upstream_name);
         if routes.insert(gateway_name.clone(), upstream_name).is_some() {
             return Err(McpError::internal_error(
-                "local MCP server tools contain conflicting gateway identities",
+                "upstream MCP server tools contain conflicting gateway identities",
                 None,
             ));
         }
@@ -50,13 +50,13 @@ pub(super) fn make_snapshot(
         .map_err(|_| McpError::internal_error("could not encode MCP tool list", None))?;
     if tools.len() > limits.max_list_entries || bytes.len() > limits.max_list_snapshot_bytes {
         return Err(McpError::internal_error(
-            "local MCP server exceeded the configured tool snapshot limit",
+            "upstream MCP server exceeded the configured tool snapshot limit",
             None,
         ));
     }
     if excluded_task_tools {
         eprintln!(
-            "aifuel: excluded one or more local MCP tools that require unsupported task execution"
+            "aifuel: excluded one or more upstream MCP tools that require unsupported task execution"
         );
     }
     Ok(ToolSnapshot {

@@ -1,23 +1,17 @@
-use super::process::{LocalProcess, ResolvedEnvironment, SpawnedLocalServer, snapshot_environment};
-use super::progress::{GatewayEvents, GatewayUpstreamHandler, ProgressRoutes};
-use super::request::{UpstreamRequestError, await_server_result};
+use super::connection::ConnectedGatewayServer;
+use super::process::{ResolvedEnvironment, snapshot_environment};
+use super::progress::{GatewayEvents, ProgressRoutes};
 use super::snapshot::{ToolSnapshot, make_snapshot};
 use aifuel_app::{GatewayLimits, McpGatewayFacade, McpServerDefinition, ServerLimits};
-use rmcp::ServiceExt;
-use rmcp::model::{
-    ClientRequest, ErrorCode, ErrorData as McpError, ListToolsRequest, PaginatedRequestParams,
-    ServerResult, Tool,
-};
-use rmcp::service::{Peer, PeerRequestOptions, RoleClient, RoleServer, RunningService};
-use std::collections::{HashMap, HashSet};
+use rmcp::model::{ErrorCode, ErrorData as McpError};
+use rmcp::service::{Peer, RoleServer};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-
-type UpstreamService = RunningService<RoleClient, GatewayUpstreamHandler>;
 
 pub(super) struct GatewayState {
     facade: McpGatewayFacade,
@@ -27,7 +21,7 @@ pub(super) struct GatewayState {
     pub(super) progress: Arc<ProgressRoutes>,
     pending_tool_list_notification: AtomicBool,
     request_slots: Arc<Semaphore>,
-    connection: Mutex<Option<Arc<LocalMcpConnection>>>,
+    connection: Mutex<Option<Arc<ConnectedGatewayServer>>>,
     snapshot: Mutex<Option<Arc<ToolSnapshot>>>,
     next_snapshot_id: AtomicU64,
 }
@@ -38,6 +32,7 @@ impl GatewayState {
         let process_environments = facade
             .selected_servers()
             .iter()
+            .filter(|server| matches!(&server.definition, McpServerDefinition::Stdio(_)))
             .map(|server| (server.id.clone(), snapshot_environment(server)))
             .collect();
         let events = Arc::new(GatewayEvents::default());
@@ -116,20 +111,13 @@ impl GatewayState {
         &self,
         cancellation: CancellationToken,
         request_deadline: Instant,
-    ) -> Result<Option<Arc<LocalMcpConnection>>, McpError> {
+    ) -> Result<Option<Arc<ConnectedGatewayServer>>, McpError> {
         let Some(server) = self.facade.selected_servers().first().cloned() else {
             return Ok(None);
         };
-        if matches!(&server.definition, McpServerDefinition::StreamableHttp(_)) {
-            return Err(McpError::internal_error(
-                "selected server requires the remote Streamable HTTP transport",
-                None,
-            ));
-        }
-
         let mut current = tokio::select! {
             result = tokio::time::timeout_at(request_deadline, self.connection.lock()) => {
-                result.map_err(|_| McpError::internal_error("local MCP server discovery timed out", None))?
+                result.map_err(|_| McpError::internal_error("MCP server connection timed out", None))?
             }
             _ = cancellation.cancelled() => {
                 return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
@@ -144,82 +132,17 @@ impl GatewayState {
             let _ = tokio::time::timeout_at(request_deadline, stale.shutdown()).await;
         }
 
-        let limits = self.selected_limits().cloned().unwrap_or_default();
-        let process_output_budget = Arc::new(Semaphore::new(limits.max_message_bytes + 1));
-        let process_environment = self
-            .process_environments
-            .get(&server.id)
-            .cloned()
-            .expect("selected server has a startup environment snapshot");
-        let spawned = SpawnedLocalServer::spawn(
-            &server,
+        let process_environment = self.process_environments.get(&server.id).cloned();
+        let connection = ConnectedGatewayServer::connect(
+            server,
             process_environment,
-            process_output_budget,
-            limits.max_message_bytes,
             Duration::from_secs(self.limits.output_stall_seconds),
+            Arc::clone(&self.events),
+            Arc::clone(&self.progress),
+            request_deadline,
+            cancellation,
         )
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-        let SpawnedLocalServer {
-            transport,
-            mut process,
-        } = spawned;
-        let handler = GatewayUpstreamHandler {
-            events: Arc::clone(&self.events),
-            progress: Arc::clone(&self.progress),
-        };
-        let connect_deadline = Instant::now()
-            + Duration::from_secs(limits.connect_seconds)
-                .min(request_deadline.saturating_duration_since(Instant::now()));
-        let service = tokio::select! {
-            result = tokio::time::timeout_at(connect_deadline, handler.serve(transport)) => {
-                match result {
-                    Ok(Ok(service)) => service,
-                    Ok(Err(_)) => {
-                        process.shutdown(Duration::from_secs(limits.shutdown_seconds)).await;
-                        return Err(McpError::internal_error(
-                            "configured local MCP server failed protocol initialization",
-                            None,
-                        ));
-                    }
-                    Err(_) => {
-                        process.shutdown(Duration::from_secs(limits.shutdown_seconds)).await;
-                        return Err(McpError::internal_error(
-                            "configured local MCP server initialization timed out",
-                            None,
-                        ));
-                    }
-                }
-            }
-            _ = cancellation.cancelled() => {
-                process.shutdown(Duration::from_secs(limits.shutdown_seconds)).await;
-                return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
-            }
-        };
-        let compatible = service.peer_info().is_some_and(|info| {
-            info.protocol_version == rmcp::model::ProtocolVersion::V_2025_11_25
-        });
-        if !compatible {
-            let mut service = service;
-            let _ = service.close().await;
-            process
-                .shutdown(Duration::from_secs(limits.shutdown_seconds))
-                .await;
-            return Err(McpError::internal_error(
-                "configured local MCP server does not support protocol version 2025-11-25",
-                None,
-            ));
-        }
-
-        let connection = Arc::new(LocalMcpConnection {
-            peer: service.peer().clone(),
-            service: Mutex::new(Some(service)),
-            process: Mutex::new(Some(process)),
-            limits,
-            request_slots: Arc::new(Semaphore::new(
-                self.selected_limits()
-                    .map_or(8, |limits| limits.max_concurrent_requests),
-            )),
-        });
+        .await?;
         *current = Some(Arc::clone(&connection));
         Ok(Some(connection))
     }
@@ -234,7 +157,7 @@ impl GatewayState {
         }
         let mut current = tokio::select! {
             result = tokio::time::timeout_at(operation_deadline, self.snapshot.lock()) => {
-                result.map_err(|_| McpError::internal_error("local MCP server discovery timed out", None))?
+                result.map_err(|_| McpError::internal_error("MCP server discovery timed out", None))?
             }
             _ = cancellation.cancelled() => {
                 return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
@@ -282,7 +205,7 @@ impl GatewayState {
             Err(_error) if current.is_some() => {
                 self.events.tools_dirty.store(true, Ordering::Release);
                 eprintln!(
-                    "aifuel: selected local MCP server is unavailable; retaining its last tool list"
+                    "aifuel: selected MCP server is unavailable; retaining its last tool list"
                 );
                 Ok(Arc::clone(current.as_ref().expect("snapshot exists")))
             }
@@ -302,142 +225,6 @@ impl GatewayState {
         };
         if let Some(connection) = connection.take() {
             let _ = tokio::time::timeout_at(deadline, connection.shutdown()).await;
-        }
-    }
-}
-
-pub(super) struct LocalMcpConnection {
-    pub(super) peer: Peer<RoleClient>,
-    service: Mutex<Option<UpstreamService>>,
-    process: Mutex<Option<LocalProcess>>,
-    limits: ServerLimits,
-    request_slots: Arc<Semaphore>,
-}
-
-impl LocalMcpConnection {
-    pub(super) fn try_request_slot(&self) -> Result<OwnedSemaphorePermit, McpError> {
-        self.request_slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| McpError::internal_error("selected local MCP server is busy", None))
-    }
-
-    async fn is_closed(&self) -> bool {
-        self.service
-            .lock()
-            .await
-            .as_ref()
-            .is_none_or(RunningService::is_closed)
-    }
-
-    async fn list_tools(
-        &self,
-        deadline: Instant,
-        cancellation: CancellationToken,
-    ) -> Result<Vec<Tool>, McpError> {
-        let mut tools = Vec::new();
-        let mut cursor = None;
-        let mut cursors = HashSet::new();
-        loop {
-            let params = PaginatedRequestParams::default().with_cursor(cursor.clone());
-            let request = ClientRequest::ListToolsRequest(ListToolsRequest::with_param(params));
-            let response = self
-                .request(request, deadline, cancellation.clone())
-                .await?;
-            let ServerResult::ListToolsResult(page) = response else {
-                return Err(McpError::internal_error(
-                    "local MCP server returned an unexpected tools/list response",
-                    None,
-                ));
-            };
-            tools.extend(page.tools);
-            if tools.len() > self.limits.max_list_entries {
-                return Err(McpError::internal_error(
-                    "local MCP server exceeded the configured tool count limit",
-                    None,
-                ));
-            }
-            let bytes = serde_json::to_vec(&tools)
-                .map_err(|_| McpError::internal_error("could not encode MCP tool list", None))?;
-            if bytes.len() > self.limits.max_list_snapshot_bytes {
-                return Err(McpError::internal_error(
-                    "local MCP server exceeded the configured tool snapshot limit",
-                    None,
-                ));
-            }
-            cursor = page.next_cursor;
-            let Some(next) = cursor.as_ref() else {
-                return Ok(tools);
-            };
-            if !cursors.insert(next.clone()) {
-                return Err(McpError::internal_error(
-                    "local MCP server returned a repeated tools/list cursor",
-                    None,
-                ));
-            }
-        }
-    }
-
-    async fn request(
-        &self,
-        request: ClientRequest,
-        deadline: Instant,
-        cancellation: CancellationToken,
-    ) -> Result<ServerResult, McpError> {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(McpError::internal_error(
-                "local MCP server discovery timed out",
-                None,
-            ));
-        }
-        let mut request_options = PeerRequestOptions::no_options();
-        request_options.timeout = Some(remaining);
-        let handle = match tokio::time::timeout_at(
-            deadline,
-            self.peer.send_cancellable_request(request, request_options),
-        )
-        .await
-        {
-            Ok(Ok(handle)) => handle,
-            Ok(Err(_)) | Err(_) => {
-                return Err(McpError::internal_error(
-                    "local MCP server discovery timed out or disconnected",
-                    None,
-                ));
-            }
-        };
-        await_server_result(handle, deadline, cancellation)
-            .await
-            .map_err(|error| match error {
-                UpstreamRequestError::Protocol(error) => error,
-                UpstreamRequestError::Cancelled => McpError::new(
-                    ErrorCode(-32800),
-                    "MCP server discovery was cancelled",
-                    None,
-                ),
-                UpstreamRequestError::TimedOut => {
-                    McpError::internal_error("local MCP server discovery timed out", None)
-                }
-                UpstreamRequestError::Disconnected => {
-                    McpError::internal_error("local MCP server disconnected during discovery", None)
-                }
-            })
-    }
-
-    async fn shutdown(&self) {
-        let deadline = Instant::now() + Duration::from_secs(self.limits.shutdown_seconds);
-        if let Ok(mut service) = tokio::time::timeout_at(deadline, self.service.lock()).await
-            && let Some(mut service) = service.take()
-        {
-            let _ = tokio::time::timeout_at(deadline, service.close()).await;
-        }
-        if let Ok(mut process) = tokio::time::timeout_at(deadline, self.process.lock()).await
-            && let Some(mut process) = process.take()
-        {
-            process
-                .shutdown(deadline.saturating_duration_since(Instant::now()))
-                .await;
         }
     }
 }
