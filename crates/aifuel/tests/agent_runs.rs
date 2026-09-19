@@ -183,8 +183,15 @@ fn provider_failure_keeps_stdout_stderr_and_provider_exit_code() {
         serde_json::from_slice(&output.stdout).expect("run should return its structured result");
     assert_eq!(result["status"], "failed");
     assert_eq!(result["exit_code"], 17);
-    assert_eq!(result["output"], "partial provider output\n");
-    assert_eq!(result["diagnostics"], "provider failure detail\n");
+    let line_ending = if cfg!(windows) { "\r\n" } else { "\n" };
+    assert_eq!(
+        result["output"],
+        format!("partial provider output{line_ending}")
+    );
+    assert_eq!(
+        result["diagnostics"],
+        format!("provider failure detail{line_ending}")
+    );
     assert_eq!(result["session_id"], serde_json::Value::Null);
     assert_eq!(result["effective_model"], serde_json::Value::Null);
 }
@@ -228,12 +235,16 @@ fn provider_process_timeout_returns_captured_output_and_timeout_status() {
 #[test]
 fn stdin_prompt_and_working_directory_reach_the_selected_cli() {
     use std::io::Write;
+    use std::os::unix::fs::symlink;
 
     let directory = TestDirectory::new("stdin-working-directory");
-    let working_directory = directory.path().join("workspace");
+    let physical_working_directory = directory.path().join("workspace");
+    let working_directory = directory.path().join("workspace-alias");
     let home = directory.path().join("home");
     let bin = directory.path().join("bin");
-    fs::create_dir_all(&working_directory).expect("workspace should be creatable");
+    fs::create_dir_all(&physical_working_directory).expect("workspace should be creatable");
+    symlink(&physical_working_directory, &working_directory)
+        .expect("working-directory alias should be creatable");
     fs::create_dir_all(&home).expect("temporary home should be creatable");
     fs::create_dir_all(&bin).expect("bin should be creatable");
     install_cwd_echo_command(&bin, "gemini");
@@ -269,7 +280,14 @@ fn stdin_prompt_and_working_directory_reach_the_selected_cli() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.starts_with(&format!("{}\n", working_directory.display())));
+    let expected_working_directory =
+        fs::canonicalize(&working_directory).expect("working-directory alias should resolve");
+    assert_ne!(working_directory, expected_working_directory);
+    let expected_prefix = format!("{}\n", expected_working_directory.display());
+    assert!(
+        stdout.starts_with(&expected_prefix),
+        "expected child cwd prefix {expected_prefix:?}, got {stdout:?}"
+    );
     assert!(stdout.contains("prompt from stdin"));
     assert!(!home.join(".config").exists());
 }
@@ -295,7 +313,7 @@ fn install_failing_command(directory: &std::path::Path, command_name: &str) {
 fn install_failing_command(directory: &std::path::Path, command_name: &str) {
     fs::write(
         directory.join(format!("{command_name}.cmd")),
-        "@echo off\nif \"%~1\"==\"--help\" (echo --prompt --approval-mode --output-format & exit /b 0)\necho partial provider output\necho provider failure detail 1>&2\nexit /b 17\n",
+        "@echo off\nif \"%~1\"==\"--help\" (echo --prompt --approval-mode --output-format & exit /b 0)\necho partial provider output\n>&2 echo provider failure detail\nexit /b 17\n",
     )
     .expect("fake failing executable should be writable");
 }
@@ -324,7 +342,7 @@ fn install_cwd_echo_command(directory: &std::path::Path, command_name: &str) {
     let path = directory.join(command_name);
     fs::write(
         &path,
-        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then printf '%s\\n' '--prompt --approval-mode --output-format'; exit 0; fi\nprintf '%s\\n%s\\n' \"$PWD\" \"$*\"\n",
+        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then printf '%s\\n' '--prompt --approval-mode --output-format'; exit 0; fi\npwd -P\nprintf '%s\\n' \"$*\"\n",
     )
     .expect("fake cwd executable should be writable");
     let mut permissions = fs::metadata(&path)
