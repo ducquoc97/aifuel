@@ -2,16 +2,15 @@ use super::*;
 use serde_json::{Map, json};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TestDirectory(PathBuf);
 
 impl TestDirectory {
     fn new() -> Self {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock should be after the unix epoch")
-            .as_nanos();
+        let suffix = NEXT_TEST_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
         let path =
             std::env::temp_dir().join(format!("aifuel-mcp-setup-{}-{suffix}", std::process::id()));
         fs::create_dir_all(&path).expect("test directory should be creatable");

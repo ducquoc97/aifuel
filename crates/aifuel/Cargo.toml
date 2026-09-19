@@ -18,3 +18,4 @@ tokio.workspace = true
 
 [dev-dependencies]
 sha2.workspace = true
+toml_edit = "0.25.15"

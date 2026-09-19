@@ -16,6 +16,7 @@ dependencies = [
  "sha2",
  "tiny_http",
  "tokio",
+ "toml_edit",
 ]
 
 [[package]]

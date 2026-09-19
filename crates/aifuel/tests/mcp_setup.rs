@@ -57,7 +57,13 @@ args = ["--mode", "local"]
     assert!(updated.contains("[mcp_servers.docs]"));
     assert!(updated.contains("command = \"docs-server\""));
     assert!(updated.contains("[mcp_servers.aifuel-gateway]"));
-    assert!(updated.contains(&format!("command = \"{}\"", env!("CARGO_BIN_EXE_aifuel"))));
+    let parsed: toml_edit::DocumentMut = updated
+        .parse()
+        .expect("setup should write valid Codex TOML");
+    assert_eq!(
+        parsed["mcp_servers"]["aifuel-gateway"]["command"].as_str(),
+        Some(env!("CARGO_BIN_EXE_aifuel"))
+    );
     assert!(updated.contains("args = [\"mcp\", \"gateway\", \"--agent\", \"codex\"]"));
     assert!(updated.contains("env_vars = [\"XDG_CONFIG_HOME\"]"));
     assert!(!updated.contains("fixture-secret"));
