@@ -7,6 +7,14 @@ const MAX_TOOL_NAME_BYTES: usize = 128;
 const SHORTENED_PREFIX_BYTES: usize = 62;
 
 pub(crate) fn tool_name(server_id: &str, upstream_name: &str) -> String {
+    capability_name(server_id, upstream_name)
+}
+
+pub(crate) fn prompt_name(server_id: &str, upstream_name: &str) -> String {
+    capability_name(server_id, upstream_name)
+}
+
+fn capability_name(server_id: &str, upstream_name: &str) -> String {
     let full = format!(
         "{}__{}",
         encode_component(server_id),
@@ -172,7 +180,9 @@ fn decode_utf8_hex(value: &str, label: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cursor, decode_resource_uri, resource_template, resource_uri, tool_name};
+    use super::{
+        cursor, decode_resource_uri, prompt_name, resource_template, resource_uri, tool_name,
+    };
 
     #[test]
     fn tool_name_keeps_the_server_and_tool_pair_unambiguous() {
@@ -190,6 +200,15 @@ mod tests {
         assert_eq!(&name[..62], &original[..62]);
         assert_eq!(&name[62..64], "__");
         assert!(name[64..].bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn prompt_names_share_the_stable_server_namespace() {
+        assert_eq!(prompt_name("docs", "summarize"), "docs__summarize");
+        assert_eq!(
+            prompt_name("docs_under", "summarize"),
+            "docs_5Funder__summarize"
+        );
     }
 
     #[test]

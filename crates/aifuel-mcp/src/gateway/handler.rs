@@ -1,22 +1,70 @@
-use super::identity::{is_direct_http_uri, resource_uri};
+use super::identity::{decode_resource_uri, is_direct_http_uri, resource_uri};
+use super::prompts::rewrite_prompt_result;
 use super::request::{UpstreamRequestError, await_server_result};
 use super::state::GatewayState;
-use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, Content, ErrorCode,
-    ErrorData as McpError, Implementation, InitializeRequestParams, InitializeResult,
+    CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, CompleteRequestParams,
+    CompleteResult, Content, ErrorCode, ErrorData as McpError, GetPromptRequestParams,
+    GetPromptResult, Implementation, InitializeRequestParams, InitializeResult, ListPromptsResult,
     ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
-    ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, RequestId, ResourceContents,
-    ServerCapabilities, ServerJsonRpcMessage, ServerResult, SubscribeRequestParams,
-    UnsubscribeRequestParams,
+    PromptReference, ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, Reference,
+    RequestId, ResourceContents, ServerCapabilities, ServerJsonRpcMessage, ServerResult,
+    SubscribeRequestParams, UnsubscribeRequestParams,
 };
-use rmcp::service::{PeerRequestOptions, RequestContext, RoleServer};
+use rmcp::service::{NotificationContext, PeerRequestOptions, RequestContext, RoleServer};
+use rmcp::{ServerHandler, Service};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 
 pub(super) struct GatewayServerHandler {
     state: Arc<GatewayState>,
+}
+
+/// rmcp 1.6 models prompt embedded resources with one extra wrapper when it
+/// serializes a typed `GetPromptResult`. Keep the protocol wire shape flat by
+/// translating only this response through `CustomResult` at the host boundary.
+pub(super) struct GatewayServerService {
+    handler: GatewayServerHandler,
+}
+
+impl GatewayServerService {
+    pub(super) fn new(handler: GatewayServerHandler) -> Self {
+        Self { handler }
+    }
+}
+
+impl Service<RoleServer> for GatewayServerService {
+    async fn handle_request(
+        &self,
+        request: rmcp::model::ClientRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<rmcp::model::ServerResult, McpError> {
+        if let rmcp::model::ClientRequest::GetPromptRequest(request) = request {
+            let result = self.handler.get_prompt(request.params, context).await?;
+            let value = serde_json::to_value(result).map_err(|_| {
+                McpError::internal_error("could not encode the MCP prompt response", None)
+            })?;
+            return Ok(rmcp::model::ServerResult::CustomResult(
+                rmcp::model::CustomResult(flatten_prompt_resources(value)),
+            ));
+        }
+        self.handler.handle_request(request, context).await
+    }
+
+    async fn handle_notification(
+        &self,
+        notification: rmcp::model::ClientNotification,
+        context: NotificationContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        self.handler
+            .handle_notification(notification, context)
+            .await
+    }
+
+    fn get_info(&self) -> InitializeResult {
+        ServerHandler::get_info(&self.handler)
+    }
 }
 
 impl GatewayServerHandler {
@@ -56,6 +104,145 @@ impl ServerHandler for GatewayServerHandler {
                 self.state.max_message_bytes(),
             )
             .await
+    }
+
+    async fn list_prompts(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let cursor = request.and_then(|request| request.cursor);
+        let discovery_deadline =
+            Instant::now() + Duration::from_secs(self.state.discovery_seconds());
+        let snapshot = self
+            .state
+            .prompt_snapshot(context.ct.clone(), discovery_deadline)
+            .await?;
+        snapshot
+            .page(
+                cursor.as_deref(),
+                context.id,
+                self.state.max_message_bytes(),
+            )
+            .await
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let request_started = Instant::now();
+        let discovery_deadline =
+            request_started + Duration::from_secs(self.state.operation_seconds());
+        let snapshot = self
+            .state
+            .prompt_snapshot(context.ct.clone(), discovery_deadline)
+            .await?;
+        let Some(route) = snapshot.routes.get(&request.name).cloned() else {
+            return Err(McpError::new(
+                ErrorCode::METHOD_NOT_FOUND,
+                "unknown gateway prompt name",
+                None,
+            ));
+        };
+        let operation_deadline = request_started
+            + Duration::from_secs(
+                self.state
+                    .operation_seconds_for(&route.server_id)
+                    .unwrap_or(120),
+            );
+        let connection = self
+            .state
+            .connection(&route.server_id, context.ct.clone(), operation_deadline)
+            .await
+            .map_err(|_| McpError::internal_error("selected MCP server is unavailable", None))?;
+        let _server_permit = connection.try_request_slot()?;
+        let mut params = GetPromptRequestParams::new(route.upstream_name);
+        params.arguments = request.arguments;
+        params.meta = request
+            .meta
+            .clone()
+            .or_else(|| (!context.meta.0.is_empty()).then(|| context.meta.clone()));
+        let result = connection
+            .get_prompt(params, operation_deadline, context.ct)
+            .await?;
+        let result = rewrite_prompt_result(&route.server_id, result);
+        if prompt_result_bytes(&result, &context.id)? > self.state.max_message_bytes() {
+            return Err(McpError::internal_error(
+                "external MCP prompt result exceeds the host message byte limit",
+                None,
+            ));
+        }
+        Ok(result)
+    }
+
+    async fn complete(
+        &self,
+        mut request: CompleteRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CompleteResult, McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let request_started = Instant::now();
+        let discovery_deadline =
+            request_started + Duration::from_secs(self.state.operation_seconds());
+        let (server_id, upstream_reference) = match &request.r#ref {
+            Reference::Prompt(prompt) => {
+                let snapshot = self
+                    .state
+                    .prompt_snapshot(context.ct.clone(), discovery_deadline)
+                    .await?;
+                let Some(route) = snapshot.routes.get(&prompt.name).cloned() else {
+                    return Err(McpError::new(
+                        ErrorCode::METHOD_NOT_FOUND,
+                        "unknown gateway prompt name for completion",
+                        None,
+                    ));
+                };
+                let mut upstream = PromptReference::new(route.upstream_name);
+                if let Some(title) = prompt.title.clone() {
+                    upstream = upstream.with_title(title);
+                }
+                (route.server_id, Reference::Prompt(upstream))
+            }
+            Reference::Resource(resource) => {
+                let Ok((server_id, uri)) = decode_resource_uri(&resource.uri) else {
+                    return Err(McpError::invalid_params(
+                        "resource completion requires a gateway resource URI",
+                        None,
+                    ));
+                };
+                (server_id, Reference::for_resource(uri))
+            }
+        };
+        request.r#ref = upstream_reference;
+        let operation_deadline = request_started
+            + Duration::from_secs(self.state.operation_seconds_for(&server_id).unwrap_or(120));
+        let connection = self
+            .state
+            .connection(&server_id, context.ct.clone(), operation_deadline)
+            .await
+            .map_err(|_| McpError::internal_error("selected MCP server is unavailable", None))?;
+        if !connection.supports_completion() {
+            return Err(McpError::new(
+                ErrorCode::METHOD_NOT_FOUND,
+                "selected MCP server does not support argument completion",
+                None,
+            ));
+        }
+        let _server_permit = connection.try_request_slot()?;
+        let result = connection
+            .complete(request, operation_deadline, context.ct)
+            .await?;
+        if completion_result_bytes(&result, &context.id)? > self.state.max_message_bytes() {
+            return Err(McpError::internal_error(
+                "external MCP completion result exceeds the host message byte limit",
+                None,
+            ));
+        }
+        Ok(result)
     }
 
     async fn list_resources(
@@ -388,6 +575,9 @@ fn negotiate_protocol_version(requested: &ProtocolVersion) -> ProtocolVersion {
 fn server_info(protocol_version: ProtocolVersion) -> InitializeResult {
     InitializeResult::new(
         ServerCapabilities::builder()
+            .enable_completions()
+            .enable_prompts()
+            .enable_prompts_list_changed()
             .enable_tools()
             .enable_tool_list_changed()
             .enable_resources()
@@ -483,4 +673,53 @@ fn rpc_error_bytes(error: &McpError, request_id: &RequestId) -> Result<usize, Mc
     ))
     .map(|bytes| bytes.len())
     .map_err(|_| McpError::internal_error("could not encode the MCP error response", None))
+}
+
+fn flatten_prompt_resources(mut value: serde_json::Value) -> serde_json::Value {
+    if let Some(messages) = value
+        .get_mut("messages")
+        .and_then(|value| value.as_array_mut())
+    {
+        for message in messages {
+            let Some(content) = message.get_mut("content") else {
+                continue;
+            };
+            if content.get("type").and_then(serde_json::Value::as_str) != Some("resource") {
+                continue;
+            }
+            let Some(resource) = content
+                .get_mut("resource")
+                .and_then(serde_json::Value::as_object_mut)
+                .and_then(|resource| resource.remove("resource"))
+            else {
+                continue;
+            };
+            content["resource"] = resource;
+        }
+    }
+    value
+}
+
+fn prompt_result_bytes(
+    result: &GetPromptResult,
+    request_id: &RequestId,
+) -> Result<usize, McpError> {
+    serde_json::to_vec(&ServerJsonRpcMessage::response(
+        ServerResult::GetPromptResult(result.clone()),
+        request_id.clone(),
+    ))
+    .map(|bytes| bytes.len())
+    .map_err(|_| McpError::internal_error("could not encode the MCP prompt response", None))
+}
+
+fn completion_result_bytes(
+    result: &CompleteResult,
+    request_id: &RequestId,
+) -> Result<usize, McpError> {
+    serde_json::to_vec(&ServerJsonRpcMessage::response(
+        ServerResult::CompleteResult(result.clone()),
+        request_id.clone(),
+    ))
+    .map(|bytes| bytes.len())
+    .map_err(|_| McpError::internal_error("could not encode the MCP completion response", None))
 }

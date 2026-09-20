@@ -74,6 +74,39 @@ pub fn initialize_remote(fixture: &StreamableHttpFixture, session_id: &str) {
     initialized.respond(202, None, Vec::new(), Vec::new());
 }
 
+#[allow(dead_code)]
+pub fn initialize_remote_prompts(fixture: &StreamableHttpFixture, session_id: &str) {
+    let initialize = next_remote_post(fixture, "initialize", Duration::from_secs(10));
+    let request_id = initialize.json()["id"].clone();
+    initialize.respond_json(
+        200,
+        vec![("MCP-Session-Id".to_owned(), session_id.to_owned())],
+        json!({
+            "jsonrpc":"2.0",
+            "id":request_id,
+            "result":{
+                "protocolVersion":"2025-11-25",
+                "capabilities":{
+                    "prompts":{"listChanged":true},
+                    "completions":{}
+                },
+                "serverInfo":{"name":"remote-prompt-fixture","version":"1"}
+            }
+        }),
+    );
+    let initialized = next_remote_post(
+        fixture,
+        "notifications/initialized",
+        Duration::from_secs(10),
+    );
+    assert_eq!(initialized.header("mcp-session-id"), Some(session_id));
+    assert_eq!(
+        initialized.header("mcp-protocol-version"),
+        Some("2025-11-25")
+    );
+    initialized.respond(202, None, Vec::new(), Vec::new());
+}
+
 pub fn initialize_result(request_id: Value) -> Value {
     json!({
         "jsonrpc":"2.0",
