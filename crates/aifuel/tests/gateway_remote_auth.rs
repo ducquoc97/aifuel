@@ -1,8 +1,11 @@
 #[path = "support/gateway.rs"]
+#[allow(dead_code)]
 mod gateway_support;
 #[path = "support/remote_gateway.rs"]
+#[allow(dead_code)]
 mod remote_gateway_support;
 #[path = "support/streamable_http.rs"]
+#[allow(dead_code)]
 mod streamable_http;
 #[allow(dead_code)]
 mod support;

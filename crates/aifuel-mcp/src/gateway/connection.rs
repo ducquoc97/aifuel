@@ -50,10 +50,15 @@ pub(super) fn snapshot_remote_authentication(
         None => ResolvedRemoteAuthentication::Missing,
         Some(value) => match value.to_str() {
             None => ResolvedRemoteAuthentication::InvalidEncoding,
-            Some(value) if value.is_empty() => ResolvedRemoteAuthentication::Empty,
+            Some("") => ResolvedRemoteAuthentication::Empty,
             Some(value) => ResolvedRemoteAuthentication::BearerToken(value.to_owned()),
         },
     }
+}
+
+pub(super) struct ConnectionContext<'a> {
+    pub(super) local_environment: Option<ResolvedEnvironment>,
+    pub(super) remote_authentication: &'a ResolvedRemoteAuthentication,
 }
 
 impl ConnectionOwner {
@@ -79,8 +84,7 @@ pub(super) struct ConnectedGatewayServer {
 impl ConnectedGatewayServer {
     pub(super) async fn connect(
         server: SelectedMcpServer,
-        local_environment: Option<ResolvedEnvironment>,
-        remote_authentication: Option<&ResolvedRemoteAuthentication>,
+        context: ConnectionContext<'_>,
         write_stall: Duration,
         events: Arc<GatewayEvents>,
         progress: Arc<ProgressRoutes>,
@@ -93,7 +97,7 @@ impl ConnectedGatewayServer {
         };
         let (service, owner) = match &server.definition {
             McpServerDefinition::Stdio(_) => {
-                let environment = local_environment.ok_or_else(|| {
+                let environment = context.local_environment.ok_or_else(|| {
                     McpError::internal_error(
                         "configured local MCP server environment was not captured at startup",
                         None,
@@ -138,9 +142,7 @@ impl ConnectedGatewayServer {
                         None,
                     ));
                 }
-                let authentication =
-                    remote_authentication.unwrap_or(&ResolvedRemoteAuthentication::Unauthenticated);
-                let bearer_token = match authentication {
+                let bearer_token = match context.remote_authentication {
                     ResolvedRemoteAuthentication::Unauthenticated => None,
                     ResolvedRemoteAuthentication::BearerToken(token) => Some(token.as_str()),
                     ResolvedRemoteAuthentication::Missing => {

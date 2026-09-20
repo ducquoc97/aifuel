@@ -1,5 +1,6 @@
 use super::connection::{
-    ConnectedGatewayServer, ResolvedRemoteAuthentication, snapshot_remote_authentication,
+    ConnectedGatewayServer, ConnectionContext, ResolvedRemoteAuthentication,
+    snapshot_remote_authentication,
 };
 use super::process::{ResolvedEnvironment, snapshot_environment};
 use super::progress::{GatewayEvents, ProgressRoutes};
@@ -179,8 +180,10 @@ impl GatewayState {
 
         let connection = ConnectedGatewayServer::connect(
             server.server.clone(),
-            server.local_environment.clone(),
-            Some(&server.remote_authentication),
+            ConnectionContext {
+                local_environment: server.local_environment.clone(),
+                remote_authentication: &server.remote_authentication,
+            },
             Duration::from_secs(self.limits.output_stall_seconds),
             Arc::clone(&self.events),
             Arc::clone(&self.progress),
