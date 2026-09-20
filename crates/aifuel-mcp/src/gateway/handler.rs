@@ -40,12 +40,8 @@ impl ServerHandler for GatewayServerHandler {
     ) -> Result<ListToolsResult, McpError> {
         let _request_permit = self.state.try_request_slot()?;
         let cursor = request.and_then(|request| request.cursor);
-        let discovery_deadline = Instant::now()
-            + Duration::from_secs(
-                self.state
-                    .selected_limits()
-                    .map_or(30, |limits| limits.discovery_seconds),
-            );
+        let discovery_deadline =
+            Instant::now() + Duration::from_secs(self.state.discovery_seconds());
         let snapshot = self
             .state
             .tool_snapshot(context.ct.clone(), discovery_deadline)
@@ -71,33 +67,43 @@ impl ServerHandler for GatewayServerHandler {
             ));
         }
         let _request_permit = self.state.try_request_slot()?;
-        let operation_deadline = Instant::now()
-            + Duration::from_secs(
-                self.state
-                    .selected_limits()
-                    .map_or(120, |limits| limits.operation_seconds),
-            );
+        let request_started = Instant::now();
+        let snapshot_deadline =
+            request_started + Duration::from_secs(self.state.operation_seconds());
         let snapshot = self
             .state
-            .tool_snapshot(context.ct.clone(), operation_deadline)
+            .tool_snapshot(context.ct.clone(), snapshot_deadline)
             .await?;
-        let Some(upstream_name) = snapshot.routes.get(request.name.as_ref()).cloned() else {
+        let Some(route) = snapshot.routes.get(request.name.as_ref()).cloned() else {
             return Err(McpError::new(
                 ErrorCode::METHOD_NOT_FOUND,
                 "unknown gateway tool name",
                 None,
             ));
         };
-        let Some(connection) = self
+        let operation_deadline = request_started
+            + Duration::from_secs(
+                self.state
+                    .operation_seconds_for(&route.server_id)
+                    .unwrap_or(120),
+            );
+        if operation_deadline <= Instant::now() {
+            return Ok(tool_error("external MCP tool call exceeded its deadline"));
+        }
+        let connection = match self
             .state
-            .connection(context.ct.clone(), operation_deadline)
-            .await?
-        else {
-            return Err(McpError::new(
-                ErrorCode::METHOD_NOT_FOUND,
-                "no external MCP server is selected for this MCP Host",
-                None,
-            ));
+            .connection(&route.server_id, context.ct.clone(), operation_deadline)
+            .await
+        {
+            Ok(connection) => connection,
+            Err(_) if context.ct.is_cancelled() => {
+                return Err(McpError::new(
+                    ErrorCode(-32800),
+                    "MCP request was cancelled",
+                    None,
+                ));
+            }
+            Err(_) => return Ok(tool_error("selected MCP server is unavailable")),
         };
         let _server_permit = connection.try_request_slot()?;
         let host_progress = context.meta.get_progress_token().or_else(|| {
@@ -112,10 +118,10 @@ impl ServerHandler for GatewayServerHandler {
         }
         let has_host_progress = host_progress.is_some();
         if has_host_progress {
-            self.state.progress.begin_request();
+            self.state.progress.begin_request(&route.server_id).await;
         }
 
-        let mut params = CallToolRequestParams::new(upstream_name);
+        let mut params = CallToolRequestParams::new(route.upstream_name.clone());
         params.arguments = request.arguments;
         params.meta = request
             .meta
@@ -135,13 +141,19 @@ impl ServerHandler for GatewayServerHandler {
             Ok(Ok(handle)) => handle,
             Ok(Err(_)) => {
                 if has_host_progress {
-                    self.state.progress.cancel_unbound_request();
+                    self.state
+                        .progress
+                        .cancel_unbound_request(&route.server_id)
+                        .await;
                 }
                 return Ok(tool_error("selected MCP server is unavailable"));
             }
             Err(_) => {
                 if has_host_progress {
-                    self.state.progress.cancel_unbound_request();
+                    self.state
+                        .progress
+                        .cancel_unbound_request(&route.server_id)
+                        .await;
                 }
                 return Ok(tool_error("external MCP tool call exceeded its deadline"));
             }
@@ -151,12 +163,20 @@ impl ServerHandler for GatewayServerHandler {
         if let Some(host_progress) = host_progress {
             self.state
                 .progress
-                .register(upstream_progress.clone(), context.peer, host_progress)
+                .register(
+                    &route.server_id,
+                    upstream_progress.clone(),
+                    context.peer,
+                    host_progress,
+                )
                 .await;
         }
         let result = await_server_result(handle, operation_deadline, context.ct).await;
         if has_host_progress {
-            self.state.progress.remove(&upstream_progress).await;
+            self.state
+                .progress
+                .remove(&route.server_id, &upstream_progress)
+                .await;
         }
 
         match result {

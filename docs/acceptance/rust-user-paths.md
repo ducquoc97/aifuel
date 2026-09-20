@@ -51,6 +51,15 @@ parsing and process behavior; they do not replace live provider acceptance.
   2025-11-25, counteroffers for unsupported host versions, local tool listing
   and calls, errors, deadlines, cancellation, bounded output, and cleanup of the
   gateway-owned process tree. The upstream fixture negotiates 2025-11-25.
+- Issue #32 multi-server routing was verified through the real gateway binary
+  with separate local fixture processes. The tests cover inherited defaults,
+  exact host selections, empty overrides, deterministic server-scoped tool
+  names, rejection of unselected tools, per-server results, retained tool
+  listings during an upstream outage, concurrent calls, server-scoped progress
+  and cancellation, cursor isolation, and separate gateway process sessions.
+  Each tool route retains its selected server identity for future resource
+  routing. Resource reads, subscriptions, and subscription lifecycle remain
+  in the approved scope of issue #42.
 - The remote Streamable HTTP fixture tests run the real `aifuel mcp gateway
   --agent codex` binary. They cover upstream 2025-11-25 initialization, JSON
   tool calls, SSE delivery and GET resumption with `Last-Event-ID`, duplicate
