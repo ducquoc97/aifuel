@@ -4,7 +4,7 @@ use rmcp::model::{
     ProtocolVersion, ResourceUpdatedNotificationParam,
 };
 use rmcp::service::{NotificationContext, Peer, RoleClient, RoleServer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, Notify};
@@ -17,6 +17,7 @@ pub(super) struct GatewayEvents {
     pub(super) resources_changed: Notify,
     host_peer: Mutex<Option<Peer<RoleServer>>>,
     subscriptions: Mutex<HashMap<(String, String), String>>,
+    pending_resource_updates: Mutex<HashSet<(String, String)>>,
 }
 
 impl Default for GatewayEvents {
@@ -28,6 +29,7 @@ impl Default for GatewayEvents {
             resources_changed: Notify::new(),
             host_peer: Mutex::new(None),
             subscriptions: Mutex::new(HashMap::new()),
+            pending_resource_updates: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -95,6 +97,15 @@ impl GatewayEvents {
     }
 
     pub(super) async fn notify_resource_updated(&self, server_id: &str, upstream_uri: &str) {
+        let key = (server_id.to_owned(), upstream_uri.to_owned());
+        if !self
+            .pending_resource_updates
+            .lock()
+            .await
+            .insert(key.clone())
+        {
+            return;
+        }
         let host_uri = self
             .subscriptions
             .lock()
@@ -108,6 +119,7 @@ impl GatewayEvents {
                 .notify_resource_updated(ResourceUpdatedNotificationParam::new(host_uri))
                 .await;
         }
+        self.pending_resource_updates.lock().await.remove(&key);
     }
 }
 

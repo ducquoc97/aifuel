@@ -224,6 +224,16 @@ impl ResourceSnapshot {
                 None,
             ));
         }
+        let item_count = match expected_kind {
+            ResourceListKind::Resources => self.resources.len(),
+            ResourceListKind::Templates => self.templates.len(),
+        };
+        if position.offset >= item_count {
+            return Err(McpError::invalid_params(
+                "resource list cursor is stale or invalid",
+                None,
+            ));
+        }
         Ok(position.offset)
     }
 
@@ -270,9 +280,16 @@ pub(super) fn make_snapshot(
     }
 
     let mut templates = Vec::with_capacity(upstream_templates.len());
+    let mut template_identities = HashSet::with_capacity(upstream_templates.len());
     for mut template in upstream_templates {
         let gateway_template = resource_template(&server.id, &template.uri_template)
             .map_err(|error| McpError::invalid_params(error, None))?;
+        if !template_identities.insert(gateway_template.clone()) {
+            return Err(McpError::internal_error(
+                "upstream MCP resource templates contain conflicting gateway identities",
+                None,
+            ));
+        }
         template.uri_template = gateway_template;
         templates.push(template);
     }
@@ -400,4 +417,78 @@ fn templates_response_size(
     ))
     .map(|bytes| bytes.len())
     .map_err(|_| McpError::internal_error("could not encode resource template response", None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ResourceSnapshot, make_snapshot};
+    use aifuel_app::{McpServerDefinition, SelectedMcpServer, ServerLimits, StdioServerDefinition};
+    use rmcp::model::{RequestId, Resource};
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn selected_server() -> SelectedMcpServer {
+        SelectedMcpServer {
+            id: "docs".to_owned(),
+            definition: McpServerDefinition::Stdio(StdioServerDefinition {
+                command: "fixture".to_owned(),
+                args: Vec::new(),
+                cwd: None,
+                env: BTreeMap::new(),
+                env_from: BTreeMap::new(),
+                limits: ServerLimits::default(),
+            }),
+            user_home: PathBuf::from("/home/test"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pagination_is_byte_bounded_and_rejects_stale_cursors() {
+        let mut resources = serde_json::from_value::<Vec<Resource>>(json!([
+            {"uri":"file:///one","name":"one","description":"one"},
+            {"uri":"file:///two","name":"two","description":"two"}
+        ]))
+        .expect("resource fixture should deserialize");
+        for resource in &mut resources {
+            resource.description = Some("x".repeat(120));
+        }
+        let snapshot = make_snapshot(
+            &selected_server(),
+            resources,
+            Vec::new(),
+            &ServerLimits::default(),
+            1,
+        )
+        .expect("resource snapshot should build");
+        let request_id = RequestId::Number(1);
+        let first = snapshot
+            .page_resources(Some("invalid"), request_id.clone(), 1_000)
+            .await;
+        assert!(first.is_err(), "unknown cursors must fail explicitly");
+
+        let first = snapshot
+            .page_resources(None, request_id.clone(), 350)
+            .await
+            .expect("the first resource should fit its downstream page");
+        assert_eq!(first.resources.len(), 1);
+        let cursor = first
+            .next_cursor
+            .clone()
+            .expect("a second page is required");
+        let second = snapshot
+            .page_resources(Some(&cursor), request_id, 350)
+            .await
+            .expect("the second resource should fit its downstream page");
+        assert_eq!(second.resources.len(), 1);
+        assert!(second.next_cursor.is_none());
+
+        let empty = ResourceSnapshot::empty();
+        assert!(
+            empty
+                .page_resources(Some(&cursor), RequestId::Number(2), 1_000)
+                .await
+                .is_err()
+        );
+    }
 }

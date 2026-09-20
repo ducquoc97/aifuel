@@ -218,7 +218,7 @@ impl GatewayState {
         )
         .await?;
         *current = Some(Arc::clone(&connection));
-        for (upstream_uri, _) in self.events.subscriptions_for_server(&server_id).await {
+        for (upstream_uri, _) in self.events.subscriptions_for_server(server_id).await {
             if connection
                 .subscribe(
                     upstream_uri.clone(),
@@ -229,7 +229,7 @@ impl GatewayState {
                 .is_ok()
             {
                 self.events
-                    .notify_resource_updated(&server_id, &upstream_uri)
+                    .notify_resource_updated(server_id, &upstream_uri)
                     .await;
             } else {
                 eprintln!(
