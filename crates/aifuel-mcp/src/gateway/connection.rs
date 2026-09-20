@@ -7,8 +7,10 @@ use aifuel_app::{McpServerDefinition, SelectedMcpServer, ServerLimits};
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::ServiceExt;
 use rmcp::model::{
-    ClientRequest, ErrorCode, ErrorData as McpError, ListToolsRequest, PaginatedRequestParams,
-    ServerResult, Tool,
+    ClientRequest, ErrorCode, ErrorData as McpError, ListResourceTemplatesRequest,
+    ListResourcesRequest, ListToolsRequest, PaginatedRequestParams, ReadResourceRequest,
+    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceTemplate, ServerResult,
+    SubscribeRequest, SubscribeRequestParams, Tool, UnsubscribeRequest, UnsubscribeRequestParams,
 };
 use rmcp::service::{Peer, PeerRequestOptions, RoleClient, RunningService};
 use rmcp::transport::Transport;
@@ -318,6 +320,158 @@ impl ConnectedGatewayServer {
                 ));
             }
         }
+    }
+
+    pub(super) async fn list_resources(
+        &self,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<Vec<Resource>, McpError> {
+        let mut resources = Vec::new();
+        let mut cursor = None;
+        let mut cursors = std::collections::HashSet::new();
+        loop {
+            let params = PaginatedRequestParams::default().with_cursor(cursor.clone());
+            let request =
+                ClientRequest::ListResourcesRequest(ListResourcesRequest::with_param(params));
+            let response = self
+                .request(request, deadline, cancellation.clone())
+                .await?;
+            let ServerResult::ListResourcesResult(page) = response else {
+                return Err(McpError::internal_error(
+                    "upstream MCP server returned an unexpected resources/list response",
+                    None,
+                ));
+            };
+            resources.extend(page.resources);
+            self.check_list_bounds(&resources, "resource")?;
+            cursor = page.next_cursor;
+            let Some(next) = cursor.as_ref() else {
+                return Ok(resources);
+            };
+            if !cursors.insert(next.clone()) {
+                return Err(McpError::internal_error(
+                    "upstream MCP server returned a repeated resources/list cursor",
+                    None,
+                ));
+            }
+        }
+    }
+
+    pub(super) async fn list_resource_templates(
+        &self,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<Vec<ResourceTemplate>, McpError> {
+        let mut templates = Vec::new();
+        let mut cursor = None;
+        let mut cursors = std::collections::HashSet::new();
+        loop {
+            let params = PaginatedRequestParams::default().with_cursor(cursor.clone());
+            let request = ClientRequest::ListResourceTemplatesRequest(
+                ListResourceTemplatesRequest::with_param(params),
+            );
+            let response = self
+                .request(request, deadline, cancellation.clone())
+                .await?;
+            let ServerResult::ListResourceTemplatesResult(page) = response else {
+                return Err(McpError::internal_error(
+                    "upstream MCP server returned an unexpected resources/templates/list response",
+                    None,
+                ));
+            };
+            templates.extend(page.resource_templates);
+            self.check_list_bounds(&templates, "resource template")?;
+            cursor = page.next_cursor;
+            let Some(next) = cursor.as_ref() else {
+                return Ok(templates);
+            };
+            if !cursors.insert(next.clone()) {
+                return Err(McpError::internal_error(
+                    "upstream MCP server returned a repeated resources/templates/list cursor",
+                    None,
+                ));
+            }
+        }
+    }
+
+    pub(super) async fn read_resource(
+        &self,
+        uri: String,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<ReadResourceResult, McpError> {
+        let request = ClientRequest::ReadResourceRequest(ReadResourceRequest::new(
+            ReadResourceRequestParams::new(uri),
+        ));
+        let response = self.request(request, deadline, cancellation).await?;
+        match response {
+            ServerResult::ReadResourceResult(result) => Ok(result),
+            _ => Err(McpError::internal_error(
+                "upstream MCP server returned an unexpected resources/read response",
+                None,
+            )),
+        }
+    }
+
+    pub(super) async fn subscribe(
+        &self,
+        uri: String,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<(), McpError> {
+        let request = ClientRequest::SubscribeRequest(SubscribeRequest::new(
+            SubscribeRequestParams::new(uri),
+        ));
+        let response = self.request(request, deadline, cancellation).await?;
+        match response {
+            ServerResult::EmptyResult(_) => Ok(()),
+            _ => Err(McpError::internal_error(
+                "upstream MCP server returned an unexpected resources/subscribe response",
+                None,
+            )),
+        }
+    }
+
+    pub(super) async fn unsubscribe(
+        &self,
+        uri: String,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<(), McpError> {
+        let request = ClientRequest::UnsubscribeRequest(UnsubscribeRequest::new(
+            UnsubscribeRequestParams::new(uri),
+        ));
+        let response = self.request(request, deadline, cancellation).await?;
+        match response {
+            ServerResult::EmptyResult(_) => Ok(()),
+            _ => Err(McpError::internal_error(
+                "upstream MCP server returned an unexpected resources/unsubscribe response",
+                None,
+            )),
+        }
+    }
+
+    fn check_list_bounds<T: serde::Serialize>(
+        &self,
+        entries: &[T],
+        kind: &str,
+    ) -> Result<(), McpError> {
+        if entries.len() > self.limits.max_list_entries {
+            return Err(McpError::internal_error(
+                format!("upstream MCP server exceeded the configured {kind} count limit"),
+                None,
+            ));
+        }
+        let bytes = serde_json::to_vec(entries)
+            .map_err(|_| McpError::internal_error("could not encode MCP resource list", None))?;
+        if bytes.len() > self.limits.max_list_snapshot_bytes {
+            return Err(McpError::internal_error(
+                format!("upstream MCP server exceeded the configured {kind} snapshot limit"),
+                None,
+            ));
+        }
+        Ok(())
     }
 
     async fn request(

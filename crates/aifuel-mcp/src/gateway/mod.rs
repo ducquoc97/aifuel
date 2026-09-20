@@ -7,6 +7,7 @@ mod progress;
 mod remote_endpoint;
 mod remote_transport;
 mod request;
+mod resources;
 mod snapshot;
 mod sse;
 mod state;
@@ -43,6 +44,8 @@ pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
         .map_err(|_| "MCP Gateway could not initialize the host protocol session".to_owned())?;
     let mut service = tokio::spawn(service.waiting());
     let updates = tokio::spawn(Arc::clone(&state).watch_tool_list_changes(cancellation.clone()));
+    let resource_updates =
+        tokio::spawn(Arc::clone(&state).watch_resource_list_changes(cancellation.clone()));
     let result = tokio::select! {
         result = &mut service => {
             result.map_err(|_| "MCP Gateway protocol service task failed".to_owned())?
@@ -51,12 +54,14 @@ pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
             cancellation.cancel();
             let _ = service.await;
             let _ = updates.await;
+            let _ = resource_updates.await;
             state.shutdown().await;
             return Err("MCP Gateway stopped because its notification buffer filled".to_owned());
         }
     };
     cancellation.cancel();
     let _ = updates.await;
+    let _ = resource_updates.await;
     state.shutdown().await;
     match result {
         Ok(rmcp::service::QuitReason::Closed) => Ok(()),

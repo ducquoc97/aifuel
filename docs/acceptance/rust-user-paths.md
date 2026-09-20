@@ -60,6 +60,17 @@ parsing and process behavior; they do not replace live provider acceptance.
   Each tool route retains its selected server identity for future resource
   routing. Resource reads, subscriptions, and subscription lifecycle remain
   in the approved scope of issue #42.
+- Issue #42 resource routing is covered by the real gateway binary with local
+  stdio and remote Streamable HTTP fixtures. The acceptance tests list fixed
+  resources and URI templates, read expanded template/resource URIs, subscribe
+  and unsubscribe, deliver a resource update notification, and restore the
+  server-scoped URI in read contents. They cover IPv6 authorities, percent
+  escaping, custom schemes with reserved template expansion, variable-scheme
+  rejection, direct HTTPS resource links in tool results, and non-HTTP tool
+  resource links rewritten to gateway identities. Downstream list pages are
+  bounded after rewriting, cursors are gateway-owned and snapshot-scoped, and
+  stale cursors fail explicitly. The local fixture acceptance does not claim
+  that any host UI displays resources or subscriptions.
 - The remote Streamable HTTP fixture tests run the real `aifuel mcp gateway
   --agent codex` binary. They cover upstream 2025-11-25 initialization, JSON
   tool calls, SSE delivery and GET resumption with `Last-Event-ID`, duplicate
@@ -210,7 +221,7 @@ parsing and process behavior; they do not replace live provider acceptance.
   Unauthorized` because its fresh home had no credentials; no model turn was
   sent, and the MCP status/list and direct tool call succeeded. No saved Codex
   config or credentials were read or modified.
-- On rustc 1.97.1, `cargo test --workspace --locked` passed 125 tests across 30
+- On rustc 1.97.1, `cargo test --workspace --locked` passed 143 tests across 33
   suites, and `cargo clippy --workspace --all-targets --locked -- -D warnings`
   completed without issues.
 - A terminal smoke of the built `aifuel mcp gateway --agent codex` binary with

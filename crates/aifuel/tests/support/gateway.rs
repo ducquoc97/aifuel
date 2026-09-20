@@ -27,6 +27,29 @@ pub fn compile_local_mcp_server(directory: &Path) -> PathBuf {
     server
 }
 
+pub fn compile_resource_mcp_server(directory: &Path) -> PathBuf {
+    let source =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/resource_mcp_server.rs");
+    let server = directory.join(format!(
+        "resource-mcp-server.{}",
+        env::consts::EXE_EXTENSION
+    ));
+    let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = Command::new(rustc)
+        .arg("--edition=2024")
+        .arg(&source)
+        .arg("-o")
+        .arg(&server)
+        .output()
+        .expect("Rust compiler should build the resource MCP fixture");
+    assert!(
+        output.status.success(),
+        "resource MCP fixture should compile: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    server
+}
+
 pub fn user_config_file(config_root: &Path) -> PathBuf {
     #[cfg(target_os = "windows")]
     let path = config_root.join("aifuel").join("mcp.json");

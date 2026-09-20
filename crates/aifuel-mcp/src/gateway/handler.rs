@@ -1,11 +1,14 @@
+use super::identity::{is_direct_http_uri, resource_uri};
 use super::request::{UpstreamRequestError, await_server_result};
 use super::state::GatewayState;
 use rmcp::ServerHandler;
 use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, Content, ErrorCode,
     ErrorData as McpError, Implementation, InitializeRequestParams, InitializeResult,
-    ListToolsResult, PaginatedRequestParams, ProtocolVersion, RequestId, ServerCapabilities,
-    ServerJsonRpcMessage, ServerResult,
+    ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+    ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, RequestId, ResourceContents,
+    ServerCapabilities, ServerJsonRpcMessage, ServerResult, SubscribeRequestParams,
+    UnsubscribeRequestParams,
 };
 use rmcp::service::{PeerRequestOptions, RequestContext, RoleServer};
 use std::sync::Arc;
@@ -53,6 +56,159 @@ impl ServerHandler for GatewayServerHandler {
                 self.state.max_message_bytes(),
             )
             .await
+    }
+
+    async fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let cursor = request.and_then(|request| request.cursor);
+        let discovery_deadline =
+            Instant::now() + Duration::from_secs(self.state.discovery_seconds());
+        let snapshot = self
+            .state
+            .resource_snapshot(context.ct.clone(), discovery_deadline)
+            .await?;
+        snapshot
+            .page_resources(
+                cursor.as_deref(),
+                context.id,
+                self.state.max_message_bytes(),
+            )
+            .await
+    }
+
+    async fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let cursor = request.and_then(|request| request.cursor);
+        let discovery_deadline =
+            Instant::now() + Duration::from_secs(self.state.discovery_seconds());
+        let snapshot = self
+            .state
+            .resource_snapshot(context.ct.clone(), discovery_deadline)
+            .await?;
+        snapshot
+            .page_templates(
+                cursor.as_deref(),
+                context.id,
+                self.state.max_message_bytes(),
+            )
+            .await
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let deadline = operation_deadline(&self.state);
+        let snapshot = self
+            .state
+            .resource_snapshot(context.ct.clone(), deadline)
+            .await?;
+        let route = snapshot.route(&request.uri)?;
+        let connection = self
+            .state
+            .connection(&route.server_id, context.ct.clone(), deadline)
+            .await?;
+        let _server_permit = connection.try_request_slot()?;
+        let mut result = connection
+            .read_resource(route.upstream_uri, deadline, context.ct.clone())
+            .await?;
+        for contents in &mut result.contents {
+            rewrite_read_contents(contents, &route.server_id)?;
+        }
+        if read_result_bytes(&result, &context.id)? > self.state.max_message_bytes() {
+            return Err(McpError::internal_error(
+                "external MCP resource result exceeds the host message byte limit",
+                None,
+            ));
+        }
+        Ok(result)
+    }
+
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let deadline = operation_deadline(&self.state);
+        let snapshot = self
+            .state
+            .resource_snapshot(context.ct.clone(), deadline)
+            .await?;
+        let route = snapshot.route(&request.uri)?;
+        let connection = self
+            .state
+            .connection(&route.server_id, context.ct.clone(), deadline)
+            .await?;
+        let fresh = self
+            .state
+            .events
+            .register_subscription(&route.server_id, &route.upstream_uri, &request.uri)
+            .await;
+        if fresh
+            && let Err(error) = connection
+                .subscribe(route.upstream_uri.clone(), deadline, context.ct.clone())
+                .await
+        {
+            let _ = self
+                .state
+                .events
+                .unregister_subscription(&route.server_id, &route.upstream_uri)
+                .await;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let _request_permit = self.state.try_request_slot()?;
+        let deadline = operation_deadline(&self.state);
+        let snapshot = self
+            .state
+            .resource_snapshot(context.ct.clone(), deadline)
+            .await?;
+        let route = snapshot.route(&request.uri)?;
+        if !self
+            .state
+            .events
+            .unregister_subscription(&route.server_id, &route.upstream_uri)
+            .await
+        {
+            return Err(McpError::invalid_params(
+                "resource is not subscribed through this gateway",
+                None,
+            ));
+        }
+        let connection = self
+            .state
+            .connection(&route.server_id, context.ct.clone(), deadline)
+            .await?;
+        if let Err(error) = connection
+            .unsubscribe(route.upstream_uri.clone(), deadline, context.ct.clone())
+            .await
+        {
+            let _ = self
+                .state
+                .events
+                .register_subscription(&route.server_id, &route.upstream_uri, &request.uri)
+                .await;
+            return Err(error);
+        }
+        Ok(())
     }
 
     async fn call_tool(
@@ -181,6 +337,7 @@ impl ServerHandler for GatewayServerHandler {
 
         match result {
             Ok(ServerResult::CallToolResult(result)) => {
+                let result = rewrite_tool_result(result, &route.server_id)?;
                 if tool_result_bytes(&result, &context.id)? > self.state.max_message_bytes() {
                     return Ok(tool_error(
                         "external MCP tool result exceeds the host message byte limit",
@@ -233,6 +390,9 @@ fn server_info(protocol_version: ProtocolVersion) -> InitializeResult {
         ServerCapabilities::builder()
             .enable_tools()
             .enable_tool_list_changed()
+            .enable_resources()
+            .enable_resources_list_changed()
+            .enable_resources_subscribe()
             .build(),
     )
     .with_protocol_version(protocol_version)
@@ -240,6 +400,67 @@ fn server_info(protocol_version: ProtocolVersion) -> InitializeResult {
         "aifuel-gateway",
         env!("CARGO_PKG_VERSION"),
     ))
+}
+
+fn operation_deadline(state: &GatewayState) -> Instant {
+    Instant::now() + Duration::from_secs(state.operation_seconds())
+}
+
+fn rewrite_read_contents(contents: &mut ResourceContents, server_id: &str) -> Result<(), McpError> {
+    let uri = match contents {
+        ResourceContents::TextResourceContents { uri, .. }
+        | ResourceContents::BlobResourceContents { uri, .. } => uri,
+    };
+    *uri = resource_uri(server_id, uri).map_err(|error| McpError::internal_error(error, None))?;
+    Ok(())
+}
+
+fn rewrite_tool_result(
+    mut result: CallToolResult,
+    server_id: &str,
+) -> Result<CallToolResult, McpError> {
+    for content in &mut result.content {
+        match &mut content.raw {
+            rmcp::model::RawContent::ResourceLink(link) => {
+                if !is_direct_http_uri(&link.uri) {
+                    link.uri = resource_uri(server_id, &link.uri)
+                        .map_err(|error| McpError::internal_error(error, None))?;
+                }
+            }
+            rmcp::model::RawContent::Resource(embedded) => {
+                rewrite_embedded_contents(&mut embedded.resource, server_id)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(result)
+}
+
+fn rewrite_embedded_contents(
+    contents: &mut ResourceContents,
+    server_id: &str,
+) -> Result<(), McpError> {
+    let uri = match contents {
+        ResourceContents::TextResourceContents { uri, .. }
+        | ResourceContents::BlobResourceContents { uri, .. } => uri,
+    };
+    if !is_direct_http_uri(uri) {
+        *uri =
+            resource_uri(server_id, uri).map_err(|error| McpError::internal_error(error, None))?;
+    }
+    Ok(())
+}
+
+fn read_result_bytes(
+    result: &ReadResourceResult,
+    request_id: &RequestId,
+) -> Result<usize, McpError> {
+    serde_json::to_vec(&ServerJsonRpcMessage::response(
+        ServerResult::ReadResourceResult(result.clone()),
+        request_id.clone(),
+    ))
+    .map(|bytes| bytes.len())
+    .map_err(|_| McpError::internal_error("could not encode the MCP resource response", None))
 }
 
 fn tool_error(message: &'static str) -> CallToolResult {
