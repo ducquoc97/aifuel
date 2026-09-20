@@ -1,4 +1,4 @@
-use aifuel_app::McpGatewayFacade;
+use aifuel_app::{McpGatewayFacade, McpServerDefinition};
 use std::path::PathBuf;
 
 #[test]
@@ -88,4 +88,66 @@ fn gateway_facade_rejects_host_message_limits_above_eight_mib() {
         .expect_err("host messages must stay within the approved 8 MiB ceiling");
 
     assert!(error.to_string().contains("gateway limits"));
+}
+
+#[test]
+fn gateway_facade_keeps_only_the_bearer_environment_reference() {
+    let catalog = br#"{
+        "servers": {
+            "private": {
+                "transport":"streamable-http",
+                "url":"https://example.test/mcp",
+                "auth":{"bearerTokenEnv":"PRIVATE_MCP_TOKEN"}
+            }
+        },
+        "defaults":["private"]
+    }"#;
+
+    let facade = McpGatewayFacade::from_json(catalog, "codex", "/home/test")
+        .expect("the bearer environment reference should be valid");
+    let McpServerDefinition::StreamableHttp(server) = &facade.selected_servers()[0].definition
+    else {
+        panic!("the catalog should select a remote server");
+    };
+    assert_eq!(
+        server
+            .auth
+            .as_ref()
+            .expect("bearer authentication should be present")
+            .bearer_token_env,
+        "PRIVATE_MCP_TOKEN"
+    );
+}
+
+#[test]
+fn gateway_facade_rejects_literal_or_unknown_remote_authentication() {
+    for auth in [
+        r#"{"bearerToken":"literal-secret"}"#,
+        r#"{"unknown":"PRIVATE_MCP_TOKEN"}"#,
+    ] {
+        let catalog = format!(
+            r#"{{"servers":{{"private":{{"transport":"streamable-http","url":"https://example.test/mcp","auth":{auth}}}}},"defaults":["private"]}}"#
+        );
+        let error = McpGatewayFacade::from_json(catalog.as_bytes(), "codex", "/home/test")
+            .expect_err("unsupported authentication fields must be rejected");
+        assert!(error.to_string().contains("invalid MCP gateway JSON"));
+    }
+}
+
+#[test]
+fn gateway_facade_rejects_an_empty_bearer_environment_reference() {
+    let catalog = br#"{
+        "servers": {
+            "private": {
+                "transport":"streamable-http",
+                "url":"https://example.test/mcp",
+                "auth":{"bearerTokenEnv":"  "}
+            }
+        },
+        "defaults":["private"]
+    }"#;
+
+    let error = McpGatewayFacade::from_json(catalog, "codex", "/home/test")
+        .expect_err("empty bearer environment references must be rejected");
+    assert!(error.to_string().contains("bearerTokenEnv"));
 }

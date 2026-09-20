@@ -207,6 +207,12 @@ pub(super) async fn handle_http_error(
 ) -> Result<(), RemoteHttpError> {
     let status = response.status();
     reject_redirect(&response)?;
+    if status == StatusCode::UNAUTHORIZED {
+        return Err(RemoteHttpError::AuthenticationFailed);
+    }
+    if status == StatusCode::FORBIDDEN {
+        return Err(RemoteHttpError::PermissionDenied);
+    }
     if response_content_type(&response) == Some("application/json") {
         let body = read_bounded_body(state, &mut response, cancellation, deadline).await?;
         if let Some(message) = json_rpc_error(&body, request_id) {

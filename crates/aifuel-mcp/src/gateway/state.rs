@@ -1,4 +1,6 @@
-use super::connection::ConnectedGatewayServer;
+use super::connection::{
+    ConnectedGatewayServer, ResolvedRemoteAuthentication, snapshot_remote_authentication,
+};
 use super::process::{ResolvedEnvironment, snapshot_environment};
 use super::progress::{GatewayEvents, ProgressRoutes};
 use super::snapshot::{ServerToolSnapshot, SnapshotBuildError, ToolSnapshot, make_server_snapshot};
@@ -31,6 +33,7 @@ pub(super) struct GatewayState {
 struct GatewayServerState {
     server: SelectedMcpServer,
     local_environment: Option<ResolvedEnvironment>,
+    remote_authentication: ResolvedRemoteAuthentication,
     connection: Mutex<Option<Arc<ConnectedGatewayServer>>>,
     snapshot: Mutex<Option<Arc<ServerToolSnapshot>>>,
 }
@@ -50,11 +53,13 @@ impl GatewayState {
             .map(|server| {
                 let local_environment = matches!(&server.definition, McpServerDefinition::Stdio(_))
                     .then(|| snapshot_environment(&server));
+                let remote_authentication = snapshot_remote_authentication(&server);
                 (
                     server.id.clone(),
                     Arc::new(GatewayServerState {
                         server,
                         local_environment,
+                        remote_authentication,
                         connection: Mutex::new(None),
                         snapshot: Mutex::new(None),
                     }),
@@ -175,6 +180,7 @@ impl GatewayState {
         let connection = ConnectedGatewayServer::connect(
             server.server.clone(),
             server.local_environment.clone(),
+            Some(&server.remote_authentication),
             Duration::from_secs(self.limits.output_stall_seconds),
             Arc::clone(&self.events),
             Arc::clone(&self.progress),
