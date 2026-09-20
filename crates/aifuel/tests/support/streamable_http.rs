@@ -186,6 +186,9 @@ impl PendingRequest {
 }
 
 fn serve_one(stream: TcpStream, requests: mpsc::Sender<PendingRequest>) {
+    stream
+        .set_nonblocking(false)
+        .expect("fixture connection should be blocking");
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let mut reader = BufReader::new(stream);
     let mut first_line = String::new();
