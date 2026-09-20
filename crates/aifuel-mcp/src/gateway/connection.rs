@@ -62,10 +62,6 @@ pub(super) struct ConnectionContext<'a> {
 }
 
 impl ConnectionOwner {
-    fn is_remote(&self) -> bool {
-        matches!(self, Self::Remote(_))
-    }
-
     async fn shutdown(&mut self, timeout: Duration) {
         match self {
             Self::Local(process) => process.shutdown(timeout).await,
@@ -325,13 +321,10 @@ impl ConnectedGatewayServer {
 
     pub(super) async fn shutdown(&self) {
         let deadline = Instant::now() + Duration::from_secs(self.limits.shutdown_seconds);
-        let owner_is_remote = tokio::time::timeout_at(deadline, self.owner.lock())
-            .await
-            .ok()
-            .and_then(|owner| owner.as_ref().map(ConnectionOwner::is_remote))
-            .unwrap_or(false);
-        if !owner_is_remote {
-            self.close_service(deadline).await;
+        if let Ok(mut service) = tokio::time::timeout_at(deadline, self.service.lock()).await
+            && let Some(mut service) = service.take()
+        {
+            let _ = tokio::time::timeout_at(deadline, service.close()).await;
         }
         if let Ok(mut owner) = tokio::time::timeout_at(deadline, self.owner.lock()).await
             && let Some(mut owner) = owner.take()
@@ -339,17 +332,6 @@ impl ConnectedGatewayServer {
             owner
                 .shutdown(deadline.saturating_duration_since(Instant::now()))
                 .await;
-        }
-        if owner_is_remote {
-            self.close_service(deadline).await;
-        }
-    }
-
-    async fn close_service(&self, deadline: Instant) {
-        if let Ok(mut service) = tokio::time::timeout_at(deadline, self.service.lock()).await
-            && let Some(mut service) = service.take()
-        {
-            let _ = tokio::time::timeout_at(deadline, service.close()).await;
         }
     }
 }
