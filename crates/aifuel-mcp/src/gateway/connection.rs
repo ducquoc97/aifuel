@@ -260,17 +260,17 @@ impl ConnectedGatewayServer {
 
     pub(super) async fn shutdown(&self) {
         let deadline = Instant::now() + Duration::from_secs(self.limits.shutdown_seconds);
-        if let Ok(mut service) = tokio::time::timeout_at(deadline, self.service.lock()).await
-            && let Some(mut service) = service.take()
-        {
-            let _ = tokio::time::timeout_at(deadline, service.close()).await;
-        }
         if let Ok(mut owner) = tokio::time::timeout_at(deadline, self.owner.lock()).await
             && let Some(mut owner) = owner.take()
         {
             owner
                 .shutdown(deadline.saturating_duration_since(Instant::now()))
                 .await;
+        }
+        if let Ok(mut service) = tokio::time::timeout_at(deadline, self.service.lock()).await
+            && let Some(mut service) = service.take()
+        {
+            let _ = tokio::time::timeout_at(deadline, service.close()).await;
         }
     }
 }
