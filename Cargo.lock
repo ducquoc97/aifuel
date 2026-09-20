@@ -47,6 +47,7 @@ dependencies = [
  "aifuel-core",
  "futures-util",
  "process-wrap",
+ "reqwest",
  "rmcp",
  "serde_json",
  "sha2",

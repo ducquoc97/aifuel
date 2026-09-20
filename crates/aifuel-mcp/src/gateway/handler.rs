@@ -137,7 +137,7 @@ impl ServerHandler for GatewayServerHandler {
                 if has_host_progress {
                     self.state.progress.cancel_unbound_request();
                 }
-                return Ok(tool_error("selected local MCP server is unavailable"));
+                return Ok(tool_error("selected MCP server is unavailable"));
             }
             Err(_) => {
                 if has_host_progress {
@@ -190,7 +190,7 @@ impl ServerHandler for GatewayServerHandler {
                 "external MCP tool call timed out; its outcome may be unknown",
             )),
             Err(UpstreamRequestError::Disconnected) => Ok(tool_error(
-                "selected local MCP server disconnected; its outcome may be unknown",
+                "selected MCP server disconnected; its outcome may be unknown",
             )),
         }
     }
