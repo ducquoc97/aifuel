@@ -48,7 +48,8 @@ For a reusable binary, run `cargo build --release -p aifuel` and use
 The Cargo workspace contains the native application. The default command collects
 live status for discovered provider integrations. `run` delegates one
 explicit prompt to a selected installed provider CLI. `mcp` serves read-only
-status over stdio, while `mcp gateway` serves selected external tools.
+status over stdio, while `mcp gateway` serves selected external MCP
+capabilities.
 
 ```bash
 aifuel --text
@@ -202,9 +203,10 @@ protocol, framing, content negotiation, session, and bearer headers; duplicate
 names are rejected case-insensitively. Named headers may coexist with bearer
 authentication and are sent only to the configured endpoint. Missing or empty
 values fail that server, and redirects never receive credentials. The gateway
-routes tools only. It does not route resources or prompts, or support
-task-based tool calls. The existing `aifuel mcp` read-only status server
-remains separate.
+routes tools, resources, resource templates and subscriptions, prompts, and
+argument completion. It does not support task-based tool calls. Host UI
+support for resources and prompts remains host-specific. The existing
+`aifuel mcp` read-only status server remains separate.
 
 ## What it tracks
 
@@ -227,7 +229,7 @@ remains separate.
 | `aifuel --json` | **Normalized JSON** for scripts, status bars, and piping |
 | `aifuel run --provider ... --prompt ...` | Explicit prompt delegation to an installed provider CLI |
 | `aifuel mcp` | Read-only MCP status server over stdio |
-| `aifuel mcp gateway --agent codex` | Selected external tools through the AI Fuel MCP Gateway |
+| `aifuel mcp gateway --agent codex` | Selected external MCP capabilities through the AI Fuel MCP Gateway |
 
 Because `--json` is a stable, structured feed, it drops cleanly into a tmux / polybar / Sketchybar / starship status line - pipe it and surface "what runs out first" wherever you already look.
 

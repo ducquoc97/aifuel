@@ -43,10 +43,16 @@ parsing and process behavior; they do not replace live provider acceptance.
 
 ## MCP Gateway
 
-- `cargo test --workspace --locked` passed on Rust 1.96.0. Strict workspace
+- On final `main` commit `2dc25cb` (`2026-09-20`), `cargo test --workspace
+  --locked` passed 168 tests across 37 suites on Rust 1.97.1. Strict workspace
   Clippy passed on Rust 1.97.1. The gateway tests
   launch the real `aifuel mcp gateway --agent codex` binary and a separately
   compiled local MCP server fixture.
+- GitHub Actions run `35502031925` passed formatting, locked workspace tests,
+  strict Clippy, and release builds on `ubuntu-latest`, `macos-latest`, and
+  `windows-latest` with the pinned Rust 1.88.0 toolchain. The matrix covers
+  build and fixture acceptance; live provider accounts and native host UI
+  acceptance remain separately recorded below.
 - The gateway/server process tests cover host negotiation for MCP 2025-06-18 and
   2025-11-25, counteroffers for unsupported host versions, local tool listing
   and calls, errors, deadlines, cancellation, bounded output, and cleanup of the
@@ -128,6 +134,23 @@ parsing and process behavior; they do not replace live provider acceptance.
 - No live private MCP credential was available for named-header host
   acceptance. The controlled real-binary fixture is the accepted runtime
   evidence, and no monitoring or provider credential source was reused.
+- Final installed-workflow smoke on `main` commit `2dc25cb` ran on Linux
+  x86_64 WSL2 with rustc 1.97.1. `scripts/install.sh` placed the release
+  binary in an isolated temporary bin directory. That installed binary
+  printed help, returned a complete empty-provider JSON status, and completed
+  an explicit `aifuel run --provider gemini` Agent Run through a controlled
+  executable with a successful JSON result. The public Codex setup command
+  passed dry-run, apply, and remove checks in isolated temporary `HOME`,
+  `CODEX_HOME`, and `XDG_CONFIG_HOME` directories; the generated entry used
+  the installed binary and `mcp gateway --agent codex`, and removal preserved
+  the unrelated temporary configuration.
+- The same installed binary loaded a temporary central catalog containing
+  public DeepWiki and served an MCP 2025-06-18 host session. `tools/list`
+  returned the three DeepWiki tools, and `tools/call` for
+  `deepwiki__read_5Fwiki_5Fstructure` with
+  `modelcontextprotocol/rust-sdk` returned a successful documentation
+  structure. This is a direct installed gateway process check; the separate
+  Codex and Claude host records above cover host registration behavior.
 - On 2026-09-18, Codex App Server 0.155.0 on Linux 6.6.87.2 WSL2 (x86_64,
   Ubuntu 24.4.0 user agent) loaded the gateway from a fresh temporary
   `CODEX_HOME` and an isolated `XDG_CONFIG_HOME`, both created under the
@@ -331,7 +354,7 @@ temporary Codex homes and left the saved Codex configuration unchanged.
   continuation, stdin prompts, and working-directory behavior.
 - The stdin/working-directory process test uses a symlink alias and checks the
   child process's physical working directory against the canonical target. The
-  macOS CI workflow must rerun this test after the fixture correction.
+  corrected test passed in the final three-platform workflow run above.
 - The public application facade passes cancellation to the selected adapter.
   The provider process test confirms cancellation stops and reaps its child
   process while retaining output produced before cancellation.
