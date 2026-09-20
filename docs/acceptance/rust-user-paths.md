@@ -87,6 +87,20 @@ parsing and process behavior; they do not replace live provider acceptance.
   https://deepwiki.com/ducquoc97/aifuel to index it.` This is a DeepWiki
   repository-indexing error, not a gateway transport failure. The smoke used a
   temporary AI Fuel catalog and did not change Codex configuration.
+- The controlled authenticated Streamable HTTP fixture runs the real gateway
+  binary with a token supplied only through a temporary process environment.
+  It verifies the catalog's `auth.bearerTokenEnv` reference, Authorization
+  headers on initialization, notifications, discovery, calls, and shutdown,
+  and a successful authenticated tool call. Separate cases verify missing and
+  empty references fail before contacting the server, 401 and 403 responses
+  return sanitized diagnostics without response bodies or token text, static
+  credentials are not refreshed, and redirects do not forward Authorization
+  to the target endpoint. The token is generated at test runtime and no
+  credential value is committed.
+- No live private MCP credential was available for host acceptance. The
+  authenticated result above is controlled real-binary fixture evidence. The
+  public DeepWiki acceptance remains unauthenticated; no external credential
+  or monitoring credential was reused for this slice.
 - On 2026-09-18, Codex App Server 0.155.0 on Linux 6.6.87.2 WSL2 (x86_64,
   Ubuntu 24.4.0 user agent) loaded the gateway from a fresh temporary
   `CODEX_HOME` and an isolated `XDG_CONFIG_HOME`, both created under the

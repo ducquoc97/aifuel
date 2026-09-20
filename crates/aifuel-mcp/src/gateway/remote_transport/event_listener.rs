@@ -100,6 +100,16 @@ async fn run_common_event_stream(
         if response.status() == StatusCode::METHOD_NOT_ALLOWED {
             return Ok(());
         }
+        if matches!(
+            response.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ) {
+            return Err(if response.status() == StatusCode::UNAUTHORIZED {
+                RemoteHttpError::AuthenticationFailed
+            } else {
+                RemoteHttpError::PermissionDenied
+            });
+        }
         if response.status() == StatusCode::NOT_FOUND && state.session_id.lock().await.is_some() {
             state.mark_session_expired();
             http::cancel_pending_except(&state, None).await;

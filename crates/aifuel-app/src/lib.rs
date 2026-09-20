@@ -13,9 +13,9 @@ pub use agent_mcp_setup::{
 };
 pub use execution::AgentRunFacade;
 pub use gateway::{
-    GatewayConfigError, GatewayLimits, McpGatewayFacade, McpServerDefinition, NamedSecretHeader,
-    SelectedMcpServer, ServerLimits, StdioServerDefinition, StreamableHttpServerDefinition,
-    default_cwd,
+    BearerTokenAuth, GatewayConfigError, GatewayLimits, McpGatewayFacade, McpServerDefinition,
+    NamedSecretHeader, SelectedMcpServer, ServerLimits, StdioServerDefinition,
+    StreamableHttpServerDefinition, default_cwd,
 };
 
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(300);
