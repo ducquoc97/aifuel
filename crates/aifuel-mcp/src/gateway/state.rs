@@ -284,10 +284,7 @@ impl GatewayState {
                     .notify_resource_updated(server_id, &upstream_uri)
                     .await;
             } else {
-                eprintln!(
-                    "aifuel: could not restore resource subscription for server {:?}",
-                    server_id
-                );
+                eprintln!("aifuel: could not restore resource subscription for server {server_id}");
             }
         }
         Ok(connection)
