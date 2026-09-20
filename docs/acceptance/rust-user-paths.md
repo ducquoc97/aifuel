@@ -268,6 +268,9 @@ temporary Codex homes and left the saved Codex configuration unchanged.
   explicit provider selection, provider-specific model/access/output arguments,
   unsupported capabilities, nonzero exits, captured output, timeouts,
   continuation, stdin prompts, and working-directory behavior.
+- The stdin/working-directory process test uses a symlink alias and checks the
+  child process's physical working directory against the canonical target. The
+  macOS CI workflow must rerun this test after the fixture correction.
 - The public application facade passes cancellation to the selected adapter.
   The provider process test confirms cancellation stops and reaps its child
   process while retaining output produced before cancellation.
