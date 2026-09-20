@@ -152,6 +152,14 @@ stdio servers:
     "remote-docs": {
       "transport": "streamable-http",
       "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "private-docs": {
+      "transport": "streamable-http",
+      "url": "https://example.com/mcp",
+      "auth": { "bearerTokenEnv": "PRIVATE_MCP_TOKEN" },
+      "secretHeaders": {
+        "X-API-Key": { "env": "PRIVATE_MCP_API_KEY" }
+      }
     }
   },
   "defaults": [],
@@ -178,11 +186,25 @@ retry delay, and never replays a tool POST after a failure. A session-specific
 404 starts a fresh session without replaying the failed operation.
 
 Remote endpoints must use HTTPS or plain HTTP on loopback. Redirects are
-rejected, so configure the final endpoint URL. Remote authentication and secret
-headers are not supported yet; use a public endpoint or a server that does not
-require them. The gateway routes tools only. It does not route resources or
-prompts, or support task-based tool calls. The existing `aifuel mcp` read-only
-status server remains separate.
+rejected, so configure the final endpoint URL. A remote server may use one
+static bearer token reference, as in `private-docs` above. Set
+`PRIVATE_MCP_TOKEN` in the environment of the gateway process. AI Fuel resolves
+that value once at startup and sends it only as `Authorization: Bearer ...` to
+the configured endpoint. The value is never written to `mcp.json`, a host
+registration, or AI Fuel-generated logs or diagnostics. Missing or empty values fail that server;
+401 and 403 responses are reported without response bodies. Tokens are not
+refreshed, and monitoring credentials are never reused. If an MCP host filters
+environment variables for child processes, forward the named variable in that
+host's gateway registration without putting its value in the registration.
+Named secret headers use the same startup-only model. Set each referenced
+environment variable in the gateway process. Header names are checked against
+protocol, framing, content negotiation, session, and bearer headers; duplicate
+names are rejected case-insensitively. Named headers may coexist with bearer
+authentication and are sent only to the configured endpoint. Missing or empty
+values fail that server, and redirects never receive credentials. The gateway
+routes tools only. It does not route resources or prompts, or support
+task-based tool calls. The existing `aifuel mcp` read-only status server
+remains separate.
 
 ## What it tracks
 

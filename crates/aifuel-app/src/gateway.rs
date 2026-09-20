@@ -116,11 +116,22 @@ pub struct LiteralEnvironmentValue {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StreamableHttpServerDefinition {
     pub url: String,
-    pub auth: Option<BTreeMap<String, String>>,
+    pub auth: Option<BearerTokenAuth>,
     #[serde(default)]
     pub secret_headers: BTreeMap<String, NamedSecretHeader>,
     #[serde(default)]
     pub limits: ServerLimits,
+}
+
+/// Static authentication for one remote MCP endpoint.
+///
+/// The catalog stores only the environment variable name. The referenced
+/// value is resolved by the gateway process at startup and is never part of
+/// the catalog or an agent registration.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BearerTokenAuth {
+    pub bearer_token_env: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -246,6 +257,13 @@ impl GatewayCatalog {
                             "servers.{server_id}.url cannot be empty"
                         )));
                     }
+                    if let Some(auth) = &config.auth {
+                        validate_environment_reference(
+                            &format!("servers.{server_id}.auth.bearerTokenEnv"),
+                            &auth.bearer_token_env,
+                        )?;
+                    }
+                    validate_secret_headers(server_id, &config.secret_headers)?;
                     validate_server_limits(server_id, &config.limits)?;
                 }
             }
@@ -307,6 +325,106 @@ fn validate_environment(
         )));
     }
     Ok(())
+}
+
+fn validate_environment_reference(
+    location: &str,
+    reference: &str,
+) -> Result<(), GatewayConfigError> {
+    if reference.trim().is_empty() || reference.contains('=') || reference.contains('\0') {
+        return Err(GatewayConfigError(format!(
+            "{location} must name a non-empty environment variable"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_secret_headers(
+    server_id: &str,
+    headers: &BTreeMap<String, NamedSecretHeader>,
+) -> Result<(), GatewayConfigError> {
+    let mut seen = HashSet::new();
+    for (name, header) in headers {
+        if !is_valid_header_name(name) {
+            return Err(GatewayConfigError(format!(
+                "servers.{server_id}.secretHeaders contains an invalid header name"
+            )));
+        }
+        let normalized = name.to_ascii_lowercase();
+        if !seen.insert(normalized.clone()) {
+            return Err(GatewayConfigError(format!(
+                "servers.{server_id}.secretHeaders contains duplicate header names"
+            )));
+        }
+        if forbidden_secret_header_names()
+            .iter()
+            .any(|forbidden| *forbidden == normalized)
+        {
+            return Err(GatewayConfigError(format!(
+                "servers.{server_id}.secretHeaders contains a forbidden protocol header"
+            )));
+        }
+        validate_environment_reference(
+            &format!("servers.{server_id}.secretHeaders.{name}.env"),
+            &header.env,
+        )?;
+    }
+    Ok(())
+}
+
+fn is_valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            matches!(
+                byte,
+                b'0'..=b'9'
+                    | b'a'..=b'z'
+                    | b'A'..=b'Z'
+                    | b'!'
+                    | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'\''
+                    | b'*'
+                    | b'+'
+                    | b'-'
+                    | b'.'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'|'
+                    | b'~'
+            )
+        })
+}
+
+fn forbidden_secret_header_names() -> &'static [&'static str] {
+    &[
+        "accept",
+        "accept-charset",
+        "accept-encoding",
+        "accept-language",
+        "authorization",
+        "connection",
+        "content-encoding",
+        "content-language",
+        "content-length",
+        "content-type",
+        "host",
+        "keep-alive",
+        "last-event-id",
+        "mcp-method",
+        "mcp-name",
+        "mcp-protocol-version",
+        "mcp-session-id",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    ]
 }
 
 fn validate_server_limits(

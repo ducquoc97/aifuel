@@ -1,3 +1,4 @@
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Url, redirect::Policy};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
@@ -9,6 +10,8 @@ pub(super) struct RemoteEndpoint {
 
 pub(super) async fn connect_endpoint(
     value: &str,
+    bearer_token: Option<&str>,
+    secret_headers: &[(HeaderName, HeaderValue)],
     connect_timeout: Duration,
 ) -> Result<RemoteEndpoint, &'static str> {
     let url = Url::parse(value).map_err(|_| "remote MCP endpoint URL is invalid")?;
@@ -19,9 +22,26 @@ pub(super) async fn connect_endpoint(
     let host = url
         .host_str()
         .ok_or("remote MCP endpoint URL must include a host")?;
+    let mut default_headers = HeaderMap::new();
+    if let Some(token) = bearer_token {
+        let value = HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|_| "remote MCP bearer token could not be configured")?;
+        default_headers.insert(AUTHORIZATION, value);
+    }
+    for (name, value) in secret_headers {
+        default_headers.insert(name.clone(), value.clone());
+    }
+    let default_headers = if default_headers.is_empty() {
+        None
+    } else {
+        Some(default_headers)
+    };
     let mut builder = Client::builder()
         .connect_timeout(connect_timeout)
         .redirect(Policy::none());
+    if let Some(default_headers) = default_headers {
+        builder = builder.default_headers(default_headers);
+    }
 
     match url.scheme() {
         "https" => {}

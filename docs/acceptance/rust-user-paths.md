@@ -98,6 +98,36 @@ parsing and process behavior; they do not replace live provider acceptance.
   https://deepwiki.com/ducquoc97/aifuel to index it.` This is a DeepWiki
   repository-indexing error, not a gateway transport failure. The smoke used a
   temporary AI Fuel catalog and did not change Codex configuration.
+- The controlled authenticated Streamable HTTP fixture runs the real gateway
+  binary with a token supplied only through a temporary process environment.
+  It verifies the catalog's `auth.bearerTokenEnv` reference, Authorization
+  headers on initialization, notifications, discovery, calls, and shutdown,
+  and a successful authenticated tool call. Separate cases verify missing and
+  empty references fail before contacting the server, 401 and 403 responses
+  return sanitized diagnostics without response bodies or token text, static
+  credentials are not refreshed, and redirects do not forward Authorization
+  to the target endpoint. The token is generated at test runtime and no
+  credential value is committed.
+- No live private MCP credential was available for host acceptance. The
+  authenticated result above is controlled real-binary fixture evidence. The
+  public DeepWiki acceptance remains unauthenticated; no external credential
+  or monitoring credential was reused for this slice.
+- The controlled named-header Streamable HTTP fixture runs the real gateway
+  binary with environment-referenced `X-API-Key` and `X-Tenant` values. It
+  verifies those headers coexist with bearer authentication on initialization,
+  notifications, discovery, calls, and shutdown, and that they remain bound
+  to the configured endpoint. Central catalog tests reject case-insensitive
+  duplicates, invalid names and references, and protocol, framing, content
+  negotiation, session, and bearer headers. Runtime cases reject missing,
+  empty, and CR/LF-containing values before contacting the server. 401
+  responses are sanitized without response bodies or secret text, static
+  values are not refreshed, and redirects are rejected without contacting the
+  redirect target. Test credentials are generated at runtime; no credential
+  values appear in the catalog, registration, fixture source, or committed
+  acceptance record.
+- No live private MCP credential was available for named-header host
+  acceptance. The controlled real-binary fixture is the accepted runtime
+  evidence, and no monitoring or provider credential source was reused.
 - On 2026-09-18, Codex App Server 0.155.0 on Linux 6.6.87.2 WSL2 (x86_64,
   Ubuntu 24.4.0 user agent) loaded the gateway from a fresh temporary
   `CODEX_HOME` and an isolated `XDG_CONFIG_HOME`, both created under the
@@ -258,6 +288,40 @@ The earlier Codex CLI host check used a separately compiled local fixture
 server. The App Server follow-up above used public DeepWiki. Both checks used
 temporary Codex homes and left the saved Codex configuration unchanged.
 
+### Three-host gateway isolation and reuse
+
+- On 2026-09-20, `rustc 1.97.1` on Linux x86_64 WSL2 ran
+  `cargo test -p aifuel --test gateway_three_hosts --locked -- --exact
+  three_hosts_reuse_one_central_remote_server_with_isolated_sessions`.
+  The test launches the real `aifuel mcp gateway` binary three times with the
+  independent MCP Host ids `codex`, `claude`, and `copilot`.
+- All three processes read one temporary central catalog containing one
+  `streamable-http` server, `shared-docs`, in the default selection. No
+  host-specific server definitions or application-code changes are used. The
+  controlled loopback Streamable HTTP fixture returned one distinct upstream
+  session for each gateway. Each host listed `shared-docs__echo` and called it
+  through its own session, receiving the host-specific result
+  (`codex-result`, `claude-result`, or `copilot-result`).
+- Closing the Codex gateway completed its upstream `DELETE` session shutdown.
+  Subsequent calls through the Claude and Copilot gateways still reached their
+  original sessions and returned results. The test then shut down both
+  remaining gateways and verified their upstream sessions closed.
+- Existing process tests cover the remaining selection and activation rules:
+  `gateway_routes_multiple_selected_servers_with_defaults_and_exact_overrides`
+  verifies inherited defaults, replacement overrides, and an empty override;
+  `gateway_selection_is_snapshotted_until_a_new_process_starts` verifies that
+  edits become active after restart; and
+  `separate_gateways_keep_upstream_processes_and_cursors_isolated` verifies
+  independent local upstream processes and cursors. Adding a compatible
+  server is therefore a catalog-only change exercised at the gateway process
+  boundary.
+- This deterministic test uses host ids directly and does not claim that each
+  installed CLI can load and call the Gateway. Codex and Claude host paths have
+  separate live records above. Copilot CLI 1.0.85 and 1.0.86 remain blocked
+  from host tool-call acceptance because they send an unsupported
+  `server/discover` request for MCP `2026-07-28` before `initialize`; see the
+  Copilot section below.
+
 ## Agent Runs through registered execution adapters
 
 - Workspace tests invoke the real `aifuel` process with controlled executables
@@ -265,6 +329,9 @@ temporary Codex homes and left the saved Codex configuration unchanged.
   explicit provider selection, provider-specific model/access/output arguments,
   unsupported capabilities, nonzero exits, captured output, timeouts,
   continuation, stdin prompts, and working-directory behavior.
+- The stdin/working-directory process test uses a symlink alias and checks the
+  child process's physical working directory against the canonical target. The
+  macOS CI workflow must rerun this test after the fixture correction.
 - The public application facade passes cancellation to the selected adapter.
   The provider process test confirms cancellation stops and reaps its child
   process while retaining output produced before cancellation.

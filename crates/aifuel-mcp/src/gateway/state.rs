@@ -1,4 +1,7 @@
-use super::connection::ConnectedGatewayServer;
+use super::connection::{
+    ConnectedGatewayServer, ConnectionContext, ResolvedRemoteAuthentication,
+    ResolvedRemoteSecretHeaders, snapshot_remote_authentication, snapshot_remote_secret_headers,
+};
 use super::process::{ResolvedEnvironment, snapshot_environment};
 use super::progress::{GatewayEvents, ProgressRoutes};
 use super::resources::{ResourceSnapshot, make_snapshot as make_resource_snapshot};
@@ -35,6 +38,8 @@ pub(super) struct GatewayState {
 struct GatewayServerState {
     server: SelectedMcpServer,
     local_environment: Option<ResolvedEnvironment>,
+    remote_authentication: ResolvedRemoteAuthentication,
+    remote_secret_headers: Result<ResolvedRemoteSecretHeaders, &'static str>,
     connection: Mutex<Option<Arc<ConnectedGatewayServer>>>,
     snapshot: Mutex<Option<Arc<ServerToolSnapshot>>>,
     resource_snapshot: Mutex<Option<Arc<ResourceSnapshot>>>,
@@ -55,11 +60,15 @@ impl GatewayState {
             .map(|server| {
                 let local_environment = matches!(&server.definition, McpServerDefinition::Stdio(_))
                     .then(|| snapshot_environment(&server));
+                let remote_authentication = snapshot_remote_authentication(&server);
+                let remote_secret_headers = snapshot_remote_secret_headers(&server);
                 (
                     server.id.clone(),
                     Arc::new(GatewayServerState {
                         server,
                         local_environment,
+                        remote_authentication,
+                        remote_secret_headers,
                         connection: Mutex::new(None),
                         snapshot: Mutex::new(None),
                         resource_snapshot: Mutex::new(None),
@@ -209,7 +218,11 @@ impl GatewayState {
 
         let connection = ConnectedGatewayServer::connect(
             server.server.clone(),
-            server.local_environment.clone(),
+            ConnectionContext {
+                local_environment: server.local_environment.clone(),
+                remote_authentication: &server.remote_authentication,
+                remote_secret_headers: &server.remote_secret_headers,
+            },
             Duration::from_secs(self.limits.output_stall_seconds),
             Arc::clone(&self.events),
             Arc::clone(&self.progress),

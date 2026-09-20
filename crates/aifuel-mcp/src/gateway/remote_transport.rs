@@ -35,6 +35,8 @@ pub(super) enum RemoteHttpError {
     Cancelled,
     Closed,
     TimedOut,
+    AuthenticationFailed,
+    PermissionDenied,
     Message(&'static str),
     HttpStatus(u16),
 }
@@ -48,6 +50,8 @@ impl RemoteHttpError {
             Self::Cancelled => "remote MCP request was cancelled".to_owned(),
             Self::Closed => "remote MCP connection was closed".to_owned(),
             Self::TimedOut => "remote MCP request timed out; its outcome may be unknown".to_owned(),
+            Self::AuthenticationFailed => "remote MCP authentication failed".to_owned(),
+            Self::PermissionDenied => "remote MCP server denied access".to_owned(),
             Self::Message(message) => (*message).to_owned(),
             Self::HttpStatus(status) => format!("remote MCP server returned HTTP {status}"),
         }
