@@ -180,10 +180,8 @@ impl Transport<RoleClient> for RemoteHttpTransport {
                 let active = state.pending.lock().await.get(&cancelled_id).cloned();
                 if let Some(active) = active {
                     active.cancel();
-                    should_send = state.cancellations_sent.lock().await.insert(cancelled_id);
-                } else {
-                    should_send = false;
                 }
+                should_send = state.cancellations_sent.lock().await.insert(cancelled_id);
             }
             if !should_send {
                 return Ok(());
