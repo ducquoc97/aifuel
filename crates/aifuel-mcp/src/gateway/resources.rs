@@ -4,7 +4,8 @@ use rmcp::model::{
     ErrorData as McpError, ListResourceTemplatesResult, ListResourcesResult, RequestId, Resource,
     ResourceTemplate, ServerJsonRpcMessage, ServerResult,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// A complete, validated list snapshot for one selected upstream server.
@@ -14,11 +15,18 @@ use tokio::sync::Mutex;
 /// and list kind.
 pub(super) struct ResourceSnapshot {
     pub(super) id: u64,
-    pub(super) server_id: String,
+    pub(super) cursor_scope: String,
+    pub(super) server_ids: HashSet<String>,
     pub(super) resources: Vec<Resource>,
     pub(super) templates: Vec<ResourceTemplate>,
-    pub(super) resource_routes: HashMap<String, String>,
+    pub(super) resource_routes: HashMap<String, ResourceRoute>,
     pub(super) cursors: Mutex<HashMap<String, CursorPosition>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ResourceRoute {
+    pub(super) server_id: String,
+    pub(super) upstream_uri: String,
 }
 
 #[derive(Clone, Copy)]
@@ -37,7 +45,8 @@ impl ResourceSnapshot {
     pub(super) fn empty() -> Self {
         Self {
             id: 0,
-            server_id: String::new(),
+            cursor_scope: String::new(),
+            server_ids: HashSet::new(),
             resources: Vec::new(),
             templates: Vec::new(),
             resource_routes: HashMap::new(),
@@ -45,9 +54,9 @@ impl ResourceSnapshot {
         }
     }
 
-    pub(super) fn route(&self, uri: &str) -> Result<String, McpError> {
-        if let Some(upstream_uri) = self.resource_routes.get(uri) {
-            return Ok(upstream_uri.clone());
+    pub(super) fn route(&self, uri: &str) -> Result<ResourceRoute, McpError> {
+        if let Some(route) = self.resource_routes.get(uri) {
+            return Ok(route.clone());
         }
         let Ok((server_id, upstream_uri)) = decode_resource_uri(uri) else {
             return Err(McpError::invalid_params(
@@ -55,13 +64,16 @@ impl ResourceSnapshot {
                 None,
             ));
         };
-        if server_id != self.server_id {
+        if !self.server_ids.contains(&server_id) {
             return Err(McpError::invalid_params(
                 "gateway resource URI addresses an unselected server",
                 None,
             ));
         }
-        Ok(upstream_uri)
+        Ok(ResourceRoute {
+            server_id,
+            upstream_uri,
+        })
     }
 
     pub(super) async fn page_resources(
@@ -86,7 +98,7 @@ impl ResourceSnapshot {
             page.push(self.resources[end].clone());
             let next_offset = end + 1;
             let next_cursor = (next_offset < self.resources.len())
-                .then(|| snapshot_cursor("resources", &self.server_id, self.id, next_offset));
+                .then(|| snapshot_cursor("resources", &self.cursor_scope, self.id, next_offset));
             let candidate = ListResourcesResult {
                 meta: None,
                 next_cursor: next_cursor.clone(),
@@ -101,8 +113,9 @@ impl ResourceSnapshot {
                     ));
                 }
                 let next_offset = start + page.len();
-                let next_cursor = (next_offset < self.resources.len())
-                    .then(|| snapshot_cursor("resources", &self.server_id, self.id, next_offset));
+                let next_cursor = (next_offset < self.resources.len()).then(|| {
+                    snapshot_cursor("resources", &self.cursor_scope, self.id, next_offset)
+                });
                 let result = ListResourcesResult {
                     meta: None,
                     next_cursor: next_cursor.clone(),
@@ -144,7 +157,12 @@ impl ResourceSnapshot {
             page.push(self.templates[end].clone());
             let next_offset = end + 1;
             let next_cursor = (next_offset < self.templates.len()).then(|| {
-                snapshot_cursor("resource-templates", &self.server_id, self.id, next_offset)
+                snapshot_cursor(
+                    "resource-templates",
+                    &self.cursor_scope,
+                    self.id,
+                    next_offset,
+                )
             });
             let candidate = ListResourceTemplatesResult {
                 meta: None,
@@ -161,7 +179,12 @@ impl ResourceSnapshot {
                 }
                 let next_offset = start + page.len();
                 let next_cursor = (next_offset < self.templates.len()).then(|| {
-                    snapshot_cursor("resource-templates", &self.server_id, self.id, next_offset)
+                    snapshot_cursor(
+                        "resource-templates",
+                        &self.cursor_scope,
+                        self.id,
+                        next_offset,
+                    )
                 });
                 let result = ListResourceTemplatesResult {
                     meta: None,
@@ -228,7 +251,13 @@ pub(super) fn make_snapshot(
         let gateway_uri = resource_uri(&server.id, &upstream_uri)
             .map_err(|error| McpError::invalid_params(error, None))?;
         if resource_routes
-            .insert(gateway_uri.clone(), upstream_uri)
+            .insert(
+                gateway_uri.clone(),
+                ResourceRoute {
+                    server_id: server.id.clone(),
+                    upstream_uri,
+                },
+            )
             .is_some()
         {
             return Err(McpError::internal_error(
@@ -262,7 +291,50 @@ pub(super) fn make_snapshot(
     }
     Ok(ResourceSnapshot {
         id: snapshot_id,
-        server_id: server.id.clone(),
+        cursor_scope: server.id.clone(),
+        server_ids: HashSet::from([server.id.clone()]),
+        resources,
+        templates,
+        resource_routes,
+        cursors: Mutex::new(HashMap::new()),
+    })
+}
+
+pub(super) fn aggregate(
+    cursor_scope: &str,
+    snapshots: &[Arc<ResourceSnapshot>],
+    snapshot_id: u64,
+) -> Result<ResourceSnapshot, McpError> {
+    let mut ordered = snapshots.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.cursor_scope.cmp(&right.cursor_scope));
+
+    let mut resources = Vec::new();
+    let mut templates = Vec::new();
+    let mut resource_routes = HashMap::new();
+    let mut server_ids = HashSet::new();
+    for snapshot in ordered {
+        server_ids.extend(snapshot.server_ids.iter().cloned());
+        for resource in &snapshot.resources {
+            if resource_routes.contains_key(&resource.uri) {
+                return Err(McpError::internal_error(
+                    "selected MCP servers contain conflicting gateway resource identities",
+                    None,
+                ));
+            }
+            let route = snapshot.resource_routes.get(&resource.uri).ok_or_else(|| {
+                McpError::internal_error("selected MCP resource snapshot is invalid", None)
+            })?;
+            resource_routes.insert(resource.uri.clone(), route.clone());
+            resources.push(resource.clone());
+        }
+        templates.extend(snapshot.templates.iter().cloned());
+    }
+    resources.sort_by(|left, right| left.uri.cmp(&right.uri));
+    templates.sort_by(|left, right| left.uri_template.cmp(&right.uri_template));
+    Ok(ResourceSnapshot {
+        id: snapshot_id,
+        cursor_scope: cursor_scope.to_owned(),
+        server_ids,
         resources,
         templates,
         resource_routes,

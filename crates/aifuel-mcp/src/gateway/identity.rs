@@ -26,8 +26,13 @@ pub(crate) fn tool_name(server_id: &str, upstream_name: &str) -> String {
     shortened
 }
 
-pub(crate) fn cursor(server_id: &str, snapshot_id: u64, offset: usize) -> String {
-    let input = format!("{server_id}\0{snapshot_id}\0{offset}");
+pub(crate) fn cursor(
+    listing_kind: &str,
+    gateway_scope: &str,
+    snapshot_id: u64,
+    offset: usize,
+) -> String {
+    let input = format!("{listing_kind}\0{gateway_scope}\0{snapshot_id}\0{offset}");
     let digest = Sha256::digest(input.as_bytes());
     let mut cursor = String::with_capacity(67);
     cursor.push_str("g1-");
@@ -167,7 +172,7 @@ fn decode_utf8_hex(value: &str, label: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_resource_uri, resource_template, resource_uri, tool_name};
+    use super::{cursor, decode_resource_uri, resource_template, resource_uri, tool_name};
 
     #[test]
     fn tool_name_keeps_the_server_and_tool_pair_unambiguous() {
@@ -217,5 +222,14 @@ mod tests {
     fn variable_scheme_templates_are_rejected() {
         assert!(resource_template("docs", "{scheme}:///{path}").is_err());
         assert!(resource_template("docs", "/relative/{path}").is_err());
+    }
+
+    #[test]
+    fn cursors_are_scoped_to_the_listing_and_gateway_session() {
+        let tools = cursor("tools", "gateway-one", 3, 4);
+
+        assert_ne!(tools, cursor("resources", "gateway-one", 3, 4));
+        assert_ne!(tools, cursor("tools", "gateway-two", 3, 4));
+        assert_ne!(tools, cursor("tools", "gateway-one", 3, 5));
     }
 }

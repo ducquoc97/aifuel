@@ -43,12 +43,8 @@ impl ServerHandler for GatewayServerHandler {
     ) -> Result<ListToolsResult, McpError> {
         let _request_permit = self.state.try_request_slot()?;
         let cursor = request.and_then(|request| request.cursor);
-        let discovery_deadline = Instant::now()
-            + Duration::from_secs(
-                self.state
-                    .selected_limits()
-                    .map_or(30, |limits| limits.discovery_seconds),
-            );
+        let discovery_deadline =
+            Instant::now() + Duration::from_secs(self.state.discovery_seconds());
         let snapshot = self
             .state
             .tool_snapshot(context.ct.clone(), discovery_deadline)
@@ -69,12 +65,8 @@ impl ServerHandler for GatewayServerHandler {
     ) -> Result<ListResourcesResult, McpError> {
         let _request_permit = self.state.try_request_slot()?;
         let cursor = request.and_then(|request| request.cursor);
-        let discovery_deadline = Instant::now()
-            + Duration::from_secs(
-                self.state
-                    .selected_limits()
-                    .map_or(30, |limits| limits.discovery_seconds),
-            );
+        let discovery_deadline =
+            Instant::now() + Duration::from_secs(self.state.discovery_seconds());
         let snapshot = self
             .state
             .resource_snapshot(context.ct.clone(), discovery_deadline)
@@ -95,12 +87,8 @@ impl ServerHandler for GatewayServerHandler {
     ) -> Result<ListResourceTemplatesResult, McpError> {
         let _request_permit = self.state.try_request_slot()?;
         let cursor = request.and_then(|request| request.cursor);
-        let discovery_deadline = Instant::now()
-            + Duration::from_secs(
-                self.state
-                    .selected_limits()
-                    .map_or(30, |limits| limits.discovery_seconds),
-            );
+        let discovery_deadline =
+            Instant::now() + Duration::from_secs(self.state.discovery_seconds());
         let snapshot = self
             .state
             .resource_snapshot(context.ct.clone(), discovery_deadline)
@@ -125,20 +113,17 @@ impl ServerHandler for GatewayServerHandler {
             .state
             .resource_snapshot(context.ct.clone(), deadline)
             .await?;
-        let upstream_uri = snapshot.route(&request.uri)?;
-        let Some(connection) = self.state.connection(context.ct.clone(), deadline).await? else {
-            return Err(McpError::new(
-                ErrorCode::METHOD_NOT_FOUND,
-                "no external MCP server is selected for this MCP Host",
-                None,
-            ));
-        };
+        let route = snapshot.route(&request.uri)?;
+        let connection = self
+            .state
+            .connection(&route.server_id, context.ct.clone(), deadline)
+            .await?;
         let _server_permit = connection.try_request_slot()?;
         let mut result = connection
-            .read_resource(upstream_uri, deadline, context.ct.clone())
+            .read_resource(route.upstream_uri, deadline, context.ct.clone())
             .await?;
         for contents in &mut result.contents {
-            rewrite_read_contents(contents, &snapshot.server_id)?;
+            rewrite_read_contents(contents, &route.server_id)?;
         }
         if read_result_bytes(&result, &context.id)? > self.state.max_message_bytes() {
             return Err(McpError::internal_error(
@@ -160,28 +145,25 @@ impl ServerHandler for GatewayServerHandler {
             .state
             .resource_snapshot(context.ct.clone(), deadline)
             .await?;
-        let upstream_uri = snapshot.route(&request.uri)?;
-        let Some(connection) = self.state.connection(context.ct.clone(), deadline).await? else {
-            return Err(McpError::new(
-                ErrorCode::METHOD_NOT_FOUND,
-                "no external MCP server is selected for this MCP Host",
-                None,
-            ));
-        };
+        let route = snapshot.route(&request.uri)?;
+        let connection = self
+            .state
+            .connection(&route.server_id, context.ct.clone(), deadline)
+            .await?;
         let fresh = self
             .state
             .events
-            .register_subscription(&snapshot.server_id, &upstream_uri, &request.uri)
+            .register_subscription(&route.server_id, &route.upstream_uri, &request.uri)
             .await;
         if fresh
             && let Err(error) = connection
-                .subscribe(upstream_uri.clone(), deadline, context.ct.clone())
+                .subscribe(route.upstream_uri.clone(), deadline, context.ct.clone())
                 .await
         {
             let _ = self
                 .state
                 .events
-                .unregister_subscription(&snapshot.server_id, &upstream_uri)
+                .unregister_subscription(&route.server_id, &route.upstream_uri)
                 .await;
             return Err(error);
         }
@@ -199,11 +181,11 @@ impl ServerHandler for GatewayServerHandler {
             .state
             .resource_snapshot(context.ct.clone(), deadline)
             .await?;
-        let upstream_uri = snapshot.route(&request.uri)?;
+        let route = snapshot.route(&request.uri)?;
         if !self
             .state
             .events
-            .unregister_subscription(&snapshot.server_id, &upstream_uri)
+            .unregister_subscription(&route.server_id, &route.upstream_uri)
             .await
         {
             return Err(McpError::invalid_params(
@@ -211,20 +193,18 @@ impl ServerHandler for GatewayServerHandler {
                 None,
             ));
         }
-        let Some(connection) = self.state.connection(context.ct.clone(), deadline).await? else {
-            return Err(McpError::internal_error(
-                "selected MCP server is unavailable",
-                None,
-            ));
-        };
+        let connection = self
+            .state
+            .connection(&route.server_id, context.ct.clone(), deadline)
+            .await?;
         if let Err(error) = connection
-            .unsubscribe(upstream_uri.clone(), deadline, context.ct.clone())
+            .unsubscribe(route.upstream_uri.clone(), deadline, context.ct.clone())
             .await
         {
             let _ = self
                 .state
                 .events
-                .register_subscription(&snapshot.server_id, &upstream_uri, &request.uri)
+                .register_subscription(&route.server_id, &route.upstream_uri, &request.uri)
                 .await;
             return Err(error);
         }
@@ -243,33 +223,43 @@ impl ServerHandler for GatewayServerHandler {
             ));
         }
         let _request_permit = self.state.try_request_slot()?;
-        let operation_deadline = Instant::now()
-            + Duration::from_secs(
-                self.state
-                    .selected_limits()
-                    .map_or(120, |limits| limits.operation_seconds),
-            );
+        let request_started = Instant::now();
+        let snapshot_deadline =
+            request_started + Duration::from_secs(self.state.operation_seconds());
         let snapshot = self
             .state
-            .tool_snapshot(context.ct.clone(), operation_deadline)
+            .tool_snapshot(context.ct.clone(), snapshot_deadline)
             .await?;
-        let Some(upstream_name) = snapshot.routes.get(request.name.as_ref()).cloned() else {
+        let Some(route) = snapshot.routes.get(request.name.as_ref()).cloned() else {
             return Err(McpError::new(
                 ErrorCode::METHOD_NOT_FOUND,
                 "unknown gateway tool name",
                 None,
             ));
         };
-        let Some(connection) = self
+        let operation_deadline = request_started
+            + Duration::from_secs(
+                self.state
+                    .operation_seconds_for(&route.server_id)
+                    .unwrap_or(120),
+            );
+        if operation_deadline <= Instant::now() {
+            return Ok(tool_error("external MCP tool call exceeded its deadline"));
+        }
+        let connection = match self
             .state
-            .connection(context.ct.clone(), operation_deadline)
-            .await?
-        else {
-            return Err(McpError::new(
-                ErrorCode::METHOD_NOT_FOUND,
-                "no external MCP server is selected for this MCP Host",
-                None,
-            ));
+            .connection(&route.server_id, context.ct.clone(), operation_deadline)
+            .await
+        {
+            Ok(connection) => connection,
+            Err(_) if context.ct.is_cancelled() => {
+                return Err(McpError::new(
+                    ErrorCode(-32800),
+                    "MCP request was cancelled",
+                    None,
+                ));
+            }
+            Err(_) => return Ok(tool_error("selected MCP server is unavailable")),
         };
         let _server_permit = connection.try_request_slot()?;
         let host_progress = context.meta.get_progress_token().or_else(|| {
@@ -284,10 +274,10 @@ impl ServerHandler for GatewayServerHandler {
         }
         let has_host_progress = host_progress.is_some();
         if has_host_progress {
-            self.state.progress.begin_request();
+            self.state.progress.begin_request(&route.server_id).await;
         }
 
-        let mut params = CallToolRequestParams::new(upstream_name);
+        let mut params = CallToolRequestParams::new(route.upstream_name.clone());
         params.arguments = request.arguments;
         params.meta = request
             .meta
@@ -307,13 +297,19 @@ impl ServerHandler for GatewayServerHandler {
             Ok(Ok(handle)) => handle,
             Ok(Err(_)) => {
                 if has_host_progress {
-                    self.state.progress.cancel_unbound_request();
+                    self.state
+                        .progress
+                        .cancel_unbound_request(&route.server_id)
+                        .await;
                 }
                 return Ok(tool_error("selected MCP server is unavailable"));
             }
             Err(_) => {
                 if has_host_progress {
-                    self.state.progress.cancel_unbound_request();
+                    self.state
+                        .progress
+                        .cancel_unbound_request(&route.server_id)
+                        .await;
                 }
                 return Ok(tool_error("external MCP tool call exceeded its deadline"));
             }
@@ -323,17 +319,25 @@ impl ServerHandler for GatewayServerHandler {
         if let Some(host_progress) = host_progress {
             self.state
                 .progress
-                .register(upstream_progress.clone(), context.peer, host_progress)
+                .register(
+                    &route.server_id,
+                    upstream_progress.clone(),
+                    context.peer,
+                    host_progress,
+                )
                 .await;
         }
         let result = await_server_result(handle, operation_deadline, context.ct).await;
         if has_host_progress {
-            self.state.progress.remove(&upstream_progress).await;
+            self.state
+                .progress
+                .remove(&route.server_id, &upstream_progress)
+                .await;
         }
 
         match result {
             Ok(ServerResult::CallToolResult(result)) => {
-                let result = rewrite_tool_result(result, &snapshot.server_id)?;
+                let result = rewrite_tool_result(result, &route.server_id)?;
                 if tool_result_bytes(&result, &context.id)? > self.state.max_message_bytes() {
                     return Ok(tool_error(
                         "external MCP tool result exceeds the host message byte limit",
@@ -399,12 +403,7 @@ fn server_info(protocol_version: ProtocolVersion) -> InitializeResult {
 }
 
 fn operation_deadline(state: &GatewayState) -> Instant {
-    Instant::now()
-        + Duration::from_secs(
-            state
-                .selected_limits()
-                .map_or(120, |limits| limits.operation_seconds),
-        )
+    Instant::now() + Duration::from_secs(state.operation_seconds())
 }
 
 fn rewrite_read_contents(contents: &mut ResourceContents, server_id: &str) -> Result<(), McpError> {

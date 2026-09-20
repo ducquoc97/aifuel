@@ -92,9 +92,13 @@ pub fn response_reader(child: &mut Child) -> Receiver<String> {
 }
 
 pub fn start_gateway(config_root: &Path) -> (Child, Receiver<String>) {
+    start_gateway_for_agent(config_root, "codex")
+}
+
+pub fn start_gateway_for_agent(config_root: &Path, agent_id: &str) -> (Child, Receiver<String>) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aifuel"));
     command
-        .args(["mcp", "gateway", "--agent", "codex"])
+        .args(["mcp", "gateway", "--agent", agent_id])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
