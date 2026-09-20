@@ -151,3 +151,120 @@ fn gateway_facade_rejects_an_empty_bearer_environment_reference() {
         .expect_err("empty bearer environment references must be rejected");
     assert!(error.to_string().contains("bearerTokenEnv"));
 }
+
+#[test]
+fn gateway_facade_keeps_named_secret_header_references_in_the_central_catalog() {
+    let catalog = br#"{
+        "servers": {
+            "private": {
+                "transport":"streamable-http",
+                "url":"https://example.test/mcp",
+                "auth":{"bearerTokenEnv":"PRIVATE_MCP_TOKEN"},
+                "secretHeaders":{
+                    "X-API-Key":{"env":"PRIVATE_MCP_API_KEY"},
+                    "X-Tenant":{"env":"PRIVATE_MCP_TENANT"}
+                }
+            }
+        },
+        "defaults":["private"]
+    }"#;
+
+    let facade = McpGatewayFacade::from_json(catalog, "codex", "/home/test")
+        .expect("named secret header references should be valid");
+    let McpServerDefinition::StreamableHttp(server) = &facade.selected_servers()[0].definition
+    else {
+        panic!("the catalog should select a remote server");
+    };
+    assert_eq!(
+        server.secret_headers["X-API-Key"].env,
+        "PRIVATE_MCP_API_KEY"
+    );
+    assert_eq!(server.secret_headers["X-Tenant"].env, "PRIVATE_MCP_TENANT");
+}
+
+#[test]
+fn gateway_facade_rejects_case_insensitive_duplicate_secret_headers() {
+    let catalog = br#"{
+        "servers": {
+            "private": {
+                "transport":"streamable-http",
+                "url":"https://example.test/mcp",
+                "secretHeaders":{
+                    "X-API-Key":{"env":"ONE"},
+                    "x-api-key":{"env":"TWO"}
+                }
+            }
+        },
+        "defaults":["private"]
+    }"#;
+
+    let error = McpGatewayFacade::from_json(catalog, "codex", "/home/test")
+        .expect_err("header names must be unique case-insensitively");
+    assert!(error.to_string().contains("duplicate header names"));
+}
+
+#[test]
+fn gateway_facade_rejects_forbidden_secret_headers_case_insensitively() {
+    for name in [
+        "Host",
+        "connection",
+        "Content-Length",
+        "Transfer-Encoding",
+        "Accept",
+        "Accept-Charset",
+        "Accept-Encoding",
+        "Accept-Language",
+        "Content-Type",
+        "Content-Encoding",
+        "Content-Language",
+        "Keep-Alive",
+        "Last-Event-ID",
+        "MCP-Method",
+        "MCP-Name",
+        "MCP-Protocol-Version",
+        "mCp-SeSsIoN-Id",
+        "Authorization",
+        "Proxy-Authorization",
+        "Proxy-Authenticate",
+        "TE",
+        "Trailer",
+        "Upgrade",
+    ] {
+        let catalog = format!(
+            r#"{{
+                "servers": {{
+                    "private": {{
+                        "transport":"streamable-http",
+                        "url":"https://example.test/mcp",
+                        "secretHeaders":{{"{name}":{{"env":"SECRET"}}}}
+                    }}
+                }},
+                "defaults":["private"]
+            }}"#
+        );
+        let error = McpGatewayFacade::from_json(catalog.as_bytes(), "codex", "/home/test")
+            .expect_err("protocol and framing headers must be reserved");
+        assert!(error.to_string().contains("forbidden protocol header"));
+    }
+}
+
+#[test]
+fn gateway_facade_rejects_invalid_secret_header_names_and_references() {
+    for (name, environment) in [("X Bad", "SECRET"), ("X-Good", "  ")] {
+        let catalog = format!(
+            r#"{{
+                "servers": {{
+                    "private": {{
+                        "transport":"streamable-http",
+                        "url":"https://example.test/mcp",
+                        "secretHeaders":{{"{name}":{{"env":"{environment}"}}}}
+                    }}
+                }},
+                "defaults":["private"]
+            }}"#
+        );
+        let error = McpGatewayFacade::from_json(catalog.as_bytes(), "codex", "/home/test")
+            .expect_err("invalid header definitions must be rejected");
+        assert!(error.to_string().contains("secretHeaders"));
+    }
+}

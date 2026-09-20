@@ -4,6 +4,7 @@ use super::remote_endpoint::connect_endpoint;
 use super::remote_transport::{RemoteHttpTransport, RemoteSession};
 use super::request::{UpstreamRequestError, await_server_result};
 use aifuel_app::{McpServerDefinition, SelectedMcpServer, ServerLimits};
+use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::ServiceExt;
 use rmcp::model::{
     ClientRequest, ErrorCode, ErrorData as McpError, ListToolsRequest, PaginatedRequestParams,
@@ -37,6 +38,22 @@ pub(super) enum ResolvedRemoteAuthentication {
     InvalidEncoding,
 }
 
+pub(super) struct ResolvedRemoteSecretHeaders {
+    headers: Vec<(HeaderName, HeaderValue)>,
+}
+
+impl ResolvedRemoteSecretHeaders {
+    fn unauthenticated() -> Self {
+        Self {
+            headers: Vec::new(),
+        }
+    }
+
+    fn headers(&self) -> &[(HeaderName, HeaderValue)] {
+        &self.headers
+    }
+}
+
 pub(super) fn snapshot_remote_authentication(
     server: &SelectedMcpServer,
 ) -> ResolvedRemoteAuthentication {
@@ -56,9 +73,41 @@ pub(super) fn snapshot_remote_authentication(
     }
 }
 
+pub(super) fn snapshot_remote_secret_headers(
+    server: &SelectedMcpServer,
+) -> Result<ResolvedRemoteSecretHeaders, &'static str> {
+    let McpServerDefinition::StreamableHttp(config) = &server.definition else {
+        return Ok(ResolvedRemoteSecretHeaders::unauthenticated());
+    };
+    if config.secret_headers.is_empty() {
+        return Ok(ResolvedRemoteSecretHeaders::unauthenticated());
+    }
+
+    let mut headers = Vec::with_capacity(config.secret_headers.len());
+    for (name, definition) in &config.secret_headers {
+        let value = match env::var_os(&definition.env) {
+            None => return Err("remote MCP named secret header credential is missing"),
+            Some(value) => match value.to_str() {
+                None => {
+                    return Err("remote MCP named secret header credential is not valid text");
+                }
+                Some("") => return Err("remote MCP named secret header credential is empty"),
+                Some(value) => HeaderValue::from_str(value).map_err(
+                    |_| "remote MCP named secret header credential contains invalid bytes",
+                )?,
+            },
+        };
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| "remote MCP named secret header name is invalid")?;
+        headers.push((name, value));
+    }
+    Ok(ResolvedRemoteSecretHeaders { headers })
+}
+
 pub(super) struct ConnectionContext<'a> {
     pub(super) local_environment: Option<ResolvedEnvironment>,
     pub(super) remote_authentication: &'a ResolvedRemoteAuthentication,
+    pub(super) remote_secret_headers: &'a Result<ResolvedRemoteSecretHeaders, &'static str>,
 }
 
 impl ConnectionOwner {
@@ -136,12 +185,6 @@ impl ConnectedGatewayServer {
                 (service, owner)
             }
             McpServerDefinition::StreamableHttp(config) => {
-                if !config.secret_headers.is_empty() {
-                    return Err(McpError::internal_error(
-                        "remote MCP named secret headers are not available in this transport slice",
-                        None,
-                    ));
-                }
                 let bearer_token = match context.remote_authentication {
                     ResolvedRemoteAuthentication::Unauthenticated => None,
                     ResolvedRemoteAuthentication::BearerToken(token) => Some(token.as_str()),
@@ -164,9 +207,14 @@ impl ConnectedGatewayServer {
                         ));
                     }
                 };
+                let secret_headers = match context.remote_secret_headers {
+                    Ok(headers) => headers.headers(),
+                    Err(error) => return Err(McpError::internal_error(*error, None)),
+                };
                 let endpoint = connect_endpoint(
                     &config.url,
                     bearer_token,
+                    secret_headers,
                     Duration::from_secs(limits.connect_seconds),
                 )
                 .await
