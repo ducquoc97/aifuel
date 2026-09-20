@@ -96,6 +96,21 @@ pub fn start_gateway(config_root: &Path) -> (Child, Receiver<String>) {
 }
 
 pub fn start_gateway_for_agent(config_root: &Path, agent_id: &str) -> (Child, Receiver<String>) {
+    start_gateway_for_agent_with_environment(config_root, agent_id, &[])
+}
+
+pub fn start_gateway_with_environment(
+    config_root: &Path,
+    environment: &[(&str, &str)],
+) -> (Child, Receiver<String>) {
+    start_gateway_for_agent_with_environment(config_root, "codex", environment)
+}
+
+fn start_gateway_for_agent_with_environment(
+    config_root: &Path,
+    agent_id: &str,
+    environment: &[(&str, &str)],
+) -> (Child, Receiver<String>) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aifuel"));
     command
         .args(["mcp", "gateway", "--agent", agent_id])
@@ -104,6 +119,9 @@ pub fn start_gateway_for_agent(config_root: &Path, agent_id: &str) -> (Child, Re
         .stderr(Stdio::piped())
         .env("AIFUEL_TEST_UNLISTED_SECRET", "must-not-inherit")
         .env("AIFUEL_TEST_SECRET_SOURCE", "fixture-secret");
+    for (key, value) in environment {
+        command.env(key, value);
+    }
     configure_user_config_root(&mut command, config_root);
     let mut child = command.spawn().expect("gateway command should start");
     let responses = response_reader(&mut child);

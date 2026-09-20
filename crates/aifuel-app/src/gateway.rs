@@ -116,11 +116,22 @@ pub struct LiteralEnvironmentValue {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StreamableHttpServerDefinition {
     pub url: String,
-    pub auth: Option<BTreeMap<String, String>>,
+    pub auth: Option<BearerTokenAuth>,
     #[serde(default)]
     pub secret_headers: BTreeMap<String, NamedSecretHeader>,
     #[serde(default)]
     pub limits: ServerLimits,
+}
+
+/// Static authentication for one remote MCP endpoint.
+///
+/// The catalog stores only the environment variable name. The referenced
+/// value is resolved by the gateway process at startup and is never part of
+/// the catalog or an agent registration.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BearerTokenAuth {
+    pub bearer_token_env: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -246,6 +257,12 @@ impl GatewayCatalog {
                             "servers.{server_id}.url cannot be empty"
                         )));
                     }
+                    if let Some(auth) = &config.auth {
+                        validate_environment_reference(
+                            &format!("servers.{server_id}.auth.bearerTokenEnv"),
+                            &auth.bearer_token_env,
+                        )?;
+                    }
                     validate_server_limits(server_id, &config.limits)?;
                 }
             }
@@ -304,6 +321,18 @@ fn validate_environment(
     {
         return Err(GatewayConfigError(format!(
             "servers.{server_id}.envFrom contains an empty environment reference"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_environment_reference(
+    location: &str,
+    reference: &str,
+) -> Result<(), GatewayConfigError> {
+    if reference.trim().is_empty() || reference.contains('=') || reference.contains('\0') {
+        return Err(GatewayConfigError(format!(
+            "{location} must name a non-empty environment variable"
         )));
     }
     Ok(())

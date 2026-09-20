@@ -11,6 +11,7 @@ use rmcp::model::{
 };
 use rmcp::service::{Peer, PeerRequestOptions, RoleClient, RunningService};
 use rmcp::transport::Transport;
+use std::env;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +24,41 @@ type UpstreamService = RunningService<RoleClient, GatewayUpstreamHandler>;
 enum ConnectionOwner {
     Local(LocalProcess),
     Remote(RemoteSession),
+}
+
+/// A startup snapshot of the only remote credential supported by this slice.
+///
+/// The token is intentionally kept out of `Debug` output and error messages.
+pub(super) enum ResolvedRemoteAuthentication {
+    Unauthenticated,
+    BearerToken(String),
+    Missing,
+    Empty,
+    InvalidEncoding,
+}
+
+pub(super) fn snapshot_remote_authentication(
+    server: &SelectedMcpServer,
+) -> ResolvedRemoteAuthentication {
+    let McpServerDefinition::StreamableHttp(config) = &server.definition else {
+        return ResolvedRemoteAuthentication::Unauthenticated;
+    };
+    let Some(auth) = &config.auth else {
+        return ResolvedRemoteAuthentication::Unauthenticated;
+    };
+    match env::var_os(&auth.bearer_token_env) {
+        None => ResolvedRemoteAuthentication::Missing,
+        Some(value) => match value.to_str() {
+            None => ResolvedRemoteAuthentication::InvalidEncoding,
+            Some("") => ResolvedRemoteAuthentication::Empty,
+            Some(value) => ResolvedRemoteAuthentication::BearerToken(value.to_owned()),
+        },
+    }
+}
+
+pub(super) struct ConnectionContext<'a> {
+    pub(super) local_environment: Option<ResolvedEnvironment>,
+    pub(super) remote_authentication: &'a ResolvedRemoteAuthentication,
 }
 
 impl ConnectionOwner {
@@ -52,7 +88,7 @@ pub(super) struct ConnectedGatewayServer {
 impl ConnectedGatewayServer {
     pub(super) async fn connect(
         server: SelectedMcpServer,
-        local_environment: Option<ResolvedEnvironment>,
+        context: ConnectionContext<'_>,
         write_stall: Duration,
         events: Arc<GatewayEvents>,
         progress: Arc<ProgressRoutes>,
@@ -65,7 +101,7 @@ impl ConnectedGatewayServer {
         };
         let (service, owner) = match &server.definition {
             McpServerDefinition::Stdio(_) => {
-                let environment = local_environment.ok_or_else(|| {
+                let environment = context.local_environment.ok_or_else(|| {
                     McpError::internal_error(
                         "configured local MCP server environment was not captured at startup",
                         None,
@@ -104,16 +140,41 @@ impl ConnectedGatewayServer {
                 (service, owner)
             }
             McpServerDefinition::StreamableHttp(config) => {
-                if config.auth.is_some() || !config.secret_headers.is_empty() {
+                if !config.secret_headers.is_empty() {
                     return Err(McpError::internal_error(
-                        "remote MCP authentication is not available in this transport slice",
+                        "remote MCP named secret headers are not available in this transport slice",
                         None,
                     ));
                 }
-                let endpoint =
-                    connect_endpoint(&config.url, Duration::from_secs(limits.connect_seconds))
-                        .await
-                        .map_err(|error| McpError::internal_error(error, None))?;
+                let bearer_token = match context.remote_authentication {
+                    ResolvedRemoteAuthentication::Unauthenticated => None,
+                    ResolvedRemoteAuthentication::BearerToken(token) => Some(token.as_str()),
+                    ResolvedRemoteAuthentication::Missing => {
+                        return Err(McpError::internal_error(
+                            "remote MCP bearer token is missing",
+                            None,
+                        ));
+                    }
+                    ResolvedRemoteAuthentication::Empty => {
+                        return Err(McpError::internal_error(
+                            "remote MCP bearer token is empty",
+                            None,
+                        ));
+                    }
+                    ResolvedRemoteAuthentication::InvalidEncoding => {
+                        return Err(McpError::internal_error(
+                            "remote MCP bearer token is not a valid text credential",
+                            None,
+                        ));
+                    }
+                };
+                let endpoint = connect_endpoint(
+                    &config.url,
+                    bearer_token,
+                    Duration::from_secs(limits.connect_seconds),
+                )
+                .await
+                .map_err(|error| McpError::internal_error(error, None))?;
                 let (transport, session) =
                     RemoteHttpTransport::new(endpoint, server.id.clone(), limits.clone());
                 let mut owner = ConnectionOwner::Remote(session);
