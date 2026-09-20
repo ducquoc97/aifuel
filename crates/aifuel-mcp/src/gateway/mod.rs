@@ -4,6 +4,7 @@ mod host_transport;
 mod identity;
 mod process;
 mod progress;
+mod prompts;
 mod remote_endpoint;
 mod remote_transport;
 mod request;
@@ -14,7 +15,7 @@ mod state;
 mod transport;
 
 use aifuel_app::McpGatewayFacade;
-use handler::GatewayServerHandler;
+use handler::{GatewayServerHandler, GatewayServerService};
 use rmcp::ServiceExt;
 use state::GatewayState;
 use std::sync::Arc;
@@ -38,7 +39,7 @@ pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
     )
     .map_err(|_| "MCP Gateway could not start its output writer".to_owned())?;
     let server = GatewayServerHandler::new(Arc::clone(&state));
-    let service = server
+    let service = GatewayServerService::new(server)
         .serve_with_ct(transport, cancellation.clone())
         .await
         .map_err(|_| "MCP Gateway could not initialize the host protocol session".to_owned())?;
@@ -46,6 +47,8 @@ pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
     let updates = tokio::spawn(Arc::clone(&state).watch_tool_list_changes(cancellation.clone()));
     let resource_updates =
         tokio::spawn(Arc::clone(&state).watch_resource_list_changes(cancellation.clone()));
+    let prompt_updates =
+        tokio::spawn(Arc::clone(&state).watch_prompt_list_changes(cancellation.clone()));
     let result = tokio::select! {
         result = &mut service => {
             result.map_err(|_| "MCP Gateway protocol service task failed".to_owned())?
@@ -55,6 +58,7 @@ pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
             let _ = service.await;
             let _ = updates.await;
             let _ = resource_updates.await;
+            let _ = prompt_updates.await;
             state.shutdown().await;
             return Err("MCP Gateway stopped because its notification buffer filled".to_owned());
         }
@@ -62,6 +66,7 @@ pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
     cancellation.cancel();
     let _ = updates.await;
     let _ = resource_updates.await;
+    let _ = prompt_updates.await;
     state.shutdown().await;
     match result {
         Ok(rmcp::service::QuitReason::Closed) => Ok(()),

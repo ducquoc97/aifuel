@@ -7,10 +7,12 @@ use aifuel_app::{McpServerDefinition, SelectedMcpServer, ServerLimits};
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::ServiceExt;
 use rmcp::model::{
-    ClientRequest, ErrorCode, ErrorData as McpError, ListResourceTemplatesRequest,
-    ListResourcesRequest, ListToolsRequest, PaginatedRequestParams, ReadResourceRequest,
-    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceTemplate, ServerResult,
-    SubscribeRequest, SubscribeRequestParams, Tool, UnsubscribeRequest, UnsubscribeRequestParams,
+    ClientRequest, CompleteRequest, CompleteRequestParams, CompleteResult, ErrorCode,
+    ErrorData as McpError, GetPromptRequest, GetPromptRequestParams, GetPromptResult,
+    ListPromptsRequest, ListResourceTemplatesRequest, ListResourcesRequest, ListToolsRequest,
+    PaginatedRequestParams, Prompt, ReadResourceRequest, ReadResourceRequestParams,
+    ReadResourceResult, Resource, ResourceTemplate, ServerResult, SubscribeRequest,
+    SubscribeRequestParams, Tool, UnsubscribeRequest, UnsubscribeRequestParams,
 };
 use rmcp::service::{Peer, PeerRequestOptions, RoleClient, RunningService};
 use rmcp::transport::Transport;
@@ -274,6 +276,18 @@ impl ConnectedGatewayServer {
             .is_none_or(RunningService::is_closed)
     }
 
+    pub(super) fn supports_prompts(&self) -> bool {
+        self.peer
+            .peer_info()
+            .is_some_and(|info| info.capabilities.prompts.is_some())
+    }
+
+    pub(super) fn supports_completion(&self) -> bool {
+        self.peer
+            .peer_info()
+            .is_some_and(|info| info.capabilities.completions.is_some())
+    }
+
     pub(super) async fn list_tools(
         &self,
         deadline: Instant,
@@ -319,6 +333,99 @@ impl ConnectedGatewayServer {
                     None,
                 ));
             }
+        }
+    }
+
+    pub(super) async fn list_prompts(
+        &self,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<Vec<Prompt>, McpError> {
+        let mut prompts = Vec::new();
+        let mut cursor = None;
+        let mut cursors = std::collections::HashSet::new();
+        loop {
+            let params = PaginatedRequestParams::default().with_cursor(cursor.clone());
+            let request = ClientRequest::ListPromptsRequest(ListPromptsRequest::with_param(params));
+            let response = self
+                .request(request, deadline, cancellation.clone())
+                .await?;
+            let ServerResult::ListPromptsResult(page) = response else {
+                return Err(McpError::internal_error(
+                    "upstream MCP server returned an unexpected prompts/list response",
+                    None,
+                ));
+            };
+            prompts.extend(page.prompts);
+            if prompts.len() > self.limits.max_list_entries {
+                return Err(McpError::internal_error(
+                    "upstream MCP server exceeded the configured prompt count limit",
+                    None,
+                ));
+            }
+            let bytes = serde_json::to_vec(&prompts)
+                .map_err(|_| McpError::internal_error("could not encode MCP prompt list", None))?;
+            if bytes.len() > self.limits.max_list_snapshot_bytes {
+                return Err(McpError::internal_error(
+                    "upstream MCP server exceeded the configured prompt snapshot limit",
+                    None,
+                ));
+            }
+            cursor = page.next_cursor;
+            let Some(next) = cursor.as_ref() else {
+                return Ok(prompts);
+            };
+            if !cursors.insert(next.clone()) {
+                return Err(McpError::internal_error(
+                    "upstream MCP server returned a repeated prompts/list cursor",
+                    None,
+                ));
+            }
+        }
+    }
+
+    pub(super) async fn get_prompt(
+        &self,
+        params: GetPromptRequestParams,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<GetPromptResult, McpError> {
+        let response = self
+            .request(
+                ClientRequest::GetPromptRequest(GetPromptRequest::new(params)),
+                deadline,
+                cancellation,
+            )
+            .await?;
+        match response {
+            ServerResult::GetPromptResult(result) => Ok(result),
+            ServerResult::CustomResult(result) => decode_prompt_result(result.0),
+            _ => Err(McpError::internal_error(
+                "upstream MCP server returned an unexpected prompts/get response",
+                None,
+            )),
+        }
+    }
+
+    pub(super) async fn complete(
+        &self,
+        params: CompleteRequestParams,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<CompleteResult, McpError> {
+        let response = self
+            .request(
+                ClientRequest::CompleteRequest(CompleteRequest::new(params)),
+                deadline,
+                cancellation,
+            )
+            .await?;
+        match response {
+            ServerResult::CompleteResult(result) => Ok(result),
+            _ => Err(McpError::internal_error(
+                "upstream MCP server returned an unexpected completion response",
+                None,
+            )),
         }
     }
 
@@ -536,6 +643,39 @@ impl ConnectedGatewayServer {
                 .await;
         }
     }
+}
+
+fn decode_prompt_result(mut value: serde_json::Value) -> Result<GetPromptResult, McpError> {
+    if let Some(messages) = value
+        .get_mut("messages")
+        .and_then(|value| value.as_array_mut())
+    {
+        for message in messages {
+            let Some(content) = message.get_mut("content") else {
+                continue;
+            };
+            if content.get("type").and_then(serde_json::Value::as_str) != Some("resource") {
+                continue;
+            }
+            let Some(resource) = content
+                .get_mut("resource")
+                .and_then(serde_json::Value::as_object_mut)
+            else {
+                continue;
+            };
+            if resource.contains_key("resource") {
+                continue;
+            }
+            let resource = std::mem::take(resource);
+            content["resource"] = serde_json::json!({"resource": resource});
+        }
+    }
+    serde_json::from_value(value).map_err(|_| {
+        McpError::internal_error(
+            "upstream MCP server returned an invalid prompts/get response",
+            None,
+        )
+    })
 }
 
 async fn initialize_upstream<T>(

@@ -15,6 +15,8 @@ pub(super) struct GatewayEvents {
     pub(super) tools_changed: Notify,
     pub(super) resources_dirty: AtomicBool,
     pub(super) resources_changed: Notify,
+    pub(super) prompts_dirty: AtomicBool,
+    pub(super) prompts_changed: Notify,
     host_peer: Mutex<Option<Peer<RoleServer>>>,
     subscriptions: Mutex<HashMap<(String, String), String>>,
     pending_resource_updates: Mutex<HashSet<(String, String)>>,
@@ -27,6 +29,8 @@ impl Default for GatewayEvents {
             tools_changed: Notify::new(),
             resources_dirty: AtomicBool::new(true),
             resources_changed: Notify::new(),
+            prompts_dirty: AtomicBool::new(true),
+            prompts_changed: Notify::new(),
             host_peer: Mutex::new(None),
             subscriptions: Mutex::new(HashMap::new()),
             pending_resource_updates: Mutex::new(HashSet::new()),
@@ -49,6 +53,11 @@ impl GatewayEvents {
         self.resources_changed.notify_one();
     }
 
+    pub(super) fn mark_prompts_changed(&self) {
+        self.prompts_dirty.store(true, Ordering::Release);
+        self.prompts_changed.notify_one();
+    }
+
     pub(super) async fn notify_tools_changed(&self) {
         if let Some(peer) = self.host_peer.lock().await.as_ref() {
             let _ = peer.notify_tool_list_changed().await;
@@ -58,6 +67,12 @@ impl GatewayEvents {
     pub(super) async fn notify_resources_changed(&self) {
         if let Some(peer) = self.host_peer.lock().await.as_ref() {
             let _ = peer.notify_resource_list_changed().await;
+        }
+    }
+
+    pub(super) async fn notify_prompts_changed(&self) {
+        if let Some(peer) = self.host_peer.lock().await.as_ref() {
+            let _ = peer.notify_prompt_list_changed().await;
         }
     }
 
@@ -162,6 +177,10 @@ impl ClientHandler for GatewayUpstreamHandler {
 
     async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {
         self.events.mark_resources_changed();
+    }
+
+    async fn on_prompt_list_changed(&self, _context: NotificationContext<RoleClient>) {
+        self.events.mark_prompts_changed();
     }
 }
 
