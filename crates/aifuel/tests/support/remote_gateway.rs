@@ -74,6 +74,7 @@ pub fn initialize_remote(fixture: &StreamableHttpFixture, session_id: &str) {
     initialized.respond(202, None, Vec::new(), Vec::new());
 }
 
+#[allow(dead_code)]
 pub fn initialize_remote_prompts(fixture: &StreamableHttpFixture, session_id: &str) {
     let initialize = next_remote_post(fixture, "initialize", Duration::from_secs(10));
     let request_id = initialize.json()["id"].clone();
