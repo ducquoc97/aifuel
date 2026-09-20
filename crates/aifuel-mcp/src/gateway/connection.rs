@@ -309,7 +309,11 @@ where
         McpServerDefinition::Stdio(_) => "local MCP server",
         McpServerDefinition::StreamableHttp(_) => "remote MCP server",
     };
-    let handler = GatewayUpstreamHandler { events, progress };
+    let handler = GatewayUpstreamHandler {
+        server_id: server.id.clone(),
+        events,
+        progress,
+    };
     let connect_deadline = Instant::now()
         + Duration::from_secs(limits.connect_seconds)
             .min(request_deadline.saturating_duration_since(Instant::now()));

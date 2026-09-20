@@ -1,54 +1,80 @@
 use super::connection::ConnectedGatewayServer;
 use super::process::{ResolvedEnvironment, snapshot_environment};
 use super::progress::{GatewayEvents, ProgressRoutes};
-use super::snapshot::{ToolSnapshot, make_snapshot};
-use aifuel_app::{GatewayLimits, McpGatewayFacade, McpServerDefinition, ServerLimits};
+use super::snapshot::{ServerToolSnapshot, SnapshotBuildError, ToolSnapshot, make_server_snapshot};
+use aifuel_app::{
+    GatewayLimits, McpGatewayFacade, McpServerDefinition, SelectedMcpServer, ServerLimits,
+};
+use futures_util::future::join_all;
 use rmcp::model::{ErrorCode, ErrorData as McpError};
 use rmcp::service::{Peer, RoleServer};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct GatewayState {
-    facade: McpGatewayFacade,
     limits: GatewayLimits,
-    process_environments: HashMap<String, ResolvedEnvironment>,
+    servers: BTreeMap<String, Arc<GatewayServerState>>,
+    cursor_scope: String,
     events: Arc<GatewayEvents>,
     pub(super) progress: Arc<ProgressRoutes>,
     pending_tool_list_notification: AtomicBool,
     request_slots: Arc<Semaphore>,
-    connection: Mutex<Option<Arc<ConnectedGatewayServer>>>,
     snapshot: Mutex<Option<Arc<ToolSnapshot>>>,
     next_snapshot_id: AtomicU64,
+}
+
+struct GatewayServerState {
+    server: SelectedMcpServer,
+    local_environment: Option<ResolvedEnvironment>,
+    connection: Mutex<Option<Arc<ConnectedGatewayServer>>>,
+    snapshot: Mutex<Option<Arc<ServerToolSnapshot>>>,
+}
+
+enum ServerSnapshotError {
+    Retryable(McpError),
+    IdentityConflict(McpError),
 }
 
 impl GatewayState {
     pub(super) fn new(facade: McpGatewayFacade, overflow: CancellationToken) -> Self {
         let limits = facade.gateway_limits().clone();
-        let process_environments = facade
+        let servers = facade
             .selected_servers()
             .iter()
-            .filter(|server| matches!(&server.definition, McpServerDefinition::Stdio(_)))
-            .map(|server| (server.id.clone(), snapshot_environment(server)))
+            .cloned()
+            .map(|server| {
+                let local_environment = matches!(&server.definition, McpServerDefinition::Stdio(_))
+                    .then(|| snapshot_environment(&server));
+                (
+                    server.id.clone(),
+                    Arc::new(GatewayServerState {
+                        server,
+                        local_environment,
+                        connection: Mutex::new(None),
+                        snapshot: Mutex::new(None),
+                    }),
+                )
+            })
             .collect();
+        let cursor_scope = gateway_cursor_scope(facade.host_id());
         let events = Arc::new(GatewayEvents::default());
         let progress = Arc::new(ProgressRoutes::new(
             limits.max_output_buffer_bytes,
             overflow,
         ));
         Self {
-            facade,
             request_slots: Arc::new(Semaphore::new(limits.max_concurrent_requests)),
             limits,
-            process_environments,
+            servers,
+            cursor_scope,
             events,
             progress,
             pending_tool_list_notification: AtomicBool::new(false),
-            connection: Mutex::new(None),
             snapshot: Mutex::new(None),
             next_snapshot_id: AtomicU64::new(1),
         }
@@ -65,14 +91,26 @@ impl GatewayState {
             .map_err(|_| McpError::internal_error("MCP Gateway is busy", None))
     }
 
-    pub(super) fn selected_limits(&self) -> Option<&ServerLimits> {
-        self.facade
-            .selected_servers()
-            .first()
-            .map(|server| match &server.definition {
-                McpServerDefinition::Stdio(config) => &config.limits,
-                McpServerDefinition::StreamableHttp(config) => &config.limits,
-            })
+    pub(super) fn discovery_seconds(&self) -> u64 {
+        self.servers
+            .values()
+            .map(|server| selected_server_limits(&server.server).discovery_seconds)
+            .max()
+            .unwrap_or(30)
+    }
+
+    pub(super) fn operation_seconds(&self) -> u64 {
+        self.servers
+            .values()
+            .map(|server| selected_server_limits(&server.server).operation_seconds)
+            .max()
+            .unwrap_or(120)
+    }
+
+    pub(super) fn operation_seconds_for(&self, server_id: &str) -> Option<u64> {
+        self.servers
+            .get(server_id)
+            .map(|server| selected_server_limits(&server.server).operation_seconds)
     }
 
     pub(super) async fn set_host_peer(&self, peer: Peer<RoleServer>) {
@@ -90,11 +128,7 @@ impl GatewayState {
                 _ = cancellation.cancelled() => return,
             }
 
-            let discovery_deadline = Instant::now()
-                + Duration::from_secs(
-                    self.selected_limits()
-                        .map_or(30, |limits| limits.discovery_seconds),
-                );
+            let discovery_deadline = Instant::now() + Duration::from_secs(self.discovery_seconds());
             let _ = self
                 .tool_snapshot(cancellation.child_token(), discovery_deadline)
                 .await;
@@ -109,15 +143,21 @@ impl GatewayState {
 
     pub(super) async fn connection(
         &self,
+        server_id: &str,
         cancellation: CancellationToken,
         request_deadline: Instant,
-    ) -> Result<Option<Arc<ConnectedGatewayServer>>, McpError> {
-        let Some(server) = self.facade.selected_servers().first().cloned() else {
-            return Ok(None);
-        };
+    ) -> Result<Arc<ConnectedGatewayServer>, McpError> {
+        let server = self.servers.get(server_id).ok_or_else(|| {
+            McpError::new(
+                ErrorCode::METHOD_NOT_FOUND,
+                "unknown selected MCP server",
+                None,
+            )
+        })?;
+
         let mut current = tokio::select! {
-            result = tokio::time::timeout_at(request_deadline, self.connection.lock()) => {
-                result.map_err(|_| McpError::internal_error("MCP server connection timed out", None))?
+            result = tokio::time::timeout_at(request_deadline, server.connection.lock()) => {
+                result.map_err(|_| McpError::internal_error("MCP server discovery timed out", None))?
             }
             _ = cancellation.cancelled() => {
                 return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
@@ -126,16 +166,15 @@ impl GatewayState {
         if let Some(connection) = current.as_ref()
             && !connection.is_closed().await
         {
-            return Ok(Some(Arc::clone(connection)));
+            return Ok(Arc::clone(connection));
         }
         if let Some(stale) = current.take() {
             let _ = tokio::time::timeout_at(request_deadline, stale.shutdown()).await;
         }
 
-        let process_environment = self.process_environments.get(&server.id).cloned();
         let connection = ConnectedGatewayServer::connect(
-            server,
-            process_environment,
+            server.server.clone(),
+            server.local_environment.clone(),
             Duration::from_secs(self.limits.output_stall_seconds),
             Arc::clone(&self.events),
             Arc::clone(&self.progress),
@@ -144,7 +183,7 @@ impl GatewayState {
         )
         .await?;
         *current = Some(Arc::clone(&connection));
-        Ok(Some(connection))
+        Ok(connection)
     }
 
     pub(super) async fn tool_snapshot(
@@ -152,8 +191,11 @@ impl GatewayState {
         cancellation: CancellationToken,
         operation_deadline: Instant,
     ) -> Result<Arc<ToolSnapshot>, McpError> {
-        if self.facade.selected_servers().is_empty() {
-            return Ok(Arc::new(ToolSnapshot::empty()));
+        if self.servers.is_empty() {
+            return Ok(Arc::new(ToolSnapshot::empty_for_scope(
+                &self.cursor_scope,
+                0,
+            )));
         }
         let mut current = tokio::select! {
             result = tokio::time::timeout_at(operation_deadline, self.snapshot.lock()) => {
@@ -167,65 +209,196 @@ impl GatewayState {
         if !refresh && let Some(snapshot) = current.as_ref() {
             return Ok(Arc::clone(snapshot));
         }
-        let server = self.facade.selected_servers()[0].clone();
-        let limits = self.selected_limits().cloned().unwrap_or_default();
+        let server_ids = self.servers.keys().cloned().collect::<Vec<_>>();
+        let results = join_all(server_ids.iter().cloned().map(|server_id| {
+            let cancellation = cancellation.clone();
+            async move {
+                let result = self
+                    .server_snapshot(&server_id, refresh, cancellation, operation_deadline)
+                    .await;
+                (server_id, result)
+            }
+        }))
+        .await;
+        if cancellation.is_cancelled() {
+            return Err(McpError::new(
+                ErrorCode(-32800),
+                "MCP request was cancelled",
+                None,
+            ));
+        }
+
+        let mut snapshots = Vec::new();
+        let mut first_error = None;
+        for (_, result) in results {
+            match result {
+                Ok(snapshot) => snapshots.push(snapshot),
+                Err(ServerSnapshotError::Retryable(error)) => {
+                    first_error.get_or_insert(error);
+                }
+                Err(ServerSnapshotError::IdentityConflict(error)) => {
+                    self.events.tools_dirty.store(true, Ordering::Release);
+                    return Err(error);
+                }
+            }
+        }
+        if snapshots.is_empty() {
+            return Err(first_error.unwrap_or_else(|| {
+                McpError::internal_error(
+                    "no selected MCP server returned a usable tools/list snapshot",
+                    None,
+                )
+            }));
+        }
+
+        let snapshot = match ToolSnapshot::aggregate(
+            &self.cursor_scope,
+            &snapshots,
+            self.next_snapshot_id.fetch_add(1, Ordering::Relaxed),
+        ) {
+            Ok(snapshot) => Arc::new(snapshot),
+            Err(error) => {
+                self.events.tools_dirty.store(true, Ordering::Release);
+                return Err(error);
+            }
+        };
+        if let Some(cached) = current.as_ref()
+            && cached.tools == snapshot.tools
+            && cached.routes == snapshot.routes
+        {
+            return Ok(Arc::clone(cached));
+        }
+        if current.is_some() {
+            self.pending_tool_list_notification
+                .store(true, Ordering::Release);
+        }
+        *current = Some(Arc::clone(&snapshot));
+        Ok(snapshot)
+    }
+
+    async fn server_snapshot(
+        &self,
+        server_id: &str,
+        refresh: bool,
+        cancellation: CancellationToken,
+        operation_deadline: Instant,
+    ) -> Result<Arc<ServerToolSnapshot>, ServerSnapshotError> {
+        let server = self.servers.get(server_id).expect("selected server exists");
+        let mut current = tokio::select! {
+            result = tokio::time::timeout_at(operation_deadline, server.snapshot.lock()) => {
+                result.map_err(|_| ServerSnapshotError::Retryable(McpError::internal_error(
+                    "MCP server discovery timed out",
+                    None,
+                )))?
+            }
+            _ = cancellation.cancelled() => {
+                return Err(ServerSnapshotError::Retryable(McpError::new(
+                    ErrorCode(-32800),
+                    "MCP request was cancelled",
+                    None,
+                )));
+            }
+        };
+        if !refresh && let Some(snapshot) = current.as_ref() {
+            return Ok(Arc::clone(snapshot));
+        }
+
+        let limits = selected_server_limits(&server.server);
         let discovery_deadline = Instant::now()
             + Duration::from_secs(limits.discovery_seconds)
                 .min(operation_deadline.saturating_duration_since(Instant::now()));
         let result = async {
             let connection = self
-                .connection(cancellation.clone(), discovery_deadline)
-                .await?
-                .ok_or_else(|| McpError::internal_error("no MCP server is selected", None))?;
-            let _request_permit = connection.try_request_slot()?;
+                .connection(server_id, cancellation.clone(), discovery_deadline)
+                .await
+                .map_err(ServerSnapshotError::Retryable)?;
+            let _request_permit = connection
+                .try_request_slot()
+                .map_err(ServerSnapshotError::Retryable)?;
             connection
                 .list_tools(discovery_deadline, cancellation)
                 .await
+                .map_err(ServerSnapshotError::Retryable)
         }
         .await;
 
-        match result {
+        let result = match result {
             Ok(upstream_tools) => {
-                let snapshot = Arc::new(make_snapshot(
-                    &server,
-                    upstream_tools,
-                    &limits,
-                    self.next_snapshot_id.fetch_add(1, Ordering::Relaxed),
-                )?);
-                if let Some(current) = current.as_ref() {
-                    if current.tools == snapshot.tools {
-                        return Ok(Arc::clone(current));
+                match make_server_snapshot(&server.server, upstream_tools, limits) {
+                    Ok(snapshot) => Ok(Arc::new(snapshot)),
+                    Err(SnapshotBuildError::IdentityConflict(error)) => {
+                        self.events.tools_dirty.store(true, Ordering::Release);
+                        return Err(ServerSnapshotError::IdentityConflict(error));
                     }
-                    self.pending_tool_list_notification
-                        .store(true, Ordering::Release);
+                    Err(SnapshotBuildError::Invalid(error)) => {
+                        Err(ServerSnapshotError::Retryable(error))
+                    }
+                }
+            }
+            Err(error) => Err(error),
+        };
+
+        match result {
+            Ok(snapshot) => {
+                if let Some(cached) = current.as_ref()
+                    && cached.tools == snapshot.tools
+                    && cached.routes == snapshot.routes
+                {
+                    return Ok(Arc::clone(cached));
                 }
                 *current = Some(Arc::clone(&snapshot));
                 Ok(snapshot)
             }
-            Err(_error) if current.is_some() => {
+            Err(ServerSnapshotError::Retryable(_error)) if current.is_some() => {
                 self.events.tools_dirty.store(true, Ordering::Release);
                 eprintln!(
-                    "aifuel: selected MCP server is unavailable; retaining its last tool list"
+                    "aifuel: selected MCP server {server_id:?} is unavailable; retaining its last tool list"
                 );
                 Ok(Arc::clone(current.as_ref().expect("snapshot exists")))
             }
-            Err(error) => Err(error),
+            Err(ServerSnapshotError::Retryable(error)) => {
+                self.events.tools_dirty.store(true, Ordering::Release);
+                eprintln!("aifuel: selected MCP server {server_id:?} is unavailable");
+                Err(ServerSnapshotError::Retryable(error))
+            }
+            Err(error @ ServerSnapshotError::IdentityConflict(_)) => Err(error),
         }
     }
 
     pub(super) async fn shutdown(&self) {
-        let deadline = Instant::now()
-            + Duration::from_secs(
-                self.selected_limits()
-                    .map_or(5, |limits| limits.shutdown_seconds),
-            );
-        let Ok(mut connection) = tokio::time::timeout_at(deadline, self.connection.lock()).await
-        else {
-            return;
-        };
-        if let Some(connection) = connection.take() {
-            let _ = tokio::time::timeout_at(deadline, connection.shutdown()).await;
-        }
+        let connections = join_all(
+            self.servers
+                .values()
+                .map(|server| async { server.connection.lock().await.take() }),
+        )
+        .await;
+        join_all(
+            connections
+                .into_iter()
+                .flatten()
+                .map(|connection| async move {
+                    connection.shutdown().await;
+                }),
+        )
+        .await;
+    }
+}
+
+static NEXT_GATEWAY_SCOPE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn gateway_cursor_scope(host_id: &str) -> String {
+    let started_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = NEXT_GATEWAY_SCOPE_ID.fetch_add(1, Ordering::Relaxed);
+    format!("{host_id}-{}-{started_at}-{sequence}", std::process::id())
+}
+
+fn selected_server_limits(server: &SelectedMcpServer) -> &ServerLimits {
+    match &server.definition {
+        McpServerDefinition::Stdio(config) => &config.limits,
+        McpServerDefinition::StreamableHttp(config) => &config.limits,
     }
 }
 

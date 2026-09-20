@@ -254,3 +254,120 @@ fn stalled_host_stdout_terminates_the_gateway_and_its_local_process_tree() {
         "stalled host cleanup should stop the server process tree"
     );
 }
+
+#[test]
+fn upstream_tool_change_flood_is_coalesced_for_the_host() {
+    let temporary = TestDirectory::new("mcp-gateway-notification-flood");
+    let server = compile_local_mcp_server(temporary.path());
+    let config_root = temporary.path().join("config");
+    write_catalog(
+        &config_root,
+        json!({
+            "servers": {
+                "docs": {
+                    "transport":"stdio",
+                    "command":server.clone(),
+                    "env": {
+                        "MCP_FIXTURE_CHANGE_TOOL_LIST":{"value":"1"},
+                        "MCP_FIXTURE_LIST_CHANGED_COUNT":{"value":"5000"}
+                    }
+                },
+                "search": {"transport":"stdio","command":server}
+            },
+            "defaults":["docs","search"]
+        }),
+    );
+    let (mut gateway, messages) = start_gateway_for_agent(&config_root, "inherited");
+    let mut stdin = gateway.stdin.take().expect("gateway stdin");
+    initialize_host(&mut stdin, &messages);
+    send_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    );
+    assert_eq!(
+        response_with_id(&messages, 2)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    send_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"docs__echo","arguments":{"message":"trigger changes"}}}),
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    let mut response_received = false;
+    let mut notifications = 0;
+    while !response_received || notifications == 0 {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let message = next_message_timeout(&messages, remaining);
+        if message["method"] == "notifications/tools/list_changed" {
+            notifications += 1;
+        }
+        response_received |= message["id"] == 3;
+    }
+    assert_eq!(notifications, 1);
+    assert!(matches!(
+        messages.recv_timeout(Duration::from_millis(200)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    send_message(&mut stdin, json!({"jsonrpc":"2.0","id":4,"method":"ping"}));
+    assert_eq!(response_with_id(&messages, 4)["result"], json!({}));
+
+    drop(stdin);
+    assert!(wait_for_exit(&mut gateway, Duration::from_secs(8)).success());
+}
+
+#[test]
+fn progress_notification_backlog_stays_within_the_gateway_output_budget() {
+    let temporary = TestDirectory::new("mcp-gateway-progress-backlog");
+    let server = compile_local_mcp_server(temporary.path());
+    let config_root = temporary.path().join("config");
+    write_catalog(
+        &config_root,
+        json!({
+            "servers": {
+                "docs": {
+                    "transport":"stdio",
+                    "command":server,
+                    "env": {
+                        "MCP_FIXTURE_PROGRESS":{"value":"1"},
+                        "MCP_FIXTURE_PROGRESS_COUNT":{"value":"2000"}
+                    }
+                }
+            },
+            "defaults":["docs"],
+            "gateway": {
+                "maxMessageBytes":4096,
+                "maxOutputBufferBytes":8192,
+                "outputStallSeconds":5
+            }
+        }),
+    );
+    let (mut gateway, messages) = start_gateway_for_agent(&config_root, "codex");
+    let mut stdin = gateway.stdin.take().expect("gateway stdin");
+    initialize_host(&mut stdin, &messages);
+    send_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    );
+    assert_eq!(
+        response_with_id(&messages, 2)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    send_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"docs__echo","arguments":{"message":"fill bounded queue"},"_meta":{"progressToken":"host-progress"}}}),
+    );
+
+    let status = wait_for_exit(&mut gateway, Duration::from_secs(8));
+    drop(stdin);
+    assert!(
+        !status.success(),
+        "the gateway should stop explicitly when bounded progress storage fills"
+    );
+}

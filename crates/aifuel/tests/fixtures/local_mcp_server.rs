@@ -16,6 +16,10 @@ fn main() {
         return;
     }
 
+    if env::var_os("MCP_FIXTURE_OFFLINE_MARKER").is_some_and(|path| fs::metadata(path).is_ok()) {
+        return;
+    }
+
     if let Some(path) = env::var_os("MCP_FIXTURE_START_LOG") {
         let cwd = env::current_dir().expect("fixture cwd should be available");
         let args: Vec<_> = env::args().skip(1).collect();
@@ -81,8 +85,15 @@ fn main() {
             "tools/call" => {
                 if env::var_os("MCP_FIXTURE_CHANGE_TOOL_LIST").is_some() {
                     tool_list_changed = true;
-                    if !emit(r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#) {
-                        return;
+                    let count = env::var("MCP_FIXTURE_LIST_CHANGED_COUNT")
+                        .ok()
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .unwrap_or(1);
+                    for _ in 0..count {
+                        if !emit(r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#)
+                        {
+                            return;
+                        }
                     }
                 }
                 let mut diagnostics = format!(
@@ -92,12 +103,29 @@ fn main() {
                 );
                 if env::var_os("MCP_FIXTURE_PROGRESS").is_some() {
                     if let Some(token) = raw_field(&line, "progressToken") {
-                        let notification = format!(r#"{{"jsonrpc":"2.0","method":"notifications/progress","params":{{"progressToken":{token},"progress":1,"total":1,"message":"working"}}}}"#);
-                        diagnostics.push_str(&format!("\nnotification={notification}"));
+                        let count = env::var("MCP_FIXTURE_PROGRESS_COUNT")
+                            .ok()
+                            .and_then(|value| value.parse::<usize>().ok())
+                            .unwrap_or(1);
+                        for index in 0..count {
+                            let progress_token = if index == 0 {
+                                token.clone()
+                            } else {
+                                format!("\"fixture-progress-{index}\"")
+                            };
+                            let notification = format!(
+                                r#"{{"jsonrpc":"2.0","method":"notifications/progress","params":{{"progressToken":{progress_token},"progress":1,"total":1,"message":"working"}}}}"#
+                            );
+                            if index == 0 {
+                                diagnostics.push_str(&format!("\nnotification={notification}"));
+                            }
+                            if !emit(&notification) {
+                                return;
+                            }
+                        }
                         if let Some(path) = env::var_os("MCP_FIXTURE_LOG") {
                             let _ = fs::write(path, &diagnostics);
                         }
-                        emit(&notification);
                     }
                 }
                 if let Some(path) = env::var_os("MCP_FIXTURE_LOG") {
@@ -106,11 +134,17 @@ fn main() {
                 let error = env::var_os("MCP_FIXTURE_TOOL_ERROR").is_some();
                 let message = if error {
                     "fixture-error".to_owned()
+                } else if env::var_os("MCP_FIXTURE_RESPONSE_ID").is_some() {
+                    std::process::id().to_string()
                 } else {
-                    env::var("MCP_FIXTURE_RESULT_BYTES")
+                    env::var("MCP_FIXTURE_RESULT")
                         .ok()
-                        .and_then(|value| value.parse::<usize>().ok())
-                        .map(|count| "x".repeat(count))
+                        .or_else(|| {
+                            env::var("MCP_FIXTURE_RESULT_BYTES")
+                                .ok()
+                                .and_then(|value| value.parse::<usize>().ok())
+                                .map(|count| "x".repeat(count))
+                        })
                         .unwrap_or_else(|| "fixture-result".to_owned())
                 };
                 diagnostics.push_str(&format!("\nresultBytes={}", message.len()));
@@ -155,6 +189,15 @@ fn main() {
             ),
         };
         if !emit(&response) {
+            return;
+        }
+        if method == "tools/call" && env::var_os("MCP_FIXTURE_EXIT_AFTER_CALL").is_some() {
+            if let Some(path) = env::var_os("MCP_FIXTURE_OFFLINE_MARKER") {
+                let _ = fs::write(path, "offline");
+            }
+            if let Some(path) = env::var_os("MCP_FIXTURE_EXIT_AFTER_CALL_MARKER") {
+                let _ = fs::write(path, "exited after tool call");
+            }
             return;
         }
     }

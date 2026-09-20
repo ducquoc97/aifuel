@@ -6,14 +6,14 @@ use rmcp::model::{
 };
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub(super) fn make_snapshot(
+pub(super) fn make_server_snapshot(
     server: &SelectedMcpServer,
     upstream: Vec<Tool>,
     limits: &ServerLimits,
-    snapshot_id: u64,
-) -> Result<ToolSnapshot, McpError> {
+) -> Result<ServerToolSnapshot, SnapshotBuildError> {
     let mut tools = Vec::new();
     let mut routes = HashMap::new();
     let mut excluded_task_tools = false;
@@ -37,50 +37,113 @@ pub(super) fn make_snapshot(
         let upstream_name = tool.name.to_string();
         let gateway_name = tool_name(&server.id, &upstream_name);
         if routes.insert(gateway_name.clone(), upstream_name).is_some() {
-            return Err(McpError::internal_error(
-                "upstream MCP server tools contain conflicting gateway identities",
-                None,
+            return Err(SnapshotBuildError::IdentityConflict(
+                McpError::internal_error(
+                    "selected MCP server contains conflicting gateway tool identities",
+                    None,
+                ),
             ));
         }
         tool.name = Cow::Owned(gateway_name);
         tools.push(tool);
     }
     tools.sort_by(|left, right| left.name.cmp(&right.name));
-    let bytes = serde_json::to_vec(&tools)
-        .map_err(|_| McpError::internal_error("could not encode MCP tool list", None))?;
-    if tools.len() > limits.max_list_entries || bytes.len() > limits.max_list_snapshot_bytes {
-        return Err(McpError::internal_error(
-            "upstream MCP server exceeded the configured tool snapshot limit",
+    let bytes = serde_json::to_vec(&tools).map_err(|_| {
+        SnapshotBuildError::Invalid(McpError::internal_error(
+            "could not encode MCP tool list",
             None,
-        ));
+        ))
+    })?;
+    if tools.len() > limits.max_list_entries || bytes.len() > limits.max_list_snapshot_bytes {
+        return Err(SnapshotBuildError::Invalid(McpError::internal_error(
+            "selected MCP server exceeded the configured tool snapshot limit",
+            None,
+        )));
     }
     if excluded_task_tools {
         eprintln!(
-            "aifuel: excluded one or more upstream MCP tools that require unsupported task execution"
+            "aifuel: excluded one or more selected MCP tools that require unsupported task execution"
         );
     }
-    Ok(ToolSnapshot {
-        id: snapshot_id,
+    Ok(ServerToolSnapshot {
         server_id: server.id.clone(),
-        tools,
+        tools: tools.into_iter().map(Arc::new).collect(),
         routes,
-        cursors: Mutex::new(HashMap::new()),
     })
+}
+
+pub(super) struct ServerToolSnapshot {
+    pub(super) server_id: String,
+    pub(super) tools: Vec<Arc<Tool>>,
+    pub(super) routes: HashMap<String, String>,
+}
+
+pub(super) enum SnapshotBuildError {
+    IdentityConflict(McpError),
+    Invalid(McpError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ToolRoute {
+    pub(super) server_id: String,
+    pub(super) upstream_name: String,
 }
 
 pub(super) struct ToolSnapshot {
     id: u64,
-    server_id: String,
-    pub(super) tools: Vec<Tool>,
-    pub(super) routes: HashMap<String, String>,
+    cursor_scope: String,
+    pub(super) tools: Vec<Arc<Tool>>,
+    pub(super) routes: HashMap<String, ToolRoute>,
     cursors: Mutex<HashMap<String, usize>>,
 }
 
 impl ToolSnapshot {
-    pub(super) fn empty() -> Self {
+    pub(super) fn aggregate(
+        cursor_scope: &str,
+        snapshots: &[Arc<ServerToolSnapshot>],
+        snapshot_id: u64,
+    ) -> Result<Self, McpError> {
+        let mut ordered = snapshots.iter().collect::<Vec<_>>();
+        ordered.sort_by(|left, right| left.server_id.cmp(&right.server_id));
+
+        let mut tools = Vec::new();
+        let mut routes = HashMap::new();
+        for snapshot in ordered {
+            for tool in &snapshot.tools {
+                let gateway_name = tool.name.to_string();
+                let upstream_name = snapshot.routes.get(&gateway_name).ok_or_else(|| {
+                    McpError::internal_error("selected MCP tool snapshot is invalid", None)
+                })?;
+                if routes.contains_key(&gateway_name) {
+                    return Err(McpError::internal_error(
+                        "selected MCP servers contain conflicting gateway tool identities",
+                        None,
+                    ));
+                }
+                routes.insert(
+                    gateway_name,
+                    ToolRoute {
+                        server_id: snapshot.server_id.clone(),
+                        upstream_name: upstream_name.clone(),
+                    },
+                );
+                tools.push(Arc::clone(tool));
+            }
+        }
+        tools.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(Self {
+            id: snapshot_id,
+            cursor_scope: cursor_scope.to_owned(),
+            tools,
+            routes,
+            cursors: Mutex::new(HashMap::new()),
+        })
+    }
+
+    pub(super) fn empty_for_scope(cursor_scope: &str, snapshot_id: u64) -> Self {
         Self {
-            id: 0,
-            server_id: String::new(),
+            id: snapshot_id,
+            cursor_scope: cursor_scope.to_owned(),
             tools: Vec::new(),
             routes: HashMap::new(),
             cursors: Mutex::new(HashMap::new()),
@@ -111,26 +174,26 @@ impl ToolSnapshot {
             if end == self.tools.len() {
                 return Ok(tools_page(page_tools, None));
             }
-            page_tools.push(self.tools[end].clone());
+            page_tools.push(self.tools[end].as_ref().clone());
             let next_offset = end + 1;
             let next_cursor = (next_offset < self.tools.len())
-                .then(|| tool_cursor(&self.server_id, self.id, next_offset));
+                .then(|| tool_cursor("tools", &self.cursor_scope, self.id, next_offset));
             let candidate = tools_page(page_tools.clone(), next_cursor.clone());
             if response_bytes(&candidate, &request_id)? > max_message_bytes {
                 page_tools.pop();
                 if page_tools.is_empty() {
                     return Err(McpError::internal_error(
-                        "one local MCP tool exceeds the host message byte limit",
+                        "one selected MCP tool exceeds the host message byte limit",
                         None,
                     ));
                 }
                 let next_offset = start + page_tools.len();
                 let next_cursor = (next_offset < self.tools.len())
-                    .then(|| tool_cursor(&self.server_id, self.id, next_offset));
+                    .then(|| tool_cursor("tools", &self.cursor_scope, self.id, next_offset));
                 let result = tools_page(page_tools, next_cursor.clone());
                 if response_bytes(&result, &request_id)? > max_message_bytes {
                     return Err(McpError::internal_error(
-                        "local MCP tool page exceeds the host message byte limit",
+                        "selected MCP tool page exceeds the host message byte limit",
                         None,
                     ));
                 }
@@ -162,4 +225,81 @@ fn response_bytes(result: &ListToolsResult, request_id: &RequestId) -> Result<us
     ))
     .map(|bytes| bytes.len())
     .map_err(|_| McpError::internal_error("could not encode tools/list response", None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ServerToolSnapshot, ToolRoute, ToolSnapshot};
+    use rmcp::model::Tool;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn aggregation_routes_colliding_upstream_names_to_their_selected_servers() {
+        let docs = snapshot("docs", "docs__echo", "echo");
+        let memory = snapshot("memory", "memory__echo", "echo");
+        let combined = ToolSnapshot::aggregate("gateway-session", &[memory, docs], 1)
+            .expect("distinct namespaced identities should aggregate");
+
+        assert_eq!(
+            combined
+                .tools
+                .iter()
+                .map(|tool| tool.name.as_ref())
+                .collect::<Vec<_>>(),
+            vec!["docs__echo", "memory__echo"]
+        );
+        assert_eq!(
+            combined.routes.get("docs__echo"),
+            Some(&ToolRoute {
+                server_id: "docs".to_owned(),
+                upstream_name: "echo".to_owned(),
+            })
+        );
+        assert_eq!(
+            combined.routes.get("memory__echo"),
+            Some(&ToolRoute {
+                server_id: "memory".to_owned(),
+                upstream_name: "echo".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn aggregation_rejects_a_conflicting_gateway_identity() {
+        let docs = snapshot("docs", "shared__echo", "echo");
+        let memory = snapshot("memory", "shared__echo", "echo");
+
+        let Err(error) = ToolSnapshot::aggregate("gateway-session", &[docs, memory], 1) else {
+            panic!("conflicting identities must be rejected");
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting gateway tool identities")
+        );
+    }
+
+    fn snapshot(
+        server_id: &str,
+        public_name: &str,
+        upstream_name: &str,
+    ) -> Arc<ServerToolSnapshot> {
+        Arc::new(ServerToolSnapshot {
+            server_id: server_id.to_owned(),
+            tools: vec![Arc::new(tool(public_name))],
+            routes: HashMap::from([(public_name.to_owned(), upstream_name.to_owned())]),
+        })
+    }
+
+    fn tool(name: &str) -> Tool {
+        serde_json::from_value(json!({
+            "name": name,
+            "description": "fixture tool",
+            "inputSchema": {"type":"object"}
+        }))
+        .expect("fixture tool should deserialize")
+    }
 }
