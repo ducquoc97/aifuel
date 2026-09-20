@@ -70,7 +70,7 @@ pub(super) fn make_snapshot(
 
 pub(super) struct ToolSnapshot {
     id: u64,
-    server_id: String,
+    pub(super) server_id: String,
     pub(super) tools: Vec<Tool>,
     pub(super) routes: HashMap<String, String>,
     cursors: Mutex<HashMap<String, usize>>,

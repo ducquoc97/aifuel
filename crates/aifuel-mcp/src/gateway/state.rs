@@ -1,6 +1,7 @@
 use super::connection::ConnectedGatewayServer;
 use super::process::{ResolvedEnvironment, snapshot_environment};
 use super::progress::{GatewayEvents, ProgressRoutes};
+use super::resources::{ResourceSnapshot, make_snapshot as make_resource_snapshot};
 use super::snapshot::{ToolSnapshot, make_snapshot};
 use aifuel_app::{GatewayLimits, McpGatewayFacade, McpServerDefinition, ServerLimits};
 use rmcp::model::{ErrorCode, ErrorData as McpError};
@@ -17,13 +18,16 @@ pub(super) struct GatewayState {
     facade: McpGatewayFacade,
     limits: GatewayLimits,
     process_environments: HashMap<String, ResolvedEnvironment>,
-    events: Arc<GatewayEvents>,
+    pub(super) events: Arc<GatewayEvents>,
     pub(super) progress: Arc<ProgressRoutes>,
     pending_tool_list_notification: AtomicBool,
+    pending_resource_list_notification: AtomicBool,
     request_slots: Arc<Semaphore>,
     connection: Mutex<Option<Arc<ConnectedGatewayServer>>>,
     snapshot: Mutex<Option<Arc<ToolSnapshot>>>,
+    resource_snapshot: Mutex<Option<Arc<ResourceSnapshot>>>,
     next_snapshot_id: AtomicU64,
+    next_resource_snapshot_id: AtomicU64,
 }
 
 impl GatewayState {
@@ -48,9 +52,12 @@ impl GatewayState {
             events,
             progress,
             pending_tool_list_notification: AtomicBool::new(false),
+            pending_resource_list_notification: AtomicBool::new(false),
             connection: Mutex::new(None),
             snapshot: Mutex::new(None),
+            resource_snapshot: Mutex::new(None),
             next_snapshot_id: AtomicU64::new(1),
+            next_resource_snapshot_id: AtomicU64::new(1),
         }
     }
 
@@ -107,6 +114,37 @@ impl GatewayState {
         }
     }
 
+    pub(super) async fn watch_resource_list_changes(
+        self: Arc<Self>,
+        cancellation: CancellationToken,
+    ) {
+        loop {
+            tokio::select! {
+                _ = self.events.resources_changed.notified() => {}
+                _ = cancellation.cancelled() => return,
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                _ = cancellation.cancelled() => return,
+            }
+
+            let discovery_deadline = Instant::now()
+                + Duration::from_secs(
+                    self.selected_limits()
+                        .map_or(30, |limits| limits.discovery_seconds),
+                );
+            let _ = self
+                .resource_snapshot(cancellation.child_token(), discovery_deadline)
+                .await;
+            if self
+                .pending_resource_list_notification
+                .swap(false, Ordering::AcqRel)
+            {
+                self.events.notify_resources_changed().await;
+            }
+        }
+    }
+
     pub(super) async fn connection(
         &self,
         cancellation: CancellationToken,
@@ -115,6 +153,7 @@ impl GatewayState {
         let Some(server) = self.facade.selected_servers().first().cloned() else {
             return Ok(None);
         };
+        let server_id = server.id.clone();
         let mut current = tokio::select! {
             result = tokio::time::timeout_at(request_deadline, self.connection.lock()) => {
                 result.map_err(|_| McpError::internal_error("MCP server connection timed out", None))?
@@ -144,7 +183,102 @@ impl GatewayState {
         )
         .await?;
         *current = Some(Arc::clone(&connection));
+        for (upstream_uri, _) in self.events.subscriptions_for_server(&server_id).await {
+            if connection
+                .subscribe(
+                    upstream_uri.clone(),
+                    request_deadline,
+                    CancellationToken::new(),
+                )
+                .await
+                .is_ok()
+            {
+                self.events
+                    .notify_resource_updated(&server_id, &upstream_uri)
+                    .await;
+            } else {
+                eprintln!(
+                    "aifuel: could not restore resource subscription for server {:?}",
+                    server_id
+                );
+            }
+        }
         Ok(Some(connection))
+    }
+
+    pub(super) async fn resource_snapshot(
+        &self,
+        cancellation: CancellationToken,
+        operation_deadline: Instant,
+    ) -> Result<Arc<ResourceSnapshot>, McpError> {
+        if self.facade.selected_servers().is_empty() {
+            return Ok(Arc::new(ResourceSnapshot::empty()));
+        }
+        let mut current = tokio::select! {
+            result = tokio::time::timeout_at(operation_deadline, self.resource_snapshot.lock()) => {
+                result.map_err(|_| McpError::internal_error("MCP server discovery timed out", None))?
+            }
+            _ = cancellation.cancelled() => {
+                return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
+            }
+        };
+        let refresh = self.events.resources_dirty.swap(false, Ordering::AcqRel);
+        if !refresh && let Some(snapshot) = current.as_ref() {
+            return Ok(Arc::clone(snapshot));
+        }
+        let server = self.facade.selected_servers()[0].clone();
+        let limits = self.selected_limits().cloned().unwrap_or_default();
+        let discovery_deadline = Instant::now()
+            + Duration::from_secs(limits.discovery_seconds)
+                .min(operation_deadline.saturating_duration_since(Instant::now()));
+        let result = async {
+            let connection = self
+                .connection(cancellation.clone(), discovery_deadline)
+                .await?
+                .ok_or_else(|| McpError::internal_error("no MCP server is selected", None))?;
+            let _request_permit = connection.try_request_slot()?;
+            let resources = connection
+                .list_resources(discovery_deadline, cancellation.clone())
+                .await?;
+            let templates = connection
+                .list_resource_templates(discovery_deadline, cancellation)
+                .await?;
+            Ok::<_, McpError>((resources, templates))
+        }
+        .await;
+
+        match result {
+            Ok((resources, templates)) => {
+                let snapshot = Arc::new(make_resource_snapshot(
+                    &server,
+                    resources,
+                    templates,
+                    &limits,
+                    self.next_resource_snapshot_id
+                        .fetch_add(1, Ordering::Relaxed),
+                )?);
+                if let Some(current) = current.as_ref()
+                    && current.resources == snapshot.resources
+                    && current.templates == snapshot.templates
+                {
+                    return Ok(Arc::clone(current));
+                }
+                if current.is_some() {
+                    self.pending_resource_list_notification
+                        .store(true, Ordering::Release);
+                }
+                *current = Some(Arc::clone(&snapshot));
+                Ok(snapshot)
+            }
+            Err(_error) if current.is_some() => {
+                self.events.resources_dirty.store(true, Ordering::Release);
+                eprintln!(
+                    "aifuel: selected MCP server is unavailable; retaining its last resource list"
+                );
+                Ok(Arc::clone(current.as_ref().expect("snapshot exists")))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(super) async fn tool_snapshot(

@@ -1,7 +1,7 @@
 use rmcp::ClientHandler;
 use rmcp::model::{
     ClientCapabilities, ClientInfo, Implementation, ProgressNotificationParam, ProgressToken,
-    ProtocolVersion,
+    ProtocolVersion, ResourceUpdatedNotificationParam,
 };
 use rmcp::service::{NotificationContext, Peer, RoleClient, RoleServer};
 use std::collections::HashMap;
@@ -13,7 +13,10 @@ use tokio_util::sync::CancellationToken;
 pub(super) struct GatewayEvents {
     pub(super) tools_dirty: AtomicBool,
     pub(super) tools_changed: Notify,
+    pub(super) resources_dirty: AtomicBool,
+    pub(super) resources_changed: Notify,
     host_peer: Mutex<Option<Peer<RoleServer>>>,
+    subscriptions: Mutex<HashMap<(String, String), String>>,
 }
 
 impl Default for GatewayEvents {
@@ -21,7 +24,10 @@ impl Default for GatewayEvents {
         Self {
             tools_dirty: AtomicBool::new(true),
             tools_changed: Notify::new(),
+            resources_dirty: AtomicBool::new(true),
+            resources_changed: Notify::new(),
             host_peer: Mutex::new(None),
+            subscriptions: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -36,14 +42,77 @@ impl GatewayEvents {
         self.tools_changed.notify_one();
     }
 
+    pub(super) fn mark_resources_changed(&self) {
+        self.resources_dirty.store(true, Ordering::Release);
+        self.resources_changed.notify_one();
+    }
+
     pub(super) async fn notify_tools_changed(&self) {
         if let Some(peer) = self.host_peer.lock().await.as_ref() {
             let _ = peer.notify_tool_list_changed().await;
         }
     }
+
+    pub(super) async fn notify_resources_changed(&self) {
+        if let Some(peer) = self.host_peer.lock().await.as_ref() {
+            let _ = peer.notify_resource_list_changed().await;
+        }
+    }
+
+    pub(super) async fn register_subscription(
+        &self,
+        server_id: &str,
+        upstream_uri: &str,
+        host_uri: &str,
+    ) -> bool {
+        let mut subscriptions = self.subscriptions.lock().await;
+        let key = (server_id.to_owned(), upstream_uri.to_owned());
+        let was_present = subscriptions.contains_key(&key);
+        subscriptions.insert(key, host_uri.to_owned());
+        !was_present
+    }
+
+    pub(super) async fn unregister_subscription(
+        &self,
+        server_id: &str,
+        upstream_uri: &str,
+    ) -> bool {
+        self.subscriptions
+            .lock()
+            .await
+            .remove(&(server_id.to_owned(), upstream_uri.to_owned()))
+            .is_some()
+    }
+
+    pub(super) async fn subscriptions_for_server(&self, server_id: &str) -> Vec<(String, String)> {
+        self.subscriptions
+            .lock()
+            .await
+            .iter()
+            .filter(|((subscription_server, _), _)| subscription_server == server_id)
+            .map(|((_, upstream_uri), host_uri)| (upstream_uri.clone(), host_uri.clone()))
+            .collect()
+    }
+
+    pub(super) async fn notify_resource_updated(&self, server_id: &str, upstream_uri: &str) {
+        let host_uri = self
+            .subscriptions
+            .lock()
+            .await
+            .get(&(server_id.to_owned(), upstream_uri.to_owned()))
+            .cloned();
+        if let Some(host_uri) = host_uri
+            && let Some(peer) = self.host_peer.lock().await.as_ref()
+        {
+            let _ = peer
+                .notify_resource_updated(ResourceUpdatedNotificationParam::new(host_uri))
+                .await;
+        }
+    }
 }
 
 pub(super) struct GatewayUpstreamHandler {
+    pub(super) server_id: String,
     pub(super) events: Arc<GatewayEvents>,
     pub(super) progress: Arc<ProgressRoutes>,
 }
@@ -67,6 +136,20 @@ impl ClientHandler for GatewayUpstreamHandler {
 
     async fn on_tool_list_changed(&self, _context: NotificationContext<RoleClient>) {
         self.events.mark_tools_changed();
+    }
+
+    async fn on_resource_updated(
+        &self,
+        notification: ResourceUpdatedNotificationParam,
+        _context: NotificationContext<RoleClient>,
+    ) {
+        self.events
+            .notify_resource_updated(&self.server_id, &notification.uri)
+            .await;
+    }
+
+    async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {
+        self.events.mark_resources_changed();
     }
 }
 
