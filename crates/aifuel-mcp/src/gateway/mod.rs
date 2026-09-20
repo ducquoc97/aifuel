@@ -4,8 +4,11 @@ mod host_transport;
 mod identity;
 mod process;
 mod progress;
+mod remote_endpoint;
+mod remote_transport;
 mod request;
 mod snapshot;
+mod sse;
 mod state;
 mod transport;
 

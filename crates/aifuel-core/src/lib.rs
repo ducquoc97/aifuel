@@ -6,7 +6,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
 
+mod agent_mcp_registration;
+mod execution;
 mod status;
+pub use agent_mcp_registration::{
+    AIFUEL_GATEWAY_REGISTRATION_NAME, AgentMcpRegistrationAdapter, AgentMcpRegistrationError,
+};
+pub use execution::{
+    AccessMode, AgentExecutionAdapter, AgentRunError, ExecutionMode, OutputFormat,
+    RunCancellationToken, RunRequest, RunResult, RunStatus,
+};
 pub use status::{
     CapabilityKind, CapabilityState, CatalogPlatformStatus, CatalogProviderStatus,
     CollectionOutcome, CollectionScope, CollectionState, CollectionStatus, FreshnessState,

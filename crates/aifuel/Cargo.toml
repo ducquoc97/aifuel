@@ -15,3 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 tiny_http.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+toml_edit = "0.25.15"

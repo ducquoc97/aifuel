@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 mod cli;
 mod dashboard;
+mod mcp_setup;
 
 fn main() -> ExitCode {
     match cli::run(env::args().skip(1)) {

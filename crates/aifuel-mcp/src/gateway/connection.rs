@@ -1,5 +1,7 @@
 use super::process::{LocalProcess, ResolvedEnvironment, SpawnedLocalServer};
 use super::progress::{GatewayEvents, GatewayUpstreamHandler, ProgressRoutes};
+use super::remote_endpoint::connect_endpoint;
+use super::remote_transport::{RemoteHttpTransport, RemoteSession};
 use super::request::{UpstreamRequestError, await_server_result};
 use aifuel_app::{McpServerDefinition, SelectedMcpServer, ServerLimits};
 use rmcp::ServiceExt;
@@ -8,6 +10,8 @@ use rmcp::model::{
     ServerResult, Tool,
 };
 use rmcp::service::{Peer, PeerRequestOptions, RoleClient, RunningService};
+use rmcp::transport::Transport;
+use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
@@ -18,6 +22,18 @@ type UpstreamService = RunningService<RoleClient, GatewayUpstreamHandler>;
 
 enum ConnectionOwner {
     Local(LocalProcess),
+    Remote(RemoteSession),
+}
+
+impl ConnectionOwner {
+    async fn shutdown(&mut self, timeout: Duration) {
+        match self {
+            Self::Local(process) => process.shutdown(timeout).await,
+            Self::Remote(session) => {
+                let _ = tokio::time::timeout(timeout, session.shutdown()).await;
+            }
+        }
+    }
 }
 
 pub(super) struct ConnectedGatewayServer {
@@ -41,85 +57,90 @@ impl ConnectedGatewayServer {
     ) -> Result<Arc<Self>, McpError> {
         let limits = match &server.definition {
             McpServerDefinition::Stdio(config) => config.limits.clone(),
-            McpServerDefinition::StreamableHttp(_) => {
-                return Err(McpError::internal_error(
-                    "selected server transport is not available in this gateway",
-                    None,
-                ));
+            McpServerDefinition::StreamableHttp(config) => config.limits.clone(),
+        };
+        let (service, owner) = match &server.definition {
+            McpServerDefinition::Stdio(_) => {
+                let environment = local_environment.ok_or_else(|| {
+                    McpError::internal_error(
+                        "configured local MCP server environment was not captured at startup",
+                        None,
+                    )
+                })?;
+                let output_budget = Arc::new(Semaphore::new(limits.max_message_bytes + 1));
+                let spawned = SpawnedLocalServer::spawn(
+                    &server,
+                    environment,
+                    output_budget,
+                    limits.max_message_bytes,
+                    write_stall,
+                )
+                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+                let SpawnedLocalServer { transport, process } = spawned;
+                let mut owner = ConnectionOwner::Local(process);
+                let service = match initialize_upstream(
+                    &server,
+                    transport,
+                    &limits,
+                    Arc::clone(&events),
+                    Arc::clone(&progress),
+                    request_deadline,
+                    cancellation,
+                )
+                .await
+                {
+                    Ok(service) => service,
+                    Err(error) => {
+                        owner
+                            .shutdown(Duration::from_secs(limits.shutdown_seconds))
+                            .await;
+                        return Err(error);
+                    }
+                };
+                (service, owner)
             }
-        };
-        let environment = local_environment.ok_or_else(|| {
-            McpError::internal_error(
-                "configured local MCP server environment was not captured at startup",
-                None,
-            )
-        })?;
-        let output_budget = Arc::new(Semaphore::new(limits.max_message_bytes + 1));
-        let spawned = SpawnedLocalServer::spawn(
-            &server,
-            environment,
-            output_budget,
-            limits.max_message_bytes,
-            write_stall,
-        )
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-        let SpawnedLocalServer {
-            transport,
-            mut process,
-        } = spawned;
-        let handler = GatewayUpstreamHandler {
-            server_id: server.id.clone(),
-            events,
-            progress,
-        };
-        let connect_deadline = Instant::now()
-            + Duration::from_secs(limits.connect_seconds)
-                .min(request_deadline.saturating_duration_since(Instant::now()));
-        let service = tokio::select! {
-            result = tokio::time::timeout_at(connect_deadline, handler.serve(transport)) => {
-                match result {
-                    Ok(Ok(service)) => service,
-                    Ok(Err(_)) => {
-                        process.shutdown(Duration::from_secs(limits.shutdown_seconds)).await;
-                        return Err(McpError::internal_error(
-                            "configured local MCP server failed protocol initialization",
-                            None,
-                        ));
-                    }
-                    Err(_) => {
-                        process.shutdown(Duration::from_secs(limits.shutdown_seconds)).await;
-                        return Err(McpError::internal_error(
-                            "configured local MCP server initialization timed out",
-                            None,
-                        ));
-                    }
+            McpServerDefinition::StreamableHttp(config) => {
+                if config.auth.is_some() || !config.secret_headers.is_empty() {
+                    return Err(McpError::internal_error(
+                        "remote MCP authentication is not available in this transport slice",
+                        None,
+                    ));
                 }
-            }
-            _ = cancellation.cancelled() => {
-                process.shutdown(Duration::from_secs(limits.shutdown_seconds)).await;
-                return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
+                let endpoint =
+                    connect_endpoint(&config.url, Duration::from_secs(limits.connect_seconds))
+                        .await
+                        .map_err(|error| McpError::internal_error(error, None))?;
+                let (transport, session) =
+                    RemoteHttpTransport::new(endpoint, server.id.clone(), limits.clone());
+                let mut owner = ConnectionOwner::Remote(session);
+                let service = match initialize_upstream(
+                    &server,
+                    transport,
+                    &limits,
+                    Arc::clone(&events),
+                    Arc::clone(&progress),
+                    request_deadline,
+                    cancellation,
+                )
+                .await
+                {
+                    Ok(service) => service,
+                    Err(error) => {
+                        owner
+                            .shutdown(Duration::from_secs(limits.shutdown_seconds))
+                            .await;
+                        return Err(error);
+                    }
+                };
+                (service, owner)
             }
         };
-        let compatible = service.peer_info().is_some_and(|info| {
-            info.protocol_version == rmcp::model::ProtocolVersion::V_2025_11_25
-        });
-        if !compatible {
-            let mut service = service;
-            let _ = service.close().await;
-            process
-                .shutdown(Duration::from_secs(limits.shutdown_seconds))
-                .await;
-            return Err(McpError::internal_error(
-                "configured local MCP server does not support protocol version 2025-11-25",
-                None,
-            ));
-        }
 
         Ok(Arc::new(Self {
             server_id: server.id,
             peer: service.peer().clone(),
             service: Mutex::new(Some(service)),
-            owner: Mutex::new(Some(ConnectionOwner::Local(process))),
+            owner: Mutex::new(Some(owner)),
             request_slots: Arc::new(Semaphore::new(limits.max_concurrent_requests)),
             limits,
         }))
@@ -245,11 +266,67 @@ impl ConnectedGatewayServer {
             let _ = tokio::time::timeout_at(deadline, service.close()).await;
         }
         if let Ok(mut owner) = tokio::time::timeout_at(deadline, self.owner.lock()).await
-            && let Some(ConnectionOwner::Local(mut process)) = owner.take()
+            && let Some(mut owner) = owner.take()
         {
-            process
+            owner
                 .shutdown(deadline.saturating_duration_since(Instant::now()))
                 .await;
         }
     }
+}
+
+async fn initialize_upstream<T>(
+    server: &SelectedMcpServer,
+    transport: T,
+    limits: &ServerLimits,
+    events: Arc<GatewayEvents>,
+    progress: Arc<ProgressRoutes>,
+    request_deadline: Instant,
+    cancellation: CancellationToken,
+) -> Result<UpstreamService, McpError>
+where
+    T: Transport<RoleClient, Error = io::Error> + 'static,
+{
+    let server_kind = match &server.definition {
+        McpServerDefinition::Stdio(_) => "local MCP server",
+        McpServerDefinition::StreamableHttp(_) => "remote MCP server",
+    };
+    let handler = GatewayUpstreamHandler {
+        server_id: server.id.clone(),
+        events,
+        progress,
+    };
+    let connect_deadline = Instant::now()
+        + Duration::from_secs(limits.connect_seconds)
+            .min(request_deadline.saturating_duration_since(Instant::now()));
+    let service = tokio::select! {
+        result = tokio::time::timeout_at(connect_deadline, handler.serve(transport)) => {
+            match result {
+                Ok(Ok(service)) => service,
+                Ok(Err(_)) => return Err(McpError::internal_error(
+                    format!("configured {server_kind} failed protocol initialization"),
+                    None,
+                )),
+                Err(_) => return Err(McpError::internal_error(
+                    format!("configured {server_kind} initialization timed out"),
+                    None,
+                )),
+            }
+        }
+        _ = cancellation.cancelled() => {
+            return Err(McpError::new(ErrorCode(-32800), "MCP request was cancelled", None));
+        }
+    };
+    let compatible = service
+        .peer_info()
+        .is_some_and(|info| info.protocol_version == rmcp::model::ProtocolVersion::V_2025_11_25);
+    if !compatible {
+        let mut service = service;
+        let _ = service.close().await;
+        return Err(McpError::internal_error(
+            format!("configured {server_kind} does not support protocol version 2025-11-25"),
+            None,
+        ));
+    }
+    Ok(service)
 }

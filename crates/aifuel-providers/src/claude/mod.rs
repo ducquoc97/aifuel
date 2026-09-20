@@ -3,6 +3,11 @@ use crate::usage_helpers::{deep_find, percent, read_json, response_json, timesta
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow};
 use serde_json::Value;
 
+mod agent_run;
+pub(crate) use agent_run::ADAPTER as AGENT_RUN_ADAPTER;
+mod registration;
+pub(crate) use registration::ADAPTER as MCP_REGISTRATION_ADAPTER;
+
 pub static DEFINITION: CatalogProvider =
     CatalogProvider::file_source(ProviderKey::Claude, ".claude/.credentials.json");
 
