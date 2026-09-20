@@ -100,7 +100,9 @@ pub fn next_remote_post(
     method: &str,
     timeout: Duration,
 ) -> PendingRequest {
-    let deadline = Instant::now() + timeout;
+    // Process and fixture scheduling can exceed five seconds on the Windows
+    // runner while the full workspace test binaries start in parallel.
+    let deadline = Instant::now() + timeout.max(Duration::from_secs(15));
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let request = fixture
