@@ -16,6 +16,16 @@ pub fn write_remote_catalog_with_auth(
     limits: Value,
     bearer_token_env: Option<&str>,
 ) {
+    write_remote_catalog_with_credentials(config_root, url, limits, bearer_token_env, json!({}));
+}
+
+pub fn write_remote_catalog_with_credentials(
+    config_root: &Path,
+    url: &str,
+    limits: Value,
+    bearer_token_env: Option<&str>,
+    secret_headers: Value,
+) {
     let auth = bearer_token_env.map(|environment| json!({"bearerTokenEnv":environment}));
     write_catalog(
         config_root,
@@ -25,6 +35,7 @@ pub fn write_remote_catalog_with_auth(
                     "transport":"streamable-http",
                     "url":url,
                     "auth":auth,
+                    "secretHeaders":secret_headers,
                     "limits":limits
                 }
             },

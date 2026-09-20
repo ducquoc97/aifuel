@@ -101,6 +101,22 @@ parsing and process behavior; they do not replace live provider acceptance.
   authenticated result above is controlled real-binary fixture evidence. The
   public DeepWiki acceptance remains unauthenticated; no external credential
   or monitoring credential was reused for this slice.
+- The controlled named-header Streamable HTTP fixture runs the real gateway
+  binary with environment-referenced `X-API-Key` and `X-Tenant` values. It
+  verifies those headers coexist with bearer authentication on initialization,
+  notifications, discovery, calls, and shutdown, and that they remain bound
+  to the configured endpoint. Central catalog tests reject case-insensitive
+  duplicates, invalid names and references, and protocol, framing, content
+  negotiation, session, and bearer headers. Runtime cases reject missing,
+  empty, and CR/LF-containing values before contacting the server. 401
+  responses are sanitized without response bodies or secret text, static
+  values are not refreshed, and redirects are rejected without contacting the
+  redirect target. Test credentials are generated at runtime; no credential
+  values appear in the catalog, registration, fixture source, or committed
+  acceptance record.
+- No live private MCP credential was available for named-header host
+  acceptance. The controlled real-binary fixture is the accepted runtime
+  evidence, and no monitoring or provider credential source was reused.
 - On 2026-09-18, Codex App Server 0.155.0 on Linux 6.6.87.2 WSL2 (x86_64,
   Ubuntu 24.4.0 user agent) loaded the gateway from a fresh temporary
   `CODEX_HOME` and an isolated `XDG_CONFIG_HOME`, both created under the

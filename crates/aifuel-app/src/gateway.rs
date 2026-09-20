@@ -263,6 +263,7 @@ impl GatewayCatalog {
                             &auth.bearer_token_env,
                         )?;
                     }
+                    validate_secret_headers(server_id, &config.secret_headers)?;
                     validate_server_limits(server_id, &config.limits)?;
                 }
             }
@@ -336,6 +337,94 @@ fn validate_environment_reference(
         )));
     }
     Ok(())
+}
+
+fn validate_secret_headers(
+    server_id: &str,
+    headers: &BTreeMap<String, NamedSecretHeader>,
+) -> Result<(), GatewayConfigError> {
+    let mut seen = HashSet::new();
+    for (name, header) in headers {
+        if !is_valid_header_name(name) {
+            return Err(GatewayConfigError(format!(
+                "servers.{server_id}.secretHeaders contains an invalid header name"
+            )));
+        }
+        let normalized = name.to_ascii_lowercase();
+        if !seen.insert(normalized.clone()) {
+            return Err(GatewayConfigError(format!(
+                "servers.{server_id}.secretHeaders contains duplicate header names"
+            )));
+        }
+        if forbidden_secret_header_names()
+            .iter()
+            .any(|forbidden| *forbidden == normalized)
+        {
+            return Err(GatewayConfigError(format!(
+                "servers.{server_id}.secretHeaders contains a forbidden protocol header"
+            )));
+        }
+        validate_environment_reference(
+            &format!("servers.{server_id}.secretHeaders.{name}.env"),
+            &header.env,
+        )?;
+    }
+    Ok(())
+}
+
+fn is_valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            matches!(
+                byte,
+                b'0'..=b'9'
+                    | b'a'..=b'z'
+                    | b'A'..=b'Z'
+                    | b'!'
+                    | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'\''
+                    | b'*'
+                    | b'+'
+                    | b'-'
+                    | b'.'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'|'
+                    | b'~'
+            )
+        })
+}
+
+fn forbidden_secret_header_names() -> &'static [&'static str] {
+    &[
+        "accept",
+        "accept-charset",
+        "accept-encoding",
+        "accept-language",
+        "authorization",
+        "connection",
+        "content-encoding",
+        "content-language",
+        "content-length",
+        "content-type",
+        "host",
+        "keep-alive",
+        "last-event-id",
+        "mcp-method",
+        "mcp-name",
+        "mcp-protocol-version",
+        "mcp-session-id",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    ]
 }
 
 fn validate_server_limits(

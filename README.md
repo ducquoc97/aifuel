@@ -156,7 +156,10 @@ stdio servers:
     "private-docs": {
       "transport": "streamable-http",
       "url": "https://example.com/mcp",
-      "auth": { "bearerTokenEnv": "PRIVATE_MCP_TOKEN" }
+      "auth": { "bearerTokenEnv": "PRIVATE_MCP_TOKEN" },
+      "secretHeaders": {
+        "X-API-Key": { "env": "PRIVATE_MCP_API_KEY" }
+      }
     }
   },
   "defaults": [],
@@ -193,7 +196,12 @@ registration, or AI Fuel-generated logs or diagnostics. Missing or empty values 
 refreshed, and monitoring credentials are never reused. If an MCP host filters
 environment variables for child processes, forward the named variable in that
 host's gateway registration without putting its value in the registration.
-Named secret headers remain a separate follow-up in issue #41. The gateway
+Named secret headers use the same startup-only model. Set each referenced
+environment variable in the gateway process. Header names are checked against
+protocol, framing, content negotiation, session, and bearer headers; duplicate
+names are rejected case-insensitively. Named headers may coexist with bearer
+authentication and are sent only to the configured endpoint. Missing or empty
+values fail that server, and redirects never receive credentials. The gateway
 routes tools only. It does not route resources or prompts, or support
 task-based tool calls. The existing `aifuel mcp` read-only status server
 remains separate.
