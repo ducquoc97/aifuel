@@ -285,8 +285,7 @@ impl GatewayState {
                     .await;
             } else {
                 eprintln!(
-                    "aifuel: could not restore resource subscription for server {:?}",
-                    server_id
+                    "aifuel: could not restore resource subscription for server {server_id:?}"
                 );
             }
         }
