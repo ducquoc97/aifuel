@@ -213,6 +213,30 @@ fn render_status_text(report: &StatusReport) -> String {
         if let Some(detail) = &provider.detail {
             output.push_str(&format!("  {detail}\n"));
         }
+        if let Some(reset_credits) = &provider.reset_credits {
+            let noun = if reset_credits.available_count == 1 {
+                "usage limit reset"
+            } else {
+                "usage limit resets"
+            };
+            output.push_str("  Redeem usage limit reset\n");
+            output.push_str(&format!(
+                "  You have {} {noun} available.\n",
+                reset_credits.available_count
+            ));
+            for credit in &reset_credits.credits {
+                let title = credit
+                    .title
+                    .as_deref()
+                    .or(credit.reset_type.as_deref())
+                    .unwrap_or("Usage limit reset");
+                let expiry = credit
+                    .expires_at
+                    .map(format_credit_expiry)
+                    .unwrap_or_else(|| "expiry unavailable".to_owned());
+                output.push_str(&format!("  {title:<28} expires {expiry}\n"));
+            }
+        }
         for window in &provider.windows {
             let remaining = window
                 .remaining_percent
@@ -254,6 +278,17 @@ fn format_clock(timestamp: f64) -> String {
         .unwrap_or_else(|| "unknown time".to_owned())
 }
 
+fn format_credit_expiry(timestamp: f64) -> String {
+    chrono::DateTime::from_timestamp(timestamp as i64, 0)
+        .map(|value| {
+            value
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| "unknown time".to_owned())
+}
+
 fn format_countdown(seconds: f64) -> String {
     if seconds <= 0.0 {
         return "resetting".to_owned();
@@ -284,7 +319,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
     let mut working_directory: Option<PathBuf> = None;
     let mut access = launcher::AccessMode::ReadOnly;
     let mut resume = None;
-    let mut timeout = Some(Duration::from_secs(600));
+    let mut timeout = Some(Duration::from_secs(30));
 
     let mut index = 0;
     while index < args.len() {
@@ -394,13 +429,15 @@ fn print_run_help() {
     println!("  --working-directory PATH              optional project directory");
     println!("  --access read-only|workspace-write    permission profile");
     println!("  --resume SESSION_ID                   explicit session continuation");
-    println!("  --timeout DURATION                    default: 10m");
+    println!("  --timeout DURATION                    default: 30s");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aifuel_core::STATUS_SCHEMA_VERSION;
+    use aifuel_core::{
+        ProviderKey, ProviderUsage, ResetCredit, ResetCredits, STATUS_SCHEMA_VERSION,
+    };
 
     #[test]
     fn text_output_has_an_intentional_empty_state() {
@@ -428,5 +465,40 @@ mod tests {
     fn status_renderer_uses_countdowns_for_reset_windows() {
         assert_eq!(format_countdown(90_061.0), "1d 01h 01m");
         assert_eq!(format_countdown(0.0), "resetting");
+    }
+
+    #[test]
+    fn text_output_includes_codex_reset_credits_and_expiry() {
+        let mut provider = ProviderUsage::success(ProviderKey::Codex, Vec::new());
+        provider.reset_credits = Some(ResetCredits {
+            available_count: 2,
+            credits: vec![ResetCredit {
+                reset_type: Some("codexRateLimits".to_owned()),
+                title: Some("Full reset".to_owned()),
+                description: Some("Ready to redeem".to_owned()),
+                expires_at: Some(1_900_000_000.0),
+            }],
+        });
+        let report = StatusReport::from_usage(1_800_000_000.0, vec![provider], Vec::new());
+
+        let output = render_status_text(&report);
+
+        assert!(output.contains("Redeem usage limit reset"));
+        assert!(output.contains("You have 2 usage limit resets available."));
+        assert!(output.contains("Full reset"));
+        assert!(output.contains("expires"));
+    }
+
+    #[test]
+    fn run_uses_a_thirty_second_default_timeout() {
+        let args = [
+            "--provider".to_owned(),
+            "gemini".to_owned(),
+            "--prompt".to_owned(),
+            "hello".to_owned(),
+        ];
+        let request = parse_run_args(&args).expect("run arguments should parse");
+
+        assert_eq!(request.timeout, Some(Duration::from_secs(30)));
     }
 }
