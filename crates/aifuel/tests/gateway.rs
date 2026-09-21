@@ -102,6 +102,41 @@ fn local_gateway_negotiates_codex_protocol_and_calls_a_selected_server_tool() {
 }
 
 #[test]
+fn gateway_answers_a_modern_discovery_probe_before_legacy_initialize() {
+    let temporary = TestDirectory::new("mcp-gateway-discovery-probe");
+    let config_root = temporary.path().join("config");
+    write_catalog(&config_root, json!({}));
+    let (mut gateway, responses) = start_gateway_for_agent(&config_root, "copilot");
+    let mut stdin = gateway.stdin.take().expect("gateway stdin should be piped");
+
+    send_message(
+        &mut stdin,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "server/discover",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "copilot-cli",
+                        "version": "1.0.85"
+                    },
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                }
+            }
+        }),
+    );
+    let discovery = response_with_id(&responses, 0);
+    assert_eq!(discovery["error"]["code"], -32601);
+    assert_eq!(discovery["error"]["message"], "Method not found");
+
+    initialize_host(&mut stdin, &responses);
+    drop(stdin);
+    assert!(wait_for_exit(&mut gateway, Duration::from_secs(5)).success());
+}
+
+#[test]
 fn gateway_counteroffers_its_latest_protocol_to_an_unsupported_host_version() {
     let temporary = TestDirectory::new("mcp-gateway-host-version");
     let config_root = temporary.path().join("config");

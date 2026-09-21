@@ -208,6 +208,12 @@ argument completion. It does not support task-based tool calls. Host UI
 support for resources and prompts remains host-specific. The existing
 `aifuel mcp` read-only status server remains separate.
 
+Agent MCP Registration is available for Codex CLI, Claude Code, GitHub Copilot CLI,
+and Antigravity CLI. The Antigravity registration uses the global
+`~/.gemini/config/mcp_config.json` file. Use `aifuel mcp setup --agent
+<host-id>` to apply or remove a managed Gateway entry without replacing other
+host configuration.
+
 ## What it tracks
 
 | Provider          | Source        | How                                                                 |

@@ -5,6 +5,7 @@ static ADAPTERS: &[&dyn AgentExecutionAdapter] = &[
     &crate::codex::AGENT_RUN_ADAPTER,
     &crate::copilot::AGENT_RUN_ADAPTER,
     &crate::gemini::AGENT_RUN_ADAPTER,
+    &crate::antigravity::AGENT_RUN_ADAPTER,
 ];
 
 /// Return the compiled execution adapters registered for the built-in providers.
@@ -31,8 +32,8 @@ mod tests {
                 ProviderKey::Codex,
                 ProviderKey::Copilot,
                 ProviderKey::Gemini,
+                ProviderKey::Antigravity,
             ]
         );
-        assert!(!providers.contains(&ProviderKey::Antigravity));
     }
 }
