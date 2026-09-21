@@ -354,7 +354,7 @@ impl Drop for ManagedChild {
     }
 }
 
-fn program_candidates(program: &str) -> Vec<String> {
+pub(crate) fn program_candidates(program: &str) -> Vec<String> {
     #[cfg(windows)]
     {
         let mut candidates = vec![program.to_owned()];
