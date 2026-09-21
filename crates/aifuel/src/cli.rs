@@ -268,25 +268,22 @@ fn print_status_diagnostics(report: &StatusReport) {
 }
 
 fn format_clock(timestamp: f64) -> String {
+    format_local_timestamp(timestamp, "%H:%M:%S")
+}
+
+fn format_local_timestamp(timestamp: f64, pattern: &str) -> String {
     chrono::DateTime::from_timestamp(timestamp as i64, 0)
         .map(|value| {
             value
                 .with_timezone(&chrono::Local)
-                .format("%H:%M:%S")
+                .format(pattern)
                 .to_string()
         })
         .unwrap_or_else(|| "unknown time".to_owned())
 }
 
 fn format_credit_expiry(timestamp: f64) -> String {
-    chrono::DateTime::from_timestamp(timestamp as i64, 0)
-        .map(|value| {
-            value
-                .with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M")
-                .to_string()
-        })
-        .unwrap_or_else(|| "unknown time".to_owned())
+    format_local_timestamp(timestamp, "%Y-%m-%d %H:%M")
 }
 
 fn format_countdown(seconds: f64) -> String {
@@ -319,7 +316,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
     let mut working_directory: Option<PathBuf> = None;
     let mut access = launcher::AccessMode::ReadOnly;
     let mut resume = None;
-    let mut timeout = Some(Duration::from_secs(30));
+    let mut timeout = Some(Duration::from_secs(600));
 
     let mut index = 0;
     while index < args.len() {
@@ -429,7 +426,7 @@ fn print_run_help() {
     println!("  --working-directory PATH              optional project directory");
     println!("  --access read-only|workspace-write    permission profile");
     println!("  --resume SESSION_ID                   explicit session continuation");
-    println!("  --timeout DURATION                    default: 30s");
+    println!("  --timeout DURATION                    default: 10m");
 }
 
 #[cfg(test)]
@@ -487,18 +484,5 @@ mod tests {
         assert!(output.contains("You have 2 usage limit resets available."));
         assert!(output.contains("Full reset"));
         assert!(output.contains("expires"));
-    }
-
-    #[test]
-    fn run_uses_a_thirty_second_default_timeout() {
-        let args = [
-            "--provider".to_owned(),
-            "gemini".to_owned(),
-            "--prompt".to_owned(),
-            "hello".to_owned(),
-        ];
-        let request = parse_run_args(&args).expect("run arguments should parse");
-
-        assert_eq!(request.timeout, Some(Duration::from_secs(30)));
     }
 }
