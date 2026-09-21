@@ -284,7 +284,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
     let mut working_directory: Option<PathBuf> = None;
     let mut access = launcher::AccessMode::ReadOnly;
     let mut resume = None;
-    let mut timeout = Some(Duration::from_secs(600));
+    let mut timeout = Some(Duration::from_secs(30));
 
     let mut index = 0;
     while index < args.len() {
@@ -394,7 +394,7 @@ fn print_run_help() {
     println!("  --working-directory PATH              optional project directory");
     println!("  --access read-only|workspace-write    permission profile");
     println!("  --resume SESSION_ID                   explicit session continuation");
-    println!("  --timeout DURATION                    default: 10m");
+    println!("  --timeout DURATION                    default: 30s");
 }
 
 #[cfg(test)]
@@ -428,5 +428,18 @@ mod tests {
     fn status_renderer_uses_countdowns_for_reset_windows() {
         assert_eq!(format_countdown(90_061.0), "1d 01h 01m");
         assert_eq!(format_countdown(0.0), "resetting");
+    }
+
+    #[test]
+    fn run_uses_a_thirty_second_default_timeout() {
+        let args = [
+            "--provider".to_owned(),
+            "gemini".to_owned(),
+            "--prompt".to_owned(),
+            "hello".to_owned(),
+        ];
+        let request = parse_run_args(&args).expect("run arguments should parse");
+
+        assert_eq!(request.timeout, Some(Duration::from_secs(30)));
     }
 }
