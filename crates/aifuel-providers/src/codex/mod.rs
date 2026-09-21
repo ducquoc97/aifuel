@@ -136,14 +136,25 @@ async fn reset_credits_for_usage(data: &Value) -> Option<ResetCredits> {
 }
 
 async fn app_server_reset_credits() -> Option<ResetCredits> {
-    let mut child = Command::new("codex")
-        .args(["app-server", "--stdio"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .ok()?;
+    let mut child = None;
+    for candidate in crate::agent_execution::program_candidates("codex") {
+        match Command::new(&candidate)
+            .args(["app-server", "--stdio"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(process) => {
+                child = Some(process);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
+    }
+    let mut child = child?;
     let mut stdin = child.stdin.take()?;
     let stdout = child.stdout.take()?;
     let mut stdout = BufReader::new(stdout);
