@@ -123,6 +123,14 @@ impl AdapterHandle {
 #[derive(Clone)]
 pub struct RunManager {
     inner: Arc<ManagerInner>,
+    _owner: Option<Arc<OwnerToken>>,
+}
+
+/// One or more public manager handles share this owner token. Its final drop
+/// closes the owner connection and cancels all child runs, including when a
+/// caller forgets to call `shutdown` explicitly.
+struct OwnerToken {
+    inner: Weak<ManagerInner>,
 }
 
 struct ManagerInner {
@@ -203,16 +211,20 @@ impl RunManager {
                 .map(AdapterHandle::Static)
                 .collect(),
         };
+        let inner = Arc::new(ManagerInner {
+            adapters,
+            records: Mutex::new(HashMap::new()),
+            completed_order: Mutex::new(VecDeque::new()),
+            policy: Mutex::new(RunManagerPolicy::unrestricted()),
+            retained_content_bytes: AtomicUsize::new(0),
+            next_id: AtomicU64::new(1),
+            shutdown: AtomicBool::new(false),
+        });
         Self {
-            inner: Arc::new(ManagerInner {
-                adapters,
-                records: Mutex::new(HashMap::new()),
-                completed_order: Mutex::new(VecDeque::new()),
-                policy: Mutex::new(RunManagerPolicy::unrestricted()),
-                retained_content_bytes: AtomicUsize::new(0),
-                next_id: AtomicU64::new(1),
-                shutdown: AtomicBool::new(false),
-            }),
+            _owner: Some(Arc::new(OwnerToken {
+                inner: Arc::downgrade(&inner),
+            })),
+            inner,
         }
     }
 
@@ -430,27 +442,36 @@ impl RunManager {
 
     /// Cancel active runs and join every owned worker before returning.
     pub fn shutdown(&self) {
-        if self.inner.shutdown.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let records = self
-            .inner
-            .records
-            .lock()
-            .expect("run records mutex")
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for record in &records {
-            let _ = self.cancel_run(&record.run_id);
-        }
-        for record in records {
-            if let Some(worker) = record.worker.lock().expect("run worker mutex").take() {
-                let _ = worker.join();
-            }
+        shutdown_inner(&self.inner);
+    }
+}
+
+fn shutdown_inner(inner: &Arc<ManagerInner>) {
+    if inner.shutdown.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let records = inner
+        .records
+        .lock()
+        .expect("run records mutex")
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for record in &records {
+        let mut metadata = record.metadata.lock().expect("run metadata mutex");
+        if !metadata.state.is_terminal() {
+            metadata.state = RunState::Cancelling;
+            record.cancellation.cancel();
         }
     }
+    for record in records {
+        if let Some(worker) = record.worker.lock().expect("run worker mutex").take() {
+            let _ = worker.join();
+        }
+    }
+}
 
+impl RunManager {
     fn next_run_id(&self) -> String {
         let sequence = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let stamp = SystemTime::now()
@@ -704,10 +725,10 @@ impl RunManager {
     }
 }
 
-impl Drop for RunManager {
+impl Drop for OwnerToken {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) == 1 {
-            self.shutdown();
+        if let Some(inner) = self.inner.upgrade() {
+            shutdown_inner(&inner);
         }
     }
 }
@@ -721,7 +742,10 @@ fn run_worker(
     let Some(inner) = weak_inner.upgrade() else {
         return;
     };
-    let manager = RunManager { inner };
+    let manager = RunManager {
+        inner,
+        _owner: None,
+    };
     {
         let mut metadata = record.metadata.lock().expect("run metadata mutex");
         if metadata.state == RunState::Cancelling {
@@ -1091,6 +1115,19 @@ mod tests {
         assert_eq!(repeated.state, RunState::Cancelled);
         wait.store(false, Ordering::Release);
         manager.shutdown();
+    }
+
+    #[test]
+    fn dropping_the_owner_cancels_and_joins_active_runs() {
+        let wait = Arc::new(AtomicBool::new(true));
+        {
+            let adapter = Arc::new(ProbeAdapter {
+                provider: ProviderKey::Claude,
+                wait,
+            });
+            let manager = RunManager::new(vec![adapter]);
+            manager.start_run(request()).expect("run starts");
+        }
     }
 
     #[test]
