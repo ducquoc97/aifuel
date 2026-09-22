@@ -38,4 +38,4 @@ Execution MCP rejects the opt-in persistent content policy until its private met
 
 ## Follow-up implementation
 
-The post-merge completion branch adds explicit profile save/list/remove commands, applies profile and global defaults to CLI runs, serves cached scoped model-catalog snapshots through execution MCP, supports same-provider resume for sessions observed by the owner, and uses canonical cross-process workspace-write locks. Persistent cross-invocation session storage, ordinary provider questions, local approval IPC, exact external tool restrictions, and live platform acceptance remain separate gates.
+The post-merge completion branch adds explicit profile save/list/remove commands, applies profile and global defaults to CLI runs, serves cached scoped model-catalog snapshots through execution MCP, supports same-provider resume with private metadata-only session storage, and uses canonical cross-process workspace-write locks. Ordinary provider questions, local approval IPC, exact external tool restrictions, and live platform acceptance remain separate gates.

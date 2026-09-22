@@ -1,6 +1,6 @@
 //! Stable domain values shared by AI Fuel applications and provider adapters.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -43,7 +43,7 @@ pub trait StatusCollector: Send + Sync {
 }
 
 /// A provider represented in the built-in Catalog Provider catalog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKey {
     Claude,

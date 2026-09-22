@@ -5,6 +5,7 @@
 //! does not persist prompts, answers, or provider diagnostics.
 
 use crate::selection::ExecutionPolicy;
+use crate::session_store::{PersistedSession, SessionStore};
 use crate::workspace_lock::{WorkspaceLockError, WorkspaceWriteLock};
 use aifuel_core::{
     AgentExecutionAdapter, AgentRunError, DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS,
@@ -141,6 +142,7 @@ struct ManagerInner {
     policy: Mutex<RunManagerPolicy>,
     retained_content_bytes: AtomicUsize,
     sessions: Mutex<HashMap<String, SessionRecord>>,
+    session_store: Mutex<Option<SessionStore>>,
     next_id: AtomicU64,
     shutdown: AtomicBool,
 }
@@ -229,6 +231,7 @@ impl RunManager {
             policy: Mutex::new(RunManagerPolicy::unrestricted()),
             retained_content_bytes: AtomicUsize::new(0),
             sessions: Mutex::new(HashMap::new()),
+            session_store: Mutex::new(None),
             next_id: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
         });
@@ -260,6 +263,17 @@ impl RunManager {
         *self.inner.policy.lock().expect("run manager policy mutex") =
             RunManagerPolicy::restricted(allowed_roots);
         self
+    }
+
+    /// Attach private metadata-only native session persistence for this owner.
+    pub fn with_session_store(self, path: impl Into<PathBuf>) -> Result<Self, String> {
+        let store = SessionStore::load(path).map_err(|error| error.to_string())?;
+        *self
+            .inner
+            .session_store
+            .lock()
+            .expect("session store mutex") = Some(store);
+        Ok(self)
     }
 
     /// Set policy from the application selection configuration.
@@ -454,13 +468,28 @@ impl RunManager {
         session_id: &str,
         mut request: RunRequest,
     ) -> Result<ManagedRun, RunManagementError> {
-        let session = self
+        let local = self
             .inner
             .sessions
             .lock()
             .expect("run sessions mutex")
             .get(session_id)
-            .cloned()
+            .cloned();
+        let session = local
+            .or_else(|| {
+                self.inner
+                    .session_store
+                    .lock()
+                    .expect("session store mutex")
+                    .as_ref()
+                    .and_then(|store| store.get(session_id))
+                    .map(|session| SessionRecord {
+                        provider: session.provider,
+                        model: session.model,
+                        effort: session.effort,
+                        working_directory: session.working_directory,
+                    })
+            })
             .ok_or_else(|| {
                 RunManagementError::new(
                     RunManagementErrorCode::SessionUnavailable,
@@ -665,6 +694,23 @@ impl RunManager {
                                 working_directory: result.working_directory.clone(),
                             },
                         );
+                    if let Some(store) = self
+                        .inner
+                        .session_store
+                        .lock()
+                        .expect("session store mutex")
+                        .as_mut()
+                    {
+                        let _ = store.insert(
+                            session_id.clone(),
+                            PersistedSession {
+                                provider: result.provider_id,
+                                model: result.requested_model.clone(),
+                                effort: result.requested_effort.clone(),
+                                working_directory: result.working_directory.clone(),
+                            },
+                        );
+                    }
                 }
                 let state = if record.cancellation.is_cancelled()
                     && result.status == RunStatus::Succeeded
@@ -1202,6 +1248,36 @@ mod tests {
         assert_eq!(terminal.provider, ProviderKey::Claude);
         assert_ne!(first.run_id, resumed.run_id);
         manager.shutdown();
+    }
+
+    #[test]
+    fn native_session_metadata_survives_owner_restart_without_prompt_content() {
+        let path = std::env::temp_dir().join(format!(
+            "aifuel-session-test-{}-{}.json",
+            std::process::id(),
+            now()
+        ));
+        let wait = Arc::new(AtomicBool::new(false));
+        {
+            let manager = RunManager::new(vec![Arc::new(ProbeAdapter {
+                provider: ProviderKey::Claude,
+                wait: Arc::clone(&wait),
+            })])
+            .with_session_store(&path)
+            .expect("session store should load");
+            let first = manager.start_run(request()).expect("first run starts");
+            wait_for_terminal(&manager, &first.run_id);
+        }
+        let resumed = RunManager::new(vec![Arc::new(ProbeAdapter {
+            provider: ProviderKey::Claude,
+            wait,
+        })])
+        .with_session_store(&path)
+        .expect("session store should reload")
+        .resume_session("native-session", request())
+        .expect("persisted same-provider session resumes");
+        assert!(!resumed.run_id.is_empty());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

@@ -37,10 +37,9 @@ pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
                 .to_owned(),
         );
     }
-    Ok(
-        aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
-            .with_allowed_roots(config.policy.allowed_roots),
-    )
+    aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
+        .with_allowed_roots(config.policy.allowed_roots)
+        .with_session_store(session_store_path()?)
 }
 
 pub fn execution_config_path() -> Result<PathBuf, String> {
@@ -65,6 +64,13 @@ pub fn model_catalog_snapshot() -> Result<Vec<serde_json::Value>, String> {
         .filter_map(|scope| store.snapshot(scope))
         .map(|snapshot| serde_json::to_value(snapshot).expect("catalog snapshot serializes"))
         .collect())
+}
+
+pub fn session_store_path() -> Result<PathBuf, String> {
+    let home = user_home_dir()?;
+    Ok(user_config_dir(&home)?
+        .join("aifuel")
+        .join("agent-sessions.json"))
 }
 
 /// Apply global defaults and an optional named profile to one explicit CLI

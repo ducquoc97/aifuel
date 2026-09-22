@@ -10,6 +10,7 @@ mod execution;
 mod gateway;
 mod run_management;
 pub mod selection;
+mod session_store;
 mod workspace_lock;
 pub use agent_mcp_setup::{
     AgentMcpSetupAction, AgentMcpSetupError, AgentMcpSetupFacade, AgentMcpSetupOptions,
