@@ -4,6 +4,7 @@
 //! worker threads for one CLI invocation or one execution-MCP connection. It
 //! does not persist prompts, answers, or provider diagnostics.
 
+use crate::content_store::{ContentStore, PersistedContent};
 use crate::selection::ExecutionPolicy;
 use crate::session_store::{PersistedSession, SessionStore};
 use crate::workspace_lock::{WorkspaceLockError, WorkspaceWriteLock};
@@ -30,18 +31,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RunManagerPolicy {
     pub allowed_roots: Option<Vec<PathBuf>>,
+    pub retain_content: bool,
 }
 
 impl RunManagerPolicy {
     pub const fn unrestricted() -> Self {
         Self {
             allowed_roots: None,
+            retain_content: false,
         }
     }
 
     pub fn restricted(allowed_roots: Vec<PathBuf>) -> Self {
         Self {
             allowed_roots: Some(allowed_roots),
+            retain_content: false,
         }
     }
 }
@@ -49,7 +53,10 @@ impl RunManagerPolicy {
 /// Convert the persisted local policy to the manager's explicit root policy.
 impl From<&ExecutionPolicy> for RunManagerPolicy {
     fn from(policy: &ExecutionPolicy) -> Self {
-        Self::restricted(policy.allowed_roots.clone())
+        Self {
+            allowed_roots: Some(policy.allowed_roots.clone()),
+            retain_content: policy.retain_content,
+        }
     }
 }
 
@@ -143,6 +150,7 @@ struct ManagerInner {
     retained_content_bytes: AtomicUsize,
     sessions: Mutex<HashMap<String, SessionRecord>>,
     session_store: Mutex<Option<SessionStore>>,
+    content_store: Mutex<Option<ContentStore>>,
     next_id: AtomicU64,
     shutdown: AtomicBool,
 }
@@ -174,6 +182,7 @@ struct RunMetadata {
     state: RunState,
     completed_at: Option<f64>,
     content_available: bool,
+    content_persisted: bool,
     result: ResultMetadata,
 }
 
@@ -233,6 +242,7 @@ impl RunManager {
             retained_content_bytes: AtomicUsize::new(0),
             sessions: Mutex::new(HashMap::new()),
             session_store: Mutex::new(None),
+            content_store: Mutex::new(None),
             next_id: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
         });
@@ -274,6 +284,16 @@ impl RunManager {
             .session_store
             .lock()
             .expect("session store mutex") = Some(store);
+        Ok(self)
+    }
+
+    pub fn with_content_store(self, path: impl Into<PathBuf>) -> Result<Self, String> {
+        let store = ContentStore::new(path).map_err(|error| error.to_string())?;
+        *self
+            .inner
+            .content_store
+            .lock()
+            .expect("content store mutex") = Some(store);
         Ok(self)
     }
 
@@ -460,7 +480,21 @@ impl RunManager {
     /// provider status yet, but their state and metadata remain inspectable.
     pub fn get_result(&self, run_id: &str) -> Result<ManagedRunResult, RunManagementError> {
         let record = self.record(run_id)?;
-        Ok(record.result_snapshot())
+        let mut result = record.result_snapshot();
+        if let Some(store) = self
+            .inner
+            .content_store
+            .lock()
+            .expect("content store mutex")
+            .as_ref()
+            && let Ok(Some(content)) = store.load(run_id)
+        {
+            result.output = content.output;
+            result.error = content.error;
+            result.diagnostics = content.diagnostics;
+            result.content_available = true;
+        }
+        Ok(result)
     }
 
     /// Start a new Agent Run against a known same-provider native session.
@@ -790,6 +824,28 @@ impl RunManager {
             metadata.state = state;
             metadata.completed_at = Some(now());
             metadata.content_available = retain_content;
+            let persisted = if let Some(store) = self
+                .inner
+                .content_store
+                .lock()
+                .expect("content store mutex")
+                .as_ref()
+            {
+                store
+                    .save(
+                        &record.run_id,
+                        &PersistedContent {
+                            output: output.clone(),
+                            error: error.clone(),
+                            diagnostics: diagnostics.clone(),
+                        },
+                    )
+                    .is_ok()
+            } else {
+                false
+            };
+            metadata.content_persisted = persisted;
+            metadata.content_available = retain_content || persisted;
             metadata.result = ResultMetadata {
                 status: Some(status),
                 effective_model,
@@ -914,6 +970,7 @@ impl RunRecord {
                 state: RunState::Starting,
                 completed_at: None,
                 content_available: false,
+                content_persisted: false,
                 result: ResultMetadata::empty(),
             }),
             events: Mutex::new(EventBuffer::default()),
@@ -969,7 +1026,7 @@ impl RunRecord {
 
     fn clear_content(&self) {
         let mut metadata = self.metadata.lock().expect("run metadata mutex");
-        metadata.content_available = false;
+        metadata.content_available = metadata.content_persisted;
         metadata.result.output = None;
         metadata.result.error = None;
         metadata.result.diagnostics = None;
@@ -1283,6 +1340,35 @@ mod tests {
         .expect("persisted same-provider session resumes");
         assert!(!resumed.run_id.is_empty());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn persistent_content_is_written_only_when_a_content_store_is_attached() {
+        let directory = std::env::temp_dir().join(format!(
+            "aifuel-content-test-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let manager = RunManager::new(vec![Arc::new(ProbeAdapter {
+            provider: ProviderKey::Claude,
+            wait: Arc::new(AtomicBool::new(false)),
+        })])
+        .with_content_store(&directory)
+        .expect("content store should open");
+        let started = manager.start_run(request()).expect("run starts");
+        wait_for_terminal(&manager, &started.run_id);
+        let result = manager
+            .get_result(&started.run_id)
+            .expect("result is available");
+        assert!(result.content_available);
+        assert!(
+            std::fs::read_dir(&directory)
+                .expect("content directory exists")
+                .next()
+                .is_some()
+        );
+        manager.shutdown();
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

@@ -31,15 +31,14 @@ pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
     }
     let config = aifuel_app::selection::SelectionStore::load(execution_config_path()?)
         .map_err(|error| error.to_string())?;
+    let manager = aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
+        .with_execution_policy(&config.policy)
+        .with_session_store(session_store_path()?)?;
     if config.policy.retain_content {
-        return Err(
-            "persistent Agent Run content retention is not supported by this execution owner"
-                .to_owned(),
-        );
+        manager.with_content_store(content_store_path()?)
+    } else {
+        Ok(manager)
     }
-    aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
-        .with_allowed_roots(config.policy.allowed_roots)
-        .with_session_store(session_store_path()?)
 }
 
 pub fn execution_config_path() -> Result<PathBuf, String> {
@@ -71,6 +70,11 @@ pub fn session_store_path() -> Result<PathBuf, String> {
     Ok(user_config_dir(&home)?
         .join("aifuel")
         .join("agent-sessions.json"))
+}
+
+pub fn content_store_path() -> Result<PathBuf, String> {
+    let home = user_home_dir()?;
+    Ok(user_config_dir(&home)?.join("aifuel").join("run-content"))
 }
 
 /// Apply global defaults and an optional named profile to one explicit CLI

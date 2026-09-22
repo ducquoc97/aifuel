@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 mod agent_mcp_setup;
 mod catalog;
+mod content_store;
 mod execution;
 mod gateway;
 mod run_management;
