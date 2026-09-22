@@ -1,4 +1,7 @@
 use rmcp::RoleServer;
+use rmcp::model::{
+    ClientJsonRpcMessage, ClientRequest, ErrorCode, ErrorData, ServerJsonRpcMessage,
+};
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
 use rmcp::transport::{Transport, async_rw::JsonRpcMessageCodec};
 use std::future::Future;
@@ -19,6 +22,7 @@ struct HostOutput {
 
 pub(crate) struct HostTransport {
     reader: mpsc::Receiver<io::Result<RxJsonRpcMessage<RoleServer>>>,
+    initial_message: Option<RxJsonRpcMessage<RoleServer>>,
     writer: Arc<Mutex<Option<mpsc::Sender<HostOutput>>>>,
     output_budget: Arc<Semaphore>,
     failure_token: CancellationToken,
@@ -58,12 +62,42 @@ impl HostTransport {
 
         Ok(Self {
             reader,
+            initial_message: None,
             writer: Arc::new(Mutex::new(Some(writer))),
             output_budget,
             failure_token,
             max_message_bytes,
             write_stall,
         })
+    }
+
+    /// Answer the optional modern discovery probe used by newer MCP hosts,
+    /// then leave the following legacy initialize request for rmcp.
+    pub(crate) async fn prepare_legacy_host(&mut self) -> io::Result<()> {
+        loop {
+            let message =
+                self.reader.recv().await.ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "MCP host closed")
+                })??;
+            let discovery_id = match &message {
+                ClientJsonRpcMessage::Request(request)
+                    if matches!(
+                        &request.request,
+                        ClientRequest::CustomRequest(custom)
+                            if custom.method == "server/discover"
+                    ) =>
+                {
+                    Some(request.id.clone())
+                }
+                _ => None,
+            };
+            let Some(discovery_id) = discovery_id else {
+                self.initial_message = Some(message);
+                return Ok(());
+            };
+
+            self.send(discovery_error(discovery_id)).await?;
+        }
     }
 }
 
@@ -161,6 +195,9 @@ impl Transport<RoleServer> for HostTransport {
     }
 
     async fn receive(&mut self) -> Option<RxJsonRpcMessage<RoleServer>> {
+        if self.initial_message.is_some() {
+            return self.initial_message.take();
+        }
         self.reader.recv().await?.ok()
     }
 
@@ -169,6 +206,13 @@ impl Transport<RoleServer> for HostTransport {
         self.writer.lock().await.take();
         Ok(())
     }
+}
+
+fn discovery_error(id: rmcp::model::RequestId) -> TxJsonRpcMessage<RoleServer> {
+    ServerJsonRpcMessage::error(
+        ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "Method not found", None),
+        id,
+    )
 }
 
 fn read_host_input(

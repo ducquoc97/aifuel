@@ -38,6 +38,11 @@ pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
         cancellation.clone(),
     )
     .map_err(|_| "MCP Gateway could not start its output writer".to_owned())?;
+    let mut transport = transport;
+    transport
+        .prepare_legacy_host()
+        .await
+        .map_err(|_| "MCP Gateway could not initialize the host protocol session".to_owned())?;
     let server = GatewayServerHandler::new(Arc::clone(&state));
     let service = GatewayServerService::new(server)
         .serve_with_ct(transport, cancellation.clone())

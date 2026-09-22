@@ -102,7 +102,7 @@ impl CliExecutionAdapter {
             match Command::new(&candidate)
                 .args(self.preflight_args)
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .spawn()
             {
                 Ok(process) => {
@@ -127,7 +127,13 @@ impl CliExecutionAdapter {
             .stdout
             .take()
             .expect("preflight stdout was requested");
-        let reader = thread::spawn(move || read_output(stdout));
+        let stderr = child
+            .child_mut()
+            .stderr
+            .take()
+            .expect("preflight stderr was requested");
+        let stdout_reader = thread::spawn(move || read_output(stdout));
+        let stderr_reader = thread::spawn(move || read_output(stderr));
         let deadline = timeout.map(|timeout| started_at + timeout);
         let status = loop {
             if let Some(status) = child.try_wait().map_err(AgentRunError::Io)? {
@@ -135,21 +141,27 @@ impl CliExecutionAdapter {
             }
             if cancellation.is_cancelled() {
                 let _ = child.kill_and_wait();
-                let _ = reader.join();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
                 return Err(AgentRunError::Cancelled);
             }
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 child.kill_and_wait().map_err(AgentRunError::Io)?;
-                let _ = reader.join();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
                 return Err(AgentRunError::Timeout(
                     "provider capability preflight timed out".to_owned(),
                 ));
             }
             thread::sleep(Duration::from_millis(10));
         };
-        let help = reader
-            .join()
-            .map_err(|_| AgentRunError::InvalidRequest("preflight reader panicked".to_owned()))??;
+        let stdout = stdout_reader.join().map_err(|_| {
+            AgentRunError::InvalidRequest("preflight stdout reader panicked".to_owned())
+        })??;
+        let stderr = stderr_reader.join().map_err(|_| {
+            AgentRunError::InvalidRequest("preflight stderr reader panicked".to_owned())
+        })??;
+        let help = format!("{stdout}{stderr}");
         if status.success() && self.required_flags.iter().all(|flag| help.contains(flag)) {
             Ok(program)
         } else {

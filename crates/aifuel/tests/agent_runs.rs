@@ -10,22 +10,32 @@ mod support;
 use support::{TestDirectory, install_fake_command, path_with};
 
 #[test]
-fn unsupported_provider_does_not_fall_back_to_an_available_cli() {
-    let directory = TestDirectory::new("no-agent-fallback");
-    install_fake_command(directory.path(), "gemini");
+fn antigravity_run_uses_the_agy_cli() {
+    let directory = TestDirectory::new("antigravity-run");
+    install_fake_command(directory.path(), "agy");
 
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args(["run", "--provider", "antigravity", "--prompt", "hello"])
+        .args([
+            "run",
+            "--provider",
+            "antigravity",
+            "--prompt",
+            "translate to Vietnamese: hello",
+        ])
         .env("PATH", path_with(directory.path()))
         .output()
         .expect("aifuel should start");
 
-    assert_eq!(output.status.code(), Some(3));
     assert!(
+        output.status.success(),
+        "Antigravity Agent Run should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
-            .contains("provider antigravity has no verified agent integration")
     );
-    assert!(output.stdout.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("fake agy response: --print translate to Vietnamese: hello"),
+        "expected agy print-mode invocation, got {stdout:?}"
+    );
 }
 
 #[test]

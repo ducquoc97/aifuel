@@ -2,6 +2,11 @@ use super::{CatalogProvider, MonitoringFuture, ProviderMonitoring};
 use crate::usage_helpers::{read_json, value_string};
 use aifuel_core::{ProviderKey, ProviderUsage};
 
+mod agent_run;
+pub(crate) use agent_run::ADAPTER as AGENT_RUN_ADAPTER;
+mod registration;
+pub(crate) use registration::ADAPTER as MCP_REGISTRATION_ADAPTER;
+
 pub static DEFINITION: CatalogProvider = CatalogProvider::directory_sources(
     ProviderKey::Antigravity,
     &[".gemini/antigravity", ".gemini/antigravity-cli"],

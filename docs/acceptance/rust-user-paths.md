@@ -414,3 +414,26 @@ temporary Codex homes and left the saved Codex configuration unchanged.
   registration and Gateway handshake remain unverified pending a separate
   compatibility decision. Issue #39 remains open until that host path is
   accepted.
+
+## Follow-up provider and MCP verification
+
+On 2026-09-21, the current Linux worktree was verified with Codex CLI 0.155.1,
+Claude Code 2.1.223, Antigravity CLI 1.2.7 (`agy`), and GitHub Copilot CLI
+1.0.86. The exact prompt
+`translate to Vietnamese: Fetch Codex redemption detail through
+account/rateLimits/read` completed through `aifuel run --provider ...` for all
+four providers with exit code 0 and Vietnamese output. Runs used the default
+read-only prompt-only mode and temporary AI Fuel working directories.
+
+The public `aifuel mcp setup --agent ...` workflow was applied in isolated
+temporary homes for all four MCP Hosts and each host loaded the resulting
+`aifuel-gateway` registration. Antigravity uses
+`~/.gemini/config/mcp_config.json` and the `agy` command. The Gateway now
+answers Copilot's optional pre-initialize `server/discover` probe with the
+standard `-32601` fallback response, then accepts the existing 2025-11-25
+legacy handshake. A real Copilot CLI 1.0.86 run connected to a local fixture
+through the registered Gateway, exposed `aifuel-gateway-fixture__echo`, called
+it with `mcp-copilot-fallback`, and received `fixture-result`.
+
+This follow-up supersedes the earlier Copilot-specific unverified result above;
+that historical record remains unchanged to preserve the evidence timeline.

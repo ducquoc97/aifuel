@@ -105,6 +105,66 @@ args = ["--mode", "local"]
 }
 
 #[test]
+fn public_antigravity_setup_targets_its_global_mcp_config() {
+    let directory = TestDirectory::new("mcp-setup-antigravity-public");
+    let root = directory.path();
+    let config = root.join(".gemini").join("config").join("mcp_config.json");
+    let config_dir = ai_fuel_config_dir(root);
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let original = br#"{
+  "settings": {"theme": "light"},
+  "mcpServers": {
+    "docs": {"command": "docs-server", "args": []}
+  }
+}"#;
+    fs::write(&config, original).unwrap();
+
+    let apply = run_setup(root, &["mcp", "setup", "--agent", "antigravity"]);
+
+    assert!(
+        apply.status.success(),
+        "Antigravity setup should apply: {}",
+        String::from_utf8_lossy(&apply.stderr)
+    );
+    assert!(String::from_utf8_lossy(&apply.stdout).contains("registration applied"));
+    let apply_backup = backup_path(&apply);
+    assert_eq!(fs::read(&apply_backup).unwrap(), original);
+    let updated: serde_json::Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    assert_eq!(updated["settings"]["theme"], "light");
+    assert_eq!(updated["mcpServers"]["docs"]["command"], "docs-server");
+    assert_eq!(
+        updated["mcpServers"]["aifuel-gateway"],
+        serde_json::json!({
+            "command": env!("CARGO_BIN_EXE_aifuel"),
+            "args": ["mcp", "gateway", "--agent", "antigravity"],
+            "disabled": false
+        })
+    );
+
+    let repeated = run_setup(root, &["mcp", "setup", "--agent", "antigravity"]);
+    assert!(repeated.status.success());
+    assert!(
+        String::from_utf8_lossy(&repeated.stdout).contains("no configuration change was needed")
+    );
+    assert_eq!(backup_files(&config_dir).len(), 1);
+
+    let remove = run_setup(
+        root,
+        &["mcp", "setup", "--agent", "antigravity", "--remove"],
+    );
+    assert!(
+        remove.status.success(),
+        "Antigravity removal should succeed: {}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let removed: serde_json::Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    assert!(removed["mcpServers"].get("aifuel-gateway").is_none());
+    assert_eq!(removed["mcpServers"]["docs"]["command"], "docs-server");
+    assert_eq!(backup_path(&remove), apply_backup);
+    assert_eq!(backup_files(&config_dir).len(), 1);
+}
+
+#[test]
 fn public_setup_rejects_unowned_conflicts_without_changing_them() {
     let directory = TestDirectory::new("mcp-setup-conflict");
     let root = directory.path();
