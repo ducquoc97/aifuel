@@ -34,7 +34,7 @@ Also exercise a disposable repository task, denied writes and workspace escapes,
 
 AI Fuel-owned content retention does not control native agent transcript storage. Cancellation does not reverse completed effects. Worktree locks do not serialize shared Git metadata operations across worktrees.
 
-Execution MCP rejects the opt-in persistent content policy until its private metadata store is implemented; connection-only content remains memory-bound to the owner and is discarded on owner shutdown.
+Connection-only content remains memory-bound to the owner and is discarded on owner shutdown. The opt-in persistent content policy stores bounded answer and diagnostic content in private local files with metadata-only defaults otherwise.
 
 ## Follow-up implementation
 
