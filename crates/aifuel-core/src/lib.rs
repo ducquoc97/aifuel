@@ -20,8 +20,9 @@ pub use execution::{
 pub use run_management::{
     DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS, MAX_ANSWER_BYTES_PER_RUN, MAX_COMPLETED_CONTENT,
     MAX_EVENT_BYTES_PER_RUN, MAX_EVENT_PAGE_BYTES, MAX_OWNER_CONTENT_BYTES, MAX_RUN_RECORDS,
-    ManagedRun, ManagedRunResult, RUN_MANAGEMENT_SCHEMA_VERSION, ResolvedRun, RunEvent,
-    RunEventKind, RunEvents, RunManagementError, RunManagementErrorCode, RunState,
+    ManagedRun, ManagedRunResult, PendingRunInput, RUN_MANAGEMENT_SCHEMA_VERSION, ResolvedRun,
+    RunEvent, RunEventKind, RunEvents, RunInputKind, RunManagementError, RunManagementErrorCode,
+    RunState,
 };
 pub use status::{
     CapabilityKind, CapabilityState, CatalogPlatformStatus, CatalogProviderStatus,

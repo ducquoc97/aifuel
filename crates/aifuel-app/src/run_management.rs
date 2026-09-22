@@ -11,10 +11,10 @@ use crate::workspace_lock::{WorkspaceLockError, WorkspaceWriteLock};
 use aifuel_core::{
     AgentExecutionAdapter, AgentRunError, DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS,
     MAX_ANSWER_BYTES_PER_RUN, MAX_COMPLETED_CONTENT, MAX_EVENT_BYTES_PER_RUN, MAX_EVENT_PAGE_BYTES,
-    MAX_OWNER_CONTENT_BYTES, MAX_RUN_RECORDS, ManagedRun, ManagedRunResult,
+    MAX_OWNER_CONTENT_BYTES, MAX_RUN_RECORDS, ManagedRun, ManagedRunResult, PendingRunInput,
     RUN_MANAGEMENT_SCHEMA_VERSION, ResolvedRun, RunCancellationToken, RunEvent, RunEventKind,
-    RunEvents, RunManagementError, RunManagementErrorCode, RunRequest, RunResult, RunState,
-    RunStatus,
+    RunEvents, RunInputKind, RunManagementError, RunManagementErrorCode, RunRequest, RunResult,
+    RunState, RunStatus,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -171,6 +171,7 @@ struct RunRecord {
     external_tools: Option<Vec<String>>,
     created_at: f64,
     metadata: Mutex<RunMetadata>,
+    pending_input: Mutex<Option<PendingRunInput>>,
     events: Mutex<EventBuffer>,
     cancellation: RunCancellationToken,
     retained_content_bytes: AtomicUsize,
@@ -495,6 +496,87 @@ impl RunManager {
             result.content_available = true;
         }
         Ok(result)
+    }
+
+    pub fn request_input(
+        &self,
+        run_id: &str,
+        kind: RunInputKind,
+        description: impl Into<String>,
+    ) -> Result<PendingRunInput, RunManagementError> {
+        let record = self.record(run_id)?;
+        let mut metadata = record.metadata.lock().expect("run metadata mutex");
+        if metadata.state.is_terminal() {
+            return Err(RunManagementError::new(
+                RunManagementErrorCode::InputConflict,
+                "run is already terminal",
+            ));
+        }
+        let input = PendingRunInput {
+            input_id: format!("input-{}-{}", std::process::id(), now()),
+            run_id: run_id.to_owned(),
+            kind,
+            description: description.into(),
+        };
+        metadata.state = match input.kind {
+            RunInputKind::Ordinary => RunState::WaitingForInput,
+            RunInputKind::Permission => RunState::WaitingForApproval,
+        };
+        drop(metadata);
+        *record.pending_input.lock().expect("pending input mutex") = Some(input.clone());
+        self.push_event(
+            &record,
+            match input.kind {
+                RunInputKind::Ordinary => RunEventKind::WaitingForInput,
+                RunInputKind::Permission => RunEventKind::WaitingForApproval,
+            },
+            None,
+        );
+        Ok(input)
+    }
+
+    pub fn answer_input(
+        &self,
+        run_id: &str,
+        input_id: &str,
+        _response: &str,
+    ) -> Result<ManagedRun, RunManagementError> {
+        let record = self.record(run_id)?;
+        let pending = record
+            .pending_input
+            .lock()
+            .expect("pending input mutex")
+            .clone()
+            .ok_or_else(|| {
+                RunManagementError::new(
+                    RunManagementErrorCode::InputConflict,
+                    "no pending input exists",
+                )
+            })?;
+        if pending.input_id != input_id {
+            return Err(RunManagementError::new(
+                RunManagementErrorCode::InputConflict,
+                "input response does not match the pending request",
+            ));
+        }
+        if pending.kind == RunInputKind::Permission {
+            return Err(RunManagementError::new(
+                RunManagementErrorCode::UnsupportedCapability,
+                "permission approvals must be delivered through the local terminal operation",
+            ));
+        }
+        *record.pending_input.lock().expect("pending input mutex") = None;
+        let mut metadata = record.metadata.lock().expect("run metadata mutex");
+        if metadata.state.is_terminal() {
+            return Err(RunManagementError::new(
+                RunManagementErrorCode::InputConflict,
+                "run became terminal before the input response",
+            ));
+        }
+        metadata.state = RunState::Running;
+        drop(metadata);
+        self.push_event(&record, RunEventKind::Running, None);
+        Ok(record.snapshot())
     }
 
     /// Start a new Agent Run against a known same-provider native session.
@@ -973,6 +1055,7 @@ impl RunRecord {
                 content_persisted: false,
                 result: ResultMetadata::empty(),
             }),
+            pending_input: Mutex::new(None),
             events: Mutex::new(EventBuffer::default()),
             cancellation: RunCancellationToken::new(),
             retained_content_bytes: AtomicUsize::new(0),
@@ -994,6 +1077,11 @@ impl RunRecord {
             created_at: self.created_at,
             completed_at: metadata.completed_at,
             content_available: metadata.content_available,
+            pending_input: self
+                .pending_input
+                .lock()
+                .expect("pending input mutex")
+                .clone(),
         }
     }
 
@@ -1369,6 +1457,34 @@ mod tests {
         );
         manager.shutdown();
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ordinary_input_waits_and_resumes_while_permissions_stay_local_only() {
+        let adapter = Arc::new(ProbeAdapter {
+            provider: ProviderKey::Claude,
+            wait: Arc::new(AtomicBool::new(true)),
+        });
+        let manager = RunManager::new(vec![adapter]);
+        let started = manager.start_run(request()).expect("run starts");
+        let ordinary = manager
+            .request_input(&started.run_id, RunInputKind::Ordinary, "choose a target")
+            .expect("ordinary input waits");
+        assert_eq!(
+            manager.get_run(&started.run_id).unwrap().state,
+            RunState::WaitingForInput
+        );
+        manager
+            .answer_input(&started.run_id, &ordinary.input_id, "workspace")
+            .expect("ordinary input resumes");
+        let approval = manager
+            .request_input(&started.run_id, RunInputKind::Permission, "write file")
+            .expect("permission request waits");
+        let error = manager
+            .answer_input(&started.run_id, &approval.input_id, "allow")
+            .expect_err("MCP cannot approve permissions");
+        assert_eq!(error.code, RunManagementErrorCode::UnsupportedCapability);
+        manager.shutdown();
     }
 
     #[test]

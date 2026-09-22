@@ -176,6 +176,22 @@ pub struct ManagedRun {
     pub created_at: f64,
     pub completed_at: Option<f64>,
     pub content_available: bool,
+    pub pending_input: Option<PendingRunInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunInputKind {
+    Ordinary,
+    Permission,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PendingRunInput {
+    pub input_id: String,
+    pub run_id: String,
+    pub kind: RunInputKind,
+    pub description: String,
 }
 
 /// The safe, serializable result of resolving a request. Prompt content is
@@ -202,6 +218,8 @@ pub struct ResolvedRun {
 pub enum RunEventKind {
     Started,
     Running,
+    WaitingForInput,
+    WaitingForApproval,
     StateChanged,
     Output,
     Diagnostic,

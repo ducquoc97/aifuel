@@ -191,10 +191,13 @@ fn call(
             let request = parse_request(&request_args)?;
             encoded(manager.resume_session(session_id, request)?)
         }
-        "answer_input" => Err(RunManagementError::new(
-            aifuel_core::RunManagementErrorCode::UnsupportedCapability,
-            "ordinary input is not supported by the selected integration; permission approvals remain local-only",
-        )),
+        "answer_input" => {
+            only_fields(args, &["run_id", "input_id", "response"])?;
+            let run_id = required_string(args, "run_id")?;
+            let input_id = required_string(args, "input_id")?;
+            let response = required_string(args, "response")?;
+            encoded(manager.answer_input(run_id, input_id, response)?)
+        }
         "get_run" | "get_result" | "cancel_run" => {
             only_fields(args, &["run_id"])?;
             let id = required_string(args, "run_id")?;
@@ -360,7 +363,7 @@ fn tool_definitions() -> Vec<Value> {
         },"annotations":{"readOnlyHint":name == "resolve_run","idempotentHint":name == "resolve_run","openWorldHint":true}}));
     }
     tools.push(json!({"name":"resume_session","description":"Resume a same-provider native session owned by this execution connection.","inputSchema":{"type":"object","additionalProperties":false,"required":["session_id","provider","prompt"],"properties":{"session_id":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"effort":{"type":"string"},"prompt":{"type":"string"},"working_directory":{"type":"string"},"access":{"enum":["read-only","workspace-write"]},"timeout_seconds":{"type":"integer","minimum":1}}},"annotations":{"readOnlyHint":false,"idempotentHint":false,"openWorldHint":true}}));
-    tools.push(json!({"name":"answer_input","description":"Answer an ordinary provider question when the adapter can distinguish it from a permission request; unsupported integrations reject it.","inputSchema":{"type":"object","additionalProperties":false,"required":["run_id","input_id","response"],"properties":{"run_id":{"type":"string"},"input_id":{"type":"string"},"response":{"type":"string"}}},"annotations":{"readOnlyHint":false,"idempotentHint":false,"openWorldHint":false}}));
+    tools.push(json!({"name":"answer_input","description":"Answer an ordinary provider question; permission requests are rejected because approval is local-only.","inputSchema":{"type":"object","additionalProperties":false,"required":["run_id","input_id","response"],"properties":{"run_id":{"type":"string"},"input_id":{"type":"string"},"response":{"type":"string"}}},"annotations":{"readOnlyHint":false,"idempotentHint":false,"openWorldHint":false}}));
     for (name, description) in [
         ("get_run", "Inspect a run owned by this connection."),
         ("get_result", "Read a run result without consuming it."),
