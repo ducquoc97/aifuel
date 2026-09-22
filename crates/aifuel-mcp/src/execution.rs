@@ -266,6 +266,26 @@ fn optional_string<'a>(
         .transpose()
 }
 
+fn parse_tools(args: &Value) -> Result<Option<Vec<String>>, RunManagementError> {
+    let Some(value) = args.get("external_tools") else {
+        return Ok(None);
+    };
+    let tools = value.as_array().ok_or_else(|| {
+        RunManagementError::invalid_request("external_tools must be an array of strings")
+    })?;
+    let mut result = Vec::with_capacity(tools.len());
+    for tool in tools {
+        let tool = tool
+            .as_str()
+            .filter(|tool| !tool.trim().is_empty())
+            .ok_or_else(|| {
+                RunManagementError::invalid_request("external_tools must contain nonempty strings")
+            })?;
+        result.push(tool.to_owned());
+    }
+    Ok(Some(result))
+}
+
 fn parse_request(args: &Value) -> Result<RunRequest, RunManagementError> {
     only_fields(
         args,
@@ -273,6 +293,7 @@ fn parse_request(args: &Value) -> Result<RunRequest, RunManagementError> {
             "provider",
             "model",
             "effort",
+            "external_tools",
             "prompt",
             "working_directory",
             "access",
@@ -304,6 +325,7 @@ fn parse_request(args: &Value) -> Result<RunRequest, RunManagementError> {
         provider,
         model: optional_string(args, "model")?.map(str::to_owned),
         effort: optional_string(args, "effort")?.map(str::to_owned),
+        external_tools: parse_tools(args)?,
         account: None,
         prompt: required_string(args, "prompt")?.to_owned(),
         output: OutputFormat::Json,
@@ -331,7 +353,7 @@ fn tool_definitions() -> Vec<Value> {
         tools.push(json!({"name":name,"description":description,"inputSchema":{
             "type":"object","additionalProperties":false,"required":["provider","prompt"],
             "properties":{
-                "provider":{"type":"string"},"model":{"type":"string"},"effort":{"type":"string"},"prompt":{"type":"string"},
+                "provider":{"type":"string"},"model":{"type":"string"},"effort":{"type":"string"},"external_tools":{"type":"array","items":{"type":"string"}},"prompt":{"type":"string"},
                 "working_directory":{"type":"string"},"access":{"enum":["read-only","workspace-write"]},
                 "timeout_seconds":{"type":"integer","minimum":1}
             }

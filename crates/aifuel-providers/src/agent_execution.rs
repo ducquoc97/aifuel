@@ -154,6 +154,12 @@ impl CliExecutionAdapter {
     }
 
     fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
+        if request.external_tools.is_some() {
+            return Err(AgentRunError::InvalidRequest(format!(
+                "{} cannot enforce an exact external MCP tool selection",
+                self.provider
+            )));
+        }
         if request.effort.is_some() {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} cannot report a verified effort setting",

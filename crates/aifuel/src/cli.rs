@@ -409,6 +409,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
         provider,
         model,
         effort,
+        external_tools: None,
         account,
         prompt,
         output,

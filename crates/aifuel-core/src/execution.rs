@@ -73,6 +73,9 @@ pub struct RunRequest {
     /// Requested model-specific effort. Adapters report an effective value
     /// only when the native provider exposes it.
     pub effort: Option<String>,
+    /// Exact external MCP tools requested for this run. Adapters reject this
+    /// until their native MCP configuration can enforce the snapshot.
+    pub external_tools: Option<Vec<String>>,
     pub account: Option<String>,
     pub prompt: String,
     pub output: OutputFormat,

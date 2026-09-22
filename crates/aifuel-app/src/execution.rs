@@ -124,6 +124,7 @@ mod tests {
             provider,
             model: None,
             effort: None,
+            external_tools: None,
             account: None,
             prompt: "hello".to_owned(),
             output: OutputFormat::Text,
