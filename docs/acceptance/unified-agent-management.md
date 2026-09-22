@@ -35,3 +35,7 @@ Also exercise a disposable repository task, denied writes and workspace escapes,
 AI Fuel-owned content retention does not control native agent transcript storage. Cancellation does not reverse completed effects. Worktree locks do not serialize shared Git metadata operations across worktrees.
 
 Execution MCP rejects the opt-in persistent content policy until its private metadata store is implemented; connection-only content remains memory-bound to the owner and is discarded on owner shutdown.
+
+## Follow-up implementation
+
+The post-merge completion branch adds explicit profile save/list/remove commands, applies profile and global defaults to CLI runs, serves cached scoped model-catalog snapshots through execution MCP, supports same-provider resume for sessions observed by the owner, and uses canonical cross-process workspace-write locks. Persistent cross-invocation session storage, ordinary provider questions, local approval IPC, exact external tool restrictions, and live platform acceptance remain separate gates.

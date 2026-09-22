@@ -5,6 +5,7 @@
 //! does not persist prompts, answers, or provider diagnostics.
 
 use crate::selection::ExecutionPolicy;
+use crate::workspace_lock::{WorkspaceLockError, WorkspaceWriteLock};
 use aifuel_core::{
     AgentExecutionAdapter, AgentRunError, DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS,
     MAX_ANSWER_BYTES_PER_RUN, MAX_COMPLETED_CONTENT, MAX_EVENT_BYTES_PER_RUN, MAX_EVENT_PAGE_BYTES,
@@ -139,8 +140,17 @@ struct ManagerInner {
     completed_order: Mutex<VecDeque<String>>,
     policy: Mutex<RunManagerPolicy>,
     retained_content_bytes: AtomicUsize,
+    sessions: Mutex<HashMap<String, SessionRecord>>,
     next_id: AtomicU64,
     shutdown: AtomicBool,
+}
+
+#[derive(Debug, Clone)]
+struct SessionRecord {
+    provider: aifuel_core::ProviderKey,
+    model: Option<String>,
+    effort: Option<String>,
+    working_directory: PathBuf,
 }
 
 struct RunRecord {
@@ -154,6 +164,7 @@ struct RunRecord {
     cancellation: RunCancellationToken,
     retained_content_bytes: AtomicUsize,
     worker: Mutex<Option<JoinHandle<()>>>,
+    workspace_lock: Mutex<Option<WorkspaceWriteLock>>,
 }
 
 struct RunMetadata {
@@ -217,6 +228,7 @@ impl RunManager {
             completed_order: Mutex::new(VecDeque::new()),
             policy: Mutex::new(RunManagerPolicy::unrestricted()),
             retained_content_bytes: AtomicUsize::new(0),
+            sessions: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
         });
@@ -292,6 +304,24 @@ impl RunManager {
             ));
         }
         let (request, adapter) = self.resolve_request_with_adapter(&request)?;
+        let workspace_lock = if request.access == aifuel_core::AccessMode::WorkspaceWrite {
+            request
+                .working_directory
+                .as_deref()
+                .map(WorkspaceWriteLock::acquire)
+                .transpose()
+                .map_err(|error| {
+                    RunManagementError::new(
+                        match error {
+                            WorkspaceLockError::Busy => RunManagementErrorCode::WriteConflict,
+                            WorkspaceLockError::Io(_) => RunManagementErrorCode::Internal,
+                        },
+                        error.to_string(),
+                    )
+                })?
+        } else {
+            None
+        };
 
         let mut records = self.inner.records.lock().expect("run records mutex");
         let active = records
@@ -318,7 +348,7 @@ impl RunManager {
 
         let run_id = self.next_run_id();
         let provider = request.provider;
-        let record = Arc::new(RunRecord::new(run_id.clone(), &request));
+        let record = Arc::new(RunRecord::new(run_id.clone(), &request, workspace_lock));
         records.insert(run_id.clone(), Arc::clone(&record));
         drop(records);
 
@@ -415,6 +445,45 @@ impl RunManager {
     pub fn get_result(&self, run_id: &str) -> Result<ManagedRunResult, RunManagementError> {
         let record = self.record(run_id)?;
         Ok(record.result_snapshot())
+    }
+
+    /// Start a new Agent Run against a known same-provider native session.
+    /// Associations are owner-local until persistent session storage is enabled.
+    pub fn resume_session(
+        &self,
+        session_id: &str,
+        mut request: RunRequest,
+    ) -> Result<ManagedRun, RunManagementError> {
+        let session = self
+            .inner
+            .sessions
+            .lock()
+            .expect("run sessions mutex")
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| {
+                RunManagementError::new(
+                    RunManagementErrorCode::SessionUnavailable,
+                    "native Agent Session is not available to this owner",
+                )
+            })?;
+        if request.provider != session.provider {
+            return Err(RunManagementError::new(
+                RunManagementErrorCode::SessionUnavailable,
+                "session provider does not match the requested provider",
+            ));
+        }
+        if request.model.is_none() {
+            request.model = session.model;
+        }
+        if request.effort.is_none() {
+            request.effort = session.effort;
+        }
+        request.working_directory = request
+            .working_directory
+            .or(Some(session.working_directory));
+        request.resume = Some(session_id.to_owned());
+        self.start_run(request)
     }
 
     /// Request cancellation. A terminal result is never rewritten.
@@ -582,6 +651,21 @@ impl RunManager {
             diagnostics,
         ) = match result {
             Ok(result) => {
+                if let Some(session_id) = result.session_id.as_ref() {
+                    self.inner
+                        .sessions
+                        .lock()
+                        .expect("run sessions mutex")
+                        .insert(
+                            session_id.clone(),
+                            SessionRecord {
+                                provider: result.provider_id,
+                                model: result.requested_model.clone(),
+                                effort: result.requested_effort.clone(),
+                                working_directory: result.working_directory.clone(),
+                            },
+                        );
+                }
                 let state = if record.cancellation.is_cancelled()
                     && result.status == RunStatus::Succeeded
                 {
@@ -689,6 +773,11 @@ impl RunManager {
             _ => RunEventKind::Failed,
         };
         self.push_event(record, terminal_kind, None);
+        let _ = record
+            .workspace_lock
+            .lock()
+            .expect("workspace lock mutex")
+            .take();
         self.register_completed(record);
     }
 
@@ -761,7 +850,11 @@ fn run_worker(
 }
 
 impl RunRecord {
-    fn new(run_id: String, request: &RunRequest) -> Self {
+    fn new(
+        run_id: String,
+        request: &RunRequest,
+        workspace_lock: Option<WorkspaceWriteLock>,
+    ) -> Self {
         Self {
             run_id,
             provider: request.provider,
@@ -778,6 +871,7 @@ impl RunRecord {
             cancellation: RunCancellationToken::new(),
             retained_content_bytes: AtomicUsize::new(0),
             worker: Mutex::new(None),
+            workspace_lock: Mutex::new(workspace_lock),
         }
     }
 
@@ -971,7 +1065,7 @@ fn now() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aifuel_core::{ExecutionMode, OutputFormat, ProviderKey};
+    use aifuel_core::{AccessMode, ExecutionMode, OutputFormat, ProviderKey};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
@@ -1092,6 +1186,25 @@ mod tests {
     }
 
     #[test]
+    fn same_provider_session_can_resume_with_current_run_policy() {
+        let wait = Arc::new(AtomicBool::new(false));
+        let adapter = Arc::new(ProbeAdapter {
+            provider: ProviderKey::Claude,
+            wait,
+        });
+        let manager = RunManager::new(vec![adapter]);
+        let first = manager.start_run(request()).expect("first run starts");
+        wait_for_terminal(&manager, &first.run_id);
+        let resumed = manager
+            .resume_session("native-session", request())
+            .expect("same-provider session resumes");
+        let terminal = wait_for_terminal(&manager, &resumed.run_id);
+        assert_eq!(terminal.provider, ProviderKey::Claude);
+        assert_ne!(first.run_id, resumed.run_id);
+        manager.shutdown();
+    }
+
+    #[test]
     fn cancellation_is_idempotent_and_terminal_state_is_immutable() {
         let wait = Arc::new(AtomicBool::new(true));
         let adapter = Arc::new(ProbeAdapter {
@@ -1145,5 +1258,35 @@ mod tests {
             .expect_err("empty MCP roots deny repository paths");
         assert_eq!(error.code, RunManagementErrorCode::PolicyDenied);
         manager.shutdown();
+    }
+
+    #[test]
+    fn workspace_write_runs_conflict_across_manager_instances() {
+        let workspace = std::env::temp_dir();
+        let wait = Arc::new(AtomicBool::new(true));
+        let first = RunManager::new(vec![Arc::new(ProbeAdapter {
+            provider: ProviderKey::Claude,
+            wait: Arc::clone(&wait),
+        })]);
+        let second = RunManager::new(vec![Arc::new(ProbeAdapter {
+            provider: ProviderKey::Claude,
+            wait: Arc::clone(&wait),
+        })]);
+        let mut request = request();
+        request.access = AccessMode::WorkspaceWrite;
+        request.working_directory = Some(workspace);
+        let started = first
+            .start_run(request.clone())
+            .expect("first write starts");
+        let error = second
+            .start_run(request)
+            .expect_err("overlapping workspace writes must conflict");
+        assert_eq!(error.code, RunManagementErrorCode::WriteConflict);
+        first
+            .cancel_run(&started.run_id)
+            .expect("first write cancels");
+        wait.store(false, Ordering::Release);
+        first.shutdown();
+        second.shutdown();
     }
 }

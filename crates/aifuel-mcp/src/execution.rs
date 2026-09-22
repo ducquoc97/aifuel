@@ -10,12 +10,16 @@ use std::time::Duration;
 const MAX_FRAME_BYTES: u64 = 1024 * 1024;
 
 pub fn serve(manager: RunManager) -> Result<(), String> {
-    let result = serve_connection(&manager);
+    serve_with_catalog(manager, Vec::new())
+}
+
+pub fn serve_with_catalog(manager: RunManager, catalog: Vec<Value>) -> Result<(), String> {
+    let result = serve_connection(&manager, &catalog);
     manager.shutdown();
     result
 }
 
-fn serve_connection(manager: &RunManager) -> Result<(), String> {
+fn serve_connection(manager: &RunManager, catalog: &[Value]) -> Result<(), String> {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut output = io::BufWriter::new(io::stdout().lock());
@@ -75,7 +79,7 @@ fn serve_connection(manager: &RunManager) -> Result<(), String> {
                 json!({"jsonrpc":"2.0","id":id,"result":{"tools":tool_definitions()}})
             }
             Some("tools/call") => {
-                let result = call(manager, &request["params"]);
+                let result = call(manager, &request["params"], catalog);
                 let (value, is_error) = match result {
                     Ok(value) => (value, false),
                     Err(error) => (
@@ -111,7 +115,11 @@ fn encoded(value: impl serde::Serialize) -> Result<Value, RunManagementError> {
         .map_err(|_| RunManagementError::invalid_request("response encoding failed"))
 }
 
-fn call(manager: &RunManager, params: &Value) -> Result<Value, RunManagementError> {
+fn call(
+    manager: &RunManager,
+    params: &Value,
+    catalog: &[Value],
+) -> Result<Value, RunManagementError> {
     let name = params["name"]
         .as_str()
         .ok_or_else(|| RunManagementError::invalid_request("tool name is required"))?;
@@ -142,20 +150,50 @@ fn call(manager: &RunManager, params: &Value) -> Result<Value, RunManagementErro
         "list_models" => {
             only_fields(args, &["provider"])?;
             let provider = optional_string(args, "provider")?;
+            let snapshots = catalog.iter().filter(|snapshot| {
+                provider.is_none_or(|provider| snapshot["scope"]["provider"] == provider)
+            });
+            let models = snapshots
+                .flat_map(|snapshot| snapshot["models"].as_array().into_iter().flatten())
+                .cloned()
+                .collect::<Vec<_>>();
             Ok(json!({
                 "schema_version": 1,
                 "provider": provider,
-                "models": [],
-                "evidence": "unknown",
-                "freshness": "unknown",
-                "diagnostics": "model discovery is not available for this integration"
+                "models": models,
+                "evidence": if catalog.is_empty() { "unknown" } else { "cached" },
+                "freshness": if catalog.is_empty() { "unknown" } else { "stale_or_fresh" },
+                "diagnostics": if catalog.is_empty() { Some("model discovery has not produced a cached catalog") } else { None }
             }))
         }
         "start_run" => encoded(manager.start_run(parse_request(args)?)?),
         "resolve_run" => encoded(manager.resolve_run(&parse_request(args)?)?),
-        "resume_session" | "answer_input" => Err(RunManagementError::new(
+        "resume_session" => {
+            only_fields(
+                args,
+                &[
+                    "session_id",
+                    "provider",
+                    "model",
+                    "effort",
+                    "prompt",
+                    "working_directory",
+                    "access",
+                    "timeout_seconds",
+                ],
+            )?;
+            let session_id = required_string(args, "session_id")?;
+            let mut request_args = args.clone();
+            request_args
+                .as_object_mut()
+                .expect("arguments object was validated")
+                .remove("session_id");
+            let request = parse_request(&request_args)?;
+            encoded(manager.resume_session(session_id, request)?)
+        }
+        "answer_input" => Err(RunManagementError::new(
             aifuel_core::RunManagementErrorCode::UnsupportedCapability,
-            format!("execution operation {name} is not supported by the selected integration"),
+            "ordinary input is not supported by the selected integration; permission approvals remain local-only",
         )),
         "get_run" | "get_result" | "cancel_run" => {
             only_fields(args, &["run_id"])?;
@@ -299,7 +337,7 @@ fn tool_definitions() -> Vec<Value> {
             }
         },"annotations":{"readOnlyHint":name == "resolve_run","idempotentHint":name == "resolve_run","openWorldHint":true}}));
     }
-    tools.push(json!({"name":"resume_session","description":"Resume a same-provider native session when supported; this integration currently reports unsupported capability.","inputSchema":{"type":"object","additionalProperties":false,"required":["session_id"],"properties":{"session_id":{"type":"string"},"provider":{"type":"string"},"prompt":{"type":"string"}}},"annotations":{"readOnlyHint":false,"idempotentHint":false,"openWorldHint":true}}));
+    tools.push(json!({"name":"resume_session","description":"Resume a same-provider native session owned by this execution connection.","inputSchema":{"type":"object","additionalProperties":false,"required":["session_id","provider","prompt"],"properties":{"session_id":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"effort":{"type":"string"},"prompt":{"type":"string"},"working_directory":{"type":"string"},"access":{"enum":["read-only","workspace-write"]},"timeout_seconds":{"type":"integer","minimum":1}}},"annotations":{"readOnlyHint":false,"idempotentHint":false,"openWorldHint":true}}));
     tools.push(json!({"name":"answer_input","description":"Answer an ordinary provider question when the adapter can distinguish it from a permission request; unsupported integrations reject it.","inputSchema":{"type":"object","additionalProperties":false,"required":["run_id","input_id","response"],"properties":{"run_id":{"type":"string"},"input_id":{"type":"string"},"response":{"type":"string"}}},"annotations":{"readOnlyHint":false,"idempotentHint":false,"openWorldHint":false}}));
     for (name, description) in [
         ("get_run", "Inspect a run owned by this connection."),

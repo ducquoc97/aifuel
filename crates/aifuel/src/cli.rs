@@ -14,6 +14,9 @@ where
     if args.first().map(String::as_str) == Some("run") {
         return run_launcher(&args[1..]);
     }
+    if args.first().map(String::as_str) == Some("profile") {
+        return aifuel::profile::run(&args[1..]);
+    }
     if args.first().map(String::as_str) == Some("mcp") {
         return match args.get(1).map(String::as_str) {
             None => {
@@ -26,7 +29,10 @@ where
                 if !args[2..].is_empty() {
                     return Err("Usage: aifuel mcp execution".to_owned());
                 }
-                aifuel_mcp::execution::serve(aifuel::execution_run_manager()?)?;
+                aifuel_mcp::execution::serve_with_catalog(
+                    aifuel::execution_run_manager()?,
+                    aifuel::model_catalog_snapshot().unwrap_or_default(),
+                )?;
                 Ok(0)
             }
             Some("setup") => crate::mcp_setup::run(&args[2..]),
@@ -96,6 +102,7 @@ fn print_help() {
     println!();
     println!("Usage: aifuel [--text | --json]");
     println!("       aifuel run --provider PROVIDER_ID [OPTIONS]");
+    println!("       aifuel profile list|save|remove");
     println!("       aifuel mcp");
     println!("       aifuel mcp execution");
     println!("       aifuel mcp gateway --agent MCP_HOST_ID");
@@ -329,6 +336,9 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
     let mut access = launcher::AccessMode::ReadOnly;
     let mut resume = None;
     let mut timeout = None;
+    let mut profile = None;
+    let mut access_explicit = false;
+    let mut timeout_explicit = false;
 
     let mut index = 0;
     while index < args.len() {
@@ -344,6 +354,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
             "--model" => model = Some(next_value(args, &mut index, argument)?),
             "--effort" => effort = Some(next_value(args, &mut index, argument)?),
             "--account" => account = Some(next_value(args, &mut index, argument)?),
+            "--profile" => profile = Some(next_value(args, &mut index, argument)?),
             "--prompt" => {
                 prompt_count += 1;
                 prompt = Some(next_value(args, &mut index, argument)?)
@@ -359,10 +370,14 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
                 working_directory = Some(PathBuf::from(next_value(args, &mut index, argument)?));
             }
             "--access" => {
-                access = launcher::AccessMode::parse(&next_value(args, &mut index, argument)?)?
+                access = launcher::AccessMode::parse(&next_value(args, &mut index, argument)?)?;
+                access_explicit = true;
             }
             "--resume" => resume = Some(next_value(args, &mut index, argument)?),
-            "--timeout" => timeout = parse_timeout(&next_value(args, &mut index, argument)?)?,
+            "--timeout" => {
+                timeout = parse_timeout(&next_value(args, &mut index, argument)?)?;
+                timeout_explicit = true;
+            }
             unknown => return Err(format!("unknown argument {unknown:?} for run")),
         }
         index += 1;
@@ -390,7 +405,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
         (Some(_), Some(_)) => unreachable!("prompt sources are checked above"),
     };
 
-    Ok(launcher::RunRequest {
+    let request = launcher::RunRequest {
         provider,
         model,
         effort,
@@ -401,7 +416,14 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
         access,
         resume,
         timeout,
-    })
+    };
+    aifuel::resolve_selection_for_run(
+        request,
+        profile.as_deref(),
+        access_explicit,
+        timeout_explicit,
+    )
+    .map_err(|error| format!("could not resolve run selection: {error}"))
 }
 
 pub(super) fn next_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
@@ -436,6 +458,7 @@ fn print_run_help() {
     println!("  --prompt-file PATH                    read prompt from a file");
     println!("  --model MODEL_ID                      explicit model");
     println!("  --effort LEVEL                        requested model effort");
+    println!("  --profile NAME                        named global selection profile");
     println!("  --account ACCOUNT_ID                  explicit account");
     println!("  --output text|json|jsonl              result format (default: text)");
     println!("  --working-directory PATH              optional project directory");
