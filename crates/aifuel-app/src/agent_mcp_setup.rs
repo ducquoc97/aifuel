@@ -2,7 +2,7 @@ use aifuel_core::{
     AIFUEL_GATEWAY_REGISTRATION_NAME, AgentMcpRegistrationAdapter, AgentMcpRegistrationError,
 };
 mod recovery;
-mod storage;
+pub(crate) mod storage;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

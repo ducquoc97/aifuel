@@ -21,6 +21,14 @@ where
                 Ok(0)
             }
             Some("gateway") => run_mcp_gateway(&args[2..]),
+            Some("servers") => aifuel::mcp_catalog::run(&args[2..]),
+            Some("execution") => {
+                if !args[2..].is_empty() {
+                    return Err("Usage: aifuel mcp execution".to_owned());
+                }
+                aifuel_mcp::execution::serve(aifuel::execution_run_manager()?)?;
+                Ok(0)
+            }
             Some("setup") => crate::mcp_setup::run(&args[2..]),
             Some(unknown) => Err(format!("unknown MCP command {unknown:?}; use --help")),
         };
@@ -89,12 +97,15 @@ fn print_help() {
     println!("Usage: aifuel [--text | --json]");
     println!("       aifuel run --provider PROVIDER_ID [OPTIONS]");
     println!("       aifuel mcp");
+    println!("       aifuel mcp execution");
     println!("       aifuel mcp gateway --agent MCP_HOST_ID");
     println!("       aifuel mcp setup --agent MCP_HOST_ID [--dry-run] [--remove]");
+    println!("       aifuel mcp servers list|validate|add|remove|select");
     println!();
     println!("The default command collects live status for discovered providers.");
     println!("run delegates one explicit prompt to a verified provider CLI.");
     println!("mcp serves read-only status over standard input and output.");
+    println!("mcp execution manages Agent Runs owned by its standard-input connection.");
     println!("mcp gateway serves selected external MCP tools over standard input and output.");
     println!("mcp setup previews, applies, or removes an AI Fuel Gateway registration.");
 }
@@ -307,6 +318,7 @@ fn format_countdown(seconds: f64) -> String {
 fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
     let mut provider = None;
     let mut model = None;
+    let mut effort = None;
     let mut account = None;
     let mut prompt = None;
     let mut prompt_file = None;
@@ -316,7 +328,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
     let mut working_directory: Option<PathBuf> = None;
     let mut access = launcher::AccessMode::ReadOnly;
     let mut resume = None;
-    let mut timeout = Some(Duration::from_secs(30));
+    let mut timeout = None;
 
     let mut index = 0;
     while index < args.len() {
@@ -330,6 +342,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
                 provider = Some(next_value(args, &mut index, argument)?);
             }
             "--model" => model = Some(next_value(args, &mut index, argument)?),
+            "--effort" => effort = Some(next_value(args, &mut index, argument)?),
             "--account" => account = Some(next_value(args, &mut index, argument)?),
             "--prompt" => {
                 prompt_count += 1;
@@ -380,6 +393,7 @@ fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
     Ok(launcher::RunRequest {
         provider,
         model,
+        effort,
         account,
         prompt,
         output,
@@ -421,12 +435,13 @@ fn print_run_help() {
     println!("  --prompt TEXT                         prompt text");
     println!("  --prompt-file PATH                    read prompt from a file");
     println!("  --model MODEL_ID                      explicit model");
+    println!("  --effort LEVEL                        requested model effort");
     println!("  --account ACCOUNT_ID                  explicit account");
     println!("  --output text|json|jsonl              result format (default: text)");
     println!("  --working-directory PATH              optional project directory");
     println!("  --access read-only|workspace-write    permission profile");
     println!("  --resume SESSION_ID                   explicit session continuation");
-    println!("  --timeout DURATION                    default: 30s");
+    println!("  --timeout DURATION                    optional deadline; no deadline by default");
 }
 
 #[cfg(test)]
@@ -465,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn run_uses_a_thirty_second_default_timeout() {
+    fn run_has_no_default_overall_deadline() {
         let args = [
             "--provider".to_owned(),
             "gemini".to_owned(),
@@ -474,7 +489,7 @@ mod tests {
         ];
         let request = parse_run_args(&args).expect("run arguments should parse");
 
-        assert_eq!(request.timeout, Some(Duration::from_secs(30)));
+        assert_eq!(request.timeout, None);
     }
 
     #[test]

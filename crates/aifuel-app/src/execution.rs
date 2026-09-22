@@ -93,7 +93,9 @@ mod tests {
                 resumed_from: request.resume.clone(),
                 provider_id: self.provider,
                 requested_model: request.model.clone(),
+                requested_effort: request.effort.clone(),
                 effective_model: None,
+                effective_effort: None,
                 requested_account_id: request.account.clone(),
                 account_id: None,
                 execution_mode: if request.working_directory.is_some() {
@@ -121,6 +123,7 @@ mod tests {
         RunRequest {
             provider,
             model: None,
+            effort: None,
             account: None,
             prompt: "hello".to_owned(),
             output: OutputFormat::Text,

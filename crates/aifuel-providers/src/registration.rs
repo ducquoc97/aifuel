@@ -12,6 +12,7 @@ pub fn agent_mcp_registration_adapter(
         "claude" => Some(&crate::claude::MCP_REGISTRATION_ADAPTER),
         "copilot" => Some(&crate::copilot::COPILOT_REGISTRATION),
         "antigravity" => Some(&crate::antigravity::MCP_REGISTRATION_ADAPTER),
+        "gemini" => Some(&crate::gemini::MCP_REGISTRATION_ADAPTER),
         _ => None,
     }
 }

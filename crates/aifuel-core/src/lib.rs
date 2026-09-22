@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 mod agent_mcp_registration;
 mod execution;
+mod run_management;
 mod status;
 pub use agent_mcp_registration::{
     AIFUEL_GATEWAY_REGISTRATION_NAME, AgentMcpRegistrationAdapter, AgentMcpRegistrationError,
@@ -15,6 +16,12 @@ pub use agent_mcp_registration::{
 pub use execution::{
     AccessMode, AgentExecutionAdapter, AgentRunError, ExecutionMode, OutputFormat,
     RunCancellationToken, RunRequest, RunResult, RunStatus,
+};
+pub use run_management::{
+    DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS, MAX_ANSWER_BYTES_PER_RUN, MAX_COMPLETED_CONTENT,
+    MAX_EVENT_BYTES_PER_RUN, MAX_EVENT_PAGE_BYTES, MAX_OWNER_CONTENT_BYTES, MAX_RUN_RECORDS,
+    ManagedRun, ManagedRunResult, RUN_MANAGEMENT_SCHEMA_VERSION, ResolvedRun, RunEvent,
+    RunEventKind, RunEvents, RunManagementError, RunManagementErrorCode, RunState,
 };
 pub use status::{
     CapabilityKind, CapabilityState, CatalogPlatformStatus, CatalogProviderStatus,

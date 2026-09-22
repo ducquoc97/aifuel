@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
-pub(super) struct RegistrationLock(File);
+pub(crate) struct RegistrationLock(File);
 
 impl Drop for RegistrationLock {
     fn drop(&mut self) {
@@ -16,9 +16,9 @@ impl Drop for RegistrationLock {
 }
 
 #[derive(Clone)]
-pub(super) struct FileSnapshot {
-    pub(super) contents: Option<Vec<u8>>,
-    pub(super) permissions: Option<Permissions>,
+pub(crate) struct FileSnapshot {
+    pub(crate) contents: Option<Vec<u8>>,
+    pub(crate) permissions: Option<Permissions>,
     permission_state: Option<PermissionState>,
 }
 
@@ -44,7 +44,7 @@ struct PermissionState(u32);
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PermissionState(bool);
 
-pub(super) fn acquire_lock(path: &Path) -> Result<RegistrationLock, AgentMcpSetupError> {
+pub(crate) fn acquire_lock(path: &Path) -> Result<RegistrationLock, AgentMcpSetupError> {
     let file = open_private_file(path, true)
         .map_err(|error| io_error("could not open the Agent MCP Registration lock", error))?;
     FileExt::lock(&file)
@@ -52,7 +52,7 @@ pub(super) fn acquire_lock(path: &Path) -> Result<RegistrationLock, AgentMcpSetu
     Ok(RegistrationLock(file))
 }
 
-pub(super) fn read_snapshot(path: &Path, label: &str) -> Result<FileSnapshot, AgentMcpSetupError> {
+pub(crate) fn read_snapshot(path: &Path, label: &str) -> Result<FileSnapshot, AgentMcpSetupError> {
     let before = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(FileSnapshot::missing()),
@@ -75,7 +75,7 @@ pub(super) fn read_snapshot(path: &Path, label: &str) -> Result<FileSnapshot, Ag
     Ok(snapshot_from_metadata(contents, after))
 }
 
-pub(super) fn ensure_snapshot_matches(
+pub(crate) fn ensure_snapshot_matches(
     path: &Path,
     snapshot: &FileSnapshot,
     label: &str,
@@ -89,7 +89,7 @@ pub(super) fn ensure_snapshot_matches(
     Ok(())
 }
 
-pub(super) fn create_private_dir_all(path: &Path) -> Result<(), AgentMcpSetupError> {
+pub(crate) fn create_private_dir_all(path: &Path) -> Result<(), AgentMcpSetupError> {
     create_directory_all(path, true)?;
     protect_private_directory_permissions(path)
         .map_err(|error| io_error("could not protect AI Fuel registration state", error))
@@ -206,7 +206,7 @@ fn write_temp_file(
     ))
 }
 
-pub(super) fn replace_config(
+pub(crate) fn replace_config(
     config_file: &Path,
     backup_dir: &Path,
     snapshot: &FileSnapshot,
@@ -217,7 +217,7 @@ pub(super) fn replace_config(
     Ok(backup)
 }
 
-pub(super) fn replace_config_with_backup(
+pub(crate) fn replace_config_with_backup(
     config_file: &Path,
     snapshot: &FileSnapshot,
     updated: &[u8],
@@ -242,7 +242,7 @@ pub(super) fn replace_config_with_backup(
     Ok(())
 }
 
-pub(super) fn write_backup(
+pub(crate) fn write_backup(
     config_file: &Path,
     backup_dir: &Path,
     snapshot: &FileSnapshot,
@@ -266,7 +266,7 @@ pub(super) fn write_backup(
     Ok(Some(path))
 }
 
-pub(super) fn backup_path(config_file: &Path, backup_dir: &Path) -> PathBuf {
+pub(crate) fn backup_path(config_file: &Path, backup_dir: &Path) -> PathBuf {
     let file_name = config_file
         .file_name()
         .unwrap_or_else(|| std::ffi::OsStr::new("config.toml"));
@@ -275,7 +275,7 @@ pub(super) fn backup_path(config_file: &Path, backup_dir: &Path) -> PathBuf {
     backup_dir.join(name)
 }
 
-pub(super) fn atomic_write(
+pub(crate) fn atomic_write(
     destination: &Path,
     contents: &[u8],
     expected: &FileSnapshot,
@@ -351,7 +351,7 @@ fn sync_parent(parent: &Path) {
     let _ = parent;
 }
 
-pub(super) fn with_backup(error: AgentMcpSetupError, backup: Option<&Path>) -> AgentMcpSetupError {
+pub(crate) fn with_backup(error: AgentMcpSetupError, backup: Option<&Path>) -> AgentMcpSetupError {
     match backup {
         Some(path) => AgentMcpSetupError::new(format!(
             "{error}. The original MCP Host configuration backup is at {}",
@@ -361,6 +361,6 @@ pub(super) fn with_backup(error: AgentMcpSetupError, backup: Option<&Path>) -> A
     }
 }
 
-pub(super) fn io_error(action: &str, error: io::Error) -> AgentMcpSetupError {
+pub(crate) fn io_error(action: &str, error: io::Error) -> AgentMcpSetupError {
     AgentMcpSetupError::new(format!("{action}: {error}"))
 }

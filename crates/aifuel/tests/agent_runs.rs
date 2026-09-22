@@ -69,51 +69,31 @@ fn account_selection_remains_explicitly_unsupported_for_each_current_adapter() {
 
 #[test]
 fn each_adapter_keeps_its_model_access_and_output_argument_contract() {
-    let cases = [
-        (
-            "claude",
-            "--permission-mode acceptEdits",
-            "--output-format stream-json",
-        ),
-        ("codex", "--sandbox workspace-write", "--json"),
-        (
-            "gemini",
-            "--approval-mode auto_edit",
-            "--output-format stream-json",
-        ),
-    ];
-    for (provider, access, output_format) in cases {
-        let directory = TestDirectory::new(&format!("{provider}-options"));
-        install_fake_command(directory.path(), provider);
+    let directory = TestDirectory::new("codex-options");
+    install_fake_command(directory.path(), "codex");
+    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+        .args([
+            "run",
+            "--provider",
+            "codex",
+            "--model",
+            "selected-model",
+            "--access",
+            "workspace-write",
+            "--output",
+            "jsonl",
+            "--prompt",
+            "hello",
+        ])
+        .env("PATH", path_with(directory.path()))
+        .output()
+        .expect("aifuel should start");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-            .args([
-                "run",
-                "--provider",
-                provider,
-                "--model",
-                "selected-model",
-                "--access",
-                "workspace-write",
-                "--output",
-                "jsonl",
-                "--prompt",
-                "hello",
-            ])
-            .env("PATH", path_with(directory.path()))
-            .output()
-            .expect("aifuel should start");
-
-        assert!(
-            output.status.success(),
-            "{provider}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("--model selected-model"), "{provider}");
-        assert!(stdout.contains(access), "{provider}");
-        assert!(stdout.contains(output_format), "{provider}");
-    }
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--model selected-model"));
+    assert!(stdout.contains("--sandbox workspace-write"));
+    assert!(stdout.contains("--json"));
 
     let directory = TestDirectory::new("copilot-json");
     install_fake_command(directory.path(), "copilot");
@@ -138,6 +118,33 @@ fn each_adapter_keeps_its_model_access_and_output_argument_contract() {
     assert!(stdout.contains("--model selected-model"));
     assert!(stdout.contains("--plan"));
     assert!(stdout.contains("--output-format json"));
+}
+
+#[test]
+fn unverified_workspace_write_modes_are_rejected_before_launch() {
+    for provider in ["claude", "gemini", "antigravity"] {
+        let directory = TestDirectory::new(&format!("{provider}-unverified-write"));
+        install_fake_command(directory.path(), provider);
+        let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+            .args([
+                "run",
+                "--provider",
+                provider,
+                "--access",
+                "workspace-write",
+                "--prompt",
+                "hello",
+            ])
+            .env("PATH", path_with(directory.path()))
+            .output()
+            .expect("aifuel should start");
+
+        assert_eq!(output.status.code(), Some(2), "{provider}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("cannot enforce workspace-write"),
+            "{provider}"
+        );
+    }
 }
 
 #[test]
@@ -170,6 +177,30 @@ fn copilot_rejects_unverified_write_and_jsonl_capabilities() {
         assert_eq!(output.status.code(), Some(2));
         assert!(String::from_utf8_lossy(&output.stderr).contains(message));
     }
+}
+
+#[test]
+fn requested_effort_is_rejected_until_the_provider_reports_a_verified_value() {
+    let directory = TestDirectory::new("unknown-effort");
+    install_fake_command(directory.path(), "codex");
+    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+        .args([
+            "run",
+            "--provider",
+            "codex",
+            "--effort",
+            "high",
+            "--prompt",
+            "hello",
+        ])
+        .env("PATH", path_with(directory.path()))
+        .output()
+        .expect("aifuel should start");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot report a verified effort setting")
+    );
 }
 
 #[test]

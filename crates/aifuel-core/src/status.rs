@@ -1,5 +1,5 @@
 use super::{DiscoveryFailure, ProviderKey, ProviderStatus, ProviderUsage};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const STATUS_SCHEMA_VERSION: u32 = 1;
 
@@ -144,11 +144,12 @@ pub enum StatusErrorCode {
     Unavailable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityState {
     Supported,
     Unsupported,
+    #[default]
     Unknown,
 }
 
