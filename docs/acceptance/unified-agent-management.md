@@ -39,3 +39,7 @@ Connection-only content remains memory-bound to the owner and is discarded on ow
 ## Follow-up implementation
 
 The post-merge completion branch adds explicit profile save/list/remove commands, applies profile and global defaults to CLI runs, serves cached scoped model-catalog snapshots through execution MCP, supports same-provider resume with private metadata-only session storage, and uses canonical cross-process workspace-write locks. Ordinary provider questions, local approval IPC, exact external tool restrictions, and live platform acceptance remain separate gates.
+
+## Interaction protocol evidence
+
+The current compiled adapters launch provider CLI execution commands and collect their terminal result. They do not yet own a bidirectional native interaction stream. OpenAI's current Codex App Server documentation describes server-initiated JSON-RPC approval requests such as `item/commandExecution/requestApproval`, with explicit command and file-change decisions. A future Codex interaction adapter must use that protocol boundary before claiming approval forwarding; the existing `codex exec` adapter cannot safely infer or answer those requests. GitHub's Copilot CLI documentation likewise describes interactive permission and question responses, but the current programmatic adapter is plan-mode output only. These are implementation gates, not successful acceptance evidence.
