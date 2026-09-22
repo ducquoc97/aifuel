@@ -72,6 +72,10 @@ _Avoid_: External MCP connection, agent launcher
 An association through which AI Fuel acts as a client of an external MCP server. It is distinct from the AI Fuel MCP Server and does not by itself establish an Agent Integration.
 _Avoid_: AI Fuel MCP Server, provider account
 
+**AI Fuel Execution MCP Server**:
+AI Fuel's separately started execution interface through which an MCP host resolves and manages Agent Runs owned by that connection. It shares the application run-management contract with the CLI. It cannot grant permission approvals and is separate from the read-only AI Fuel MCP Server and the external MCP Gateway.
+_Avoid_: Monitoring server, MCP Gateway, shared run daemon
+
 **AI Fuel MCP Gateway**:
 The per-user shared access point through which selected local agents use external MCP servers configured once in AI Fuel. It is separate from the read-only AI Fuel MCP Server; external tools retain their own capabilities and effects.
 _Avoid_: Provider monitor, agent launcher

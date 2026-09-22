@@ -5,17 +5,30 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 mod agent_mcp_setup;
+mod catalog;
 mod execution;
 mod gateway;
+mod run_management;
+pub mod selection;
 pub use agent_mcp_setup::{
     AgentMcpSetupAction, AgentMcpSetupError, AgentMcpSetupFacade, AgentMcpSetupOptions,
     AgentMcpSetupResult,
 };
+pub use catalog::{McpCatalogError, McpCatalogFacade, McpCatalogSelection};
 pub use execution::AgentRunFacade;
 pub use gateway::{
     BearerTokenAuth, GatewayConfigError, GatewayLimits, McpGatewayFacade, McpServerDefinition,
     NamedSecretHeader, SelectedMcpServer, ServerLimits, StdioServerDefinition,
     StreamableHttpServerDefinition, default_cwd,
+};
+pub use run_management::{RunManager, RunManagerPolicy};
+pub use selection::{
+    AccountContext, CatalogEvidenceStore, CatalogFreshness, CatalogLookup, CatalogModel,
+    CatalogProvenance, CatalogRefreshResult, CatalogScope, CatalogSnapshot, ContentRetention,
+    EffortEvidence, ExecutionPolicy, GLOBAL_SELECTION_SCHEMA_VERSION, GlobalSelectionConfig,
+    MODEL_CATALOG_TTL, ModelCatalogError, ModelEvidenceState, ProfileSettings, ResolvedSelection,
+    SelectionError, SelectionInputs, SelectionResolver, SelectionSettings, SelectionSource,
+    SelectionSources, SelectionStore, SelectionStoreError, StoredSession,
 };
 
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(300);

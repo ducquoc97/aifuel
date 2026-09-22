@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use super::{CliExecutionAdapter, ExecutionCapabilities};
+use super::{CliExecutionAdapter, ExecutionCapabilities, parse_public_output};
 use aifuel_core::{
     AccessMode, AgentExecutionAdapter, AgentRunError, OutputFormat, ProviderKey,
     RunCancellationToken, RunRequest, RunStatus,
@@ -39,6 +39,7 @@ fn request() -> RunRequest {
     RunRequest {
         provider: ProviderKey::Gemini,
         model: None,
+        effort: None,
         account: None,
         prompt: "hello".to_owned(),
         output: OutputFormat::Text,
@@ -82,6 +83,7 @@ fn cancellation_kills_and_reaps_the_provider_process_and_keeps_partial_output() 
         &["--help"],
         &["--prompt", "--approval-mode", "--output-format"],
         no_arguments,
+        parse_public_output,
         ExecutionCapabilities::new(true, false, true, true),
     );
     let request = request();

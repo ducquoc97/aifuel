@@ -1,4 +1,6 @@
 pub mod launcher;
+pub mod mcp_catalog;
+pub mod selection_cli;
 
 use aifuel_app::{AgentMcpSetupFacade, AgentRunFacade, McpGatewayFacade, MonitoringFacade};
 use aifuel_providers::{CollectionConfig, DiscoveryContext, ProviderMonitoring};
@@ -17,6 +19,34 @@ pub fn monitoring_facade() -> Result<MonitoringFacade<ProviderMonitoring>, Strin
 /// Compose the shared Agent Run facade with the compiled provider adapters.
 pub fn agent_run_facade() -> AgentRunFacade<'static> {
     AgentRunFacade::new(aifuel_providers::agent_run_adapters())
+}
+
+/// Compose a run owner with the local user's execution MCP admission policy.
+pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
+    if env::var_os("AIFUEL_MANAGED_RUN").is_some() {
+        return Err(
+            "nested AI Fuel execution is not available inside a managed Agent Run".to_owned(),
+        );
+    }
+    let config = aifuel_app::selection::SelectionStore::load(execution_config_path()?)
+        .map_err(|error| error.to_string())?;
+    if config.policy.retain_content {
+        return Err(
+            "persistent Agent Run content retention is not supported by this execution owner"
+                .to_owned(),
+        );
+    }
+    Ok(
+        aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
+            .with_allowed_roots(config.policy.allowed_roots),
+    )
+}
+
+pub fn execution_config_path() -> Result<PathBuf, String> {
+    let home = user_home_dir()?;
+    Ok(user_config_dir(&home)?
+        .join("aifuel")
+        .join("execution.json"))
 }
 
 /// Compose one independent MCP Host registration adapter with shared setup.

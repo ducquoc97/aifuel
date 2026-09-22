@@ -70,6 +70,9 @@ pub enum RunStatus {
 pub struct RunRequest {
     pub provider: ProviderKey,
     pub model: Option<String>,
+    /// Requested model-specific effort. Adapters report an effective value
+    /// only when the native provider exposes it.
+    pub effort: Option<String>,
     pub account: Option<String>,
     pub prompt: String,
     pub output: OutputFormat,
@@ -88,7 +91,9 @@ pub struct RunResult {
     pub resumed_from: Option<String>,
     pub provider_id: ProviderKey,
     pub requested_model: Option<String>,
+    pub requested_effort: Option<String>,
     pub effective_model: Option<String>,
+    pub effective_effort: Option<String>,
     pub requested_account_id: Option<String>,
     pub account_id: Option<String>,
     pub execution_mode: ExecutionMode,
@@ -173,6 +178,19 @@ impl RunCancellationToken {
 /// cancellation for any process they start.
 pub trait AgentExecutionAdapter: Send + Sync {
     fn provider(&self) -> ProviderKey;
+
+    /// Validate capability metadata without starting a provider process.
+    fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
+        if request.provider != self.provider() {
+            return Err(AgentRunError::UnsupportedProvider(request.provider));
+        }
+        if request.prompt.trim().is_empty() {
+            return Err(AgentRunError::InvalidRequest(
+                "prompt must not be empty".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 
     fn execute(
         &self,
