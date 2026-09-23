@@ -76,9 +76,6 @@ pub(super) fn mark_worker_running(manager: &RunManager, record: &Arc<RunRecord>)
     let transitioned = metadata.state == RunState::Starting;
     if transitioned {
         metadata.state = RunState::Running;
-    }
-    drop(metadata);
-    if transitioned {
         manager.push_event(record, RunEventKind::Running, None);
     }
     true
