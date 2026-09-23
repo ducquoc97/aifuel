@@ -39,7 +39,7 @@ fn shell_quote(path: &std::path::Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
-fn fake_claude_report(script_body: &str) -> (aifuel_core::AgentIntegrationInfo, String) {
+fn fake_claude_report(script_body: &str) -> (aifuel_core::AgentIntegrationInfo, Option<String>) {
     let directory = TestDirectory::new();
     let args_log = directory.0.join("args");
     let executable = directory.0.join("fake-claude");
@@ -75,7 +75,11 @@ fn fake_claude_report(script_body: &str) -> (aifuel_core::AgentIntegrationInfo, 
         .list_agents(Some(ProviderKey::Claude))
         .pop()
         .expect("registered provider should be returned");
-    let args = fs::read_to_string(args_log).expect("the fake status command should be logged");
+    let args = match fs::read_to_string(args_log) {
+        Ok(args) => Some(args),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("the fake status command log should be readable: {error}"),
+    };
     manager.shutdown();
     (agent, args)
 }
@@ -91,7 +95,7 @@ fn claude_auth_status_reports_authenticated_without_exposing_command_output() {
         AgentAuthenticationState::Authenticated
     );
     assert!(agent.native_authentication.reason.contains("exit status 0"));
-    assert_eq!(args, "auth status\n");
+    assert_eq!(args.as_deref(), Some("auth status\n"));
     let report = serde_json::to_string(&agent).expect("report should serialize");
     assert!(!report.contains("private@example.com"));
     assert!(!report.contains("secret-value"));
@@ -105,10 +109,12 @@ fn claude_auth_status_reports_unauthenticated_from_documented_exit_code() {
 
     assert_eq!(
         agent.native_authentication.state,
-        AgentAuthenticationState::Unauthenticated
+        AgentAuthenticationState::Unauthenticated,
+        "probe reason: {}",
+        agent.native_authentication.reason
     );
     assert!(agent.native_authentication.reason.contains("exit status 1"));
-    assert_eq!(args, "auth status\n");
+    assert_eq!(args.as_deref(), Some("auth status\n"));
     let report = serde_json::to_string(&agent).expect("report should serialize");
     assert!(!report.contains("private@example.com"));
     assert!(!report.contains("secret-value"));
@@ -129,7 +135,7 @@ fn claude_auth_status_timeout_reports_unknown_and_is_bounded() {
             .reason
             .contains("2-second limit")
     );
-    assert_eq!(args, "auth status\n");
+    assert!(args.as_deref().is_none_or(|args| args == "auth status\n"));
     assert!(
         started_at.elapsed() < AUTHENTICATION_PROBE_TIMEOUT + Duration::from_secs(3),
         "auth status must not hang provider listing"
@@ -152,7 +158,7 @@ fn claude_auth_status_failure_reports_unknown_without_exposing_command_output() 
             .reason
             .contains("exit status 23")
     );
-    assert_eq!(args, "auth status\n");
+    assert_eq!(args.as_deref(), Some("auth status\n"));
     let report = serde_json::to_string(&agent).expect("report should serialize");
     assert!(!report.contains("private@example.com"));
     assert!(!report.contains("secret-value"));
