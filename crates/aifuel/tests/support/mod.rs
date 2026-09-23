@@ -32,6 +32,22 @@ impl Drop for TestDirectory {
     }
 }
 
+pub fn ai_fuel_config_dir(root: &Path) -> PathBuf {
+    #[cfg(windows)]
+    let path = root.join("aifuel");
+
+    #[cfg(target_os = "macos")]
+    let path = root
+        .join("Library")
+        .join("Application Support")
+        .join("aifuel");
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let path = root.join(".config").join("aifuel");
+
+    path
+}
+
 pub fn install_fake_command(directory: &Path, command_name: &str) {
     #[cfg(unix)]
     {

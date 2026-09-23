@@ -4,7 +4,7 @@ use std::process::Command;
 #[cfg(unix)]
 use std::process::Stdio;
 
-use crate::support::{TestDirectory, path_with};
+use crate::support::{TestDirectory, ai_fuel_config_dir, path_with};
 
 #[test]
 fn provider_failure_keeps_stdout_stderr_and_provider_exit_code() {
@@ -107,7 +107,7 @@ fn stdin_prompt_and_working_directory_reach_the_selected_cli() {
         .expect("working-directory alias should be creatable");
     fs::create_dir_all(&home).expect("temporary home should be creatable");
     fs::create_dir_all(&bin).expect("bin should be creatable");
-    let config = home.join(".config/aifuel");
+    let config = ai_fuel_config_dir(&home);
     fs::create_dir_all(&config).expect("AI Fuel config directory should exist");
     fs::write(
         config.join("execution.json"),

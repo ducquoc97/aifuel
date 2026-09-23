@@ -4,12 +4,12 @@ use std::process::Command;
 #[allow(dead_code)]
 mod support;
 
-use support::{TestDirectory, install_fake_codex_app_server, path_with};
+use support::{TestDirectory, ai_fuel_config_dir, install_fake_codex_app_server, path_with};
 
 #[test]
 fn run_applies_a_named_profile_to_omitted_model_and_access_values() {
     let directory = TestDirectory::new("selection-cli-profile");
-    let config_dir = directory.path().join("aifuel");
+    let config_dir = ai_fuel_config_dir(directory.path());
     fs::create_dir_all(&config_dir).expect("config directory should exist");
     fs::write(
         config_dir.join("execution.json"),
@@ -41,7 +41,7 @@ fn run_applies_a_named_profile_to_omitted_model_and_access_values() {
         .env("HOME", directory.path())
         .env("USERPROFILE", directory.path())
         .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path())
+        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
         .env("AIFUEL_CODEX_FIXTURE_LOG", &log_path)
         .output()
         .expect("aifuel should start");
@@ -63,7 +63,7 @@ fn run_applies_a_named_profile_to_omitted_model_and_access_values() {
 #[test]
 fn resume_uses_stored_model_and_effort_instead_of_changed_global_defaults() {
     let directory = TestDirectory::new("selection-cli-resume-defaults");
-    let config_dir = directory.path().join("aifuel");
+    let config_dir = ai_fuel_config_dir(directory.path());
     fs::create_dir_all(&config_dir).expect("config directory should exist");
     fs::write(
         config_dir.join("execution.json"),
@@ -114,7 +114,7 @@ fn resume_uses_stored_model_and_effort_instead_of_changed_global_defaults() {
         .env("HOME", directory.path())
         .env("USERPROFILE", directory.path())
         .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path())
+        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
         .env("AIFUEL_CODEX_FIXTURE_LOG", &log_path)
         .output()
         .expect("aifuel should start");

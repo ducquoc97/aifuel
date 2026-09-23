@@ -235,5 +235,5 @@ fn install_fake_codex_catalog(directory: &TestDirectory, catalog: &str, success:
 }
 
 fn catalog_path(directory: &TestDirectory) -> PathBuf {
-    directory.path().join(".config/aifuel/model-catalog.json")
+    crate::support::ai_fuel_config_dir(directory.path()).join("model-catalog.json")
 }

@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command;
 
-use crate::support::{TestDirectory, install_fake_command, path_with};
+use crate::support::{TestDirectory, ai_fuel_config_dir, install_fake_command, path_with};
 
 #[test]
 fn unverified_workspace_write_modes_are_rejected_before_launch() {
@@ -42,7 +42,7 @@ fn project_runs_outside_configured_execution_roots_are_rejected_by_the_manager()
     let executable_dir = directory.path().join("bin");
     let allowed_root = directory.path().join("allowed");
     let denied_root = directory.path().join("denied");
-    let config = directory.path().join(".config/aifuel");
+    let config = ai_fuel_config_dir(directory.path());
     fs::create_dir_all(&executable_dir).expect("bin directory should exist");
     fs::create_dir_all(&allowed_root).expect("allowed root should exist");
     fs::create_dir_all(&denied_root).expect("denied root should exist");

@@ -234,5 +234,5 @@ fn seed_session(directory: &TestDirectory, provider: &str, model: &str, effort: 
 }
 
 fn config_directory(directory: &TestDirectory) -> std::path::PathBuf {
-    directory.path().join(".config/aifuel")
+    crate::support::ai_fuel_config_dir(directory.path())
 }

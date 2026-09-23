@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::support::TestDirectory;
+use crate::support::{TestDirectory, ai_fuel_config_dir};
 
 pub fn call_tools(directory: &TestDirectory, calls: &[Value], path: Option<&Path>) -> Vec<Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aifuel"));
@@ -59,7 +59,7 @@ pub fn call_tools(directory: &TestDirectory, calls: &[Value], path: Option<&Path
 }
 
 pub fn write_execution_config(directory: &TestDirectory, config: Value) {
-    let path = directory.path().join(".config/aifuel/execution.json");
+    let path = ai_fuel_config_dir(directory.path()).join("execution.json");
     std::fs::create_dir_all(path.parent().expect("config path has a parent"))
         .expect("config directory should exist");
     std::fs::write(
