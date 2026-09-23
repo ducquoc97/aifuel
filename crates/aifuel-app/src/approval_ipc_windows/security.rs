@@ -18,7 +18,7 @@ use windows_sys::Win32::Security::Cryptography::{
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, AclSizeInformation, CONTAINER_INHERIT_ACE,
     DACL_SECURITY_INFORMATION, GetAce, GetAclInformation, GetSecurityDescriptorControl,
-    GetSecurityDescriptorDacl, GetTokenInformation, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
+    GetSecurityDescriptorDacl, GetTokenInformation, OBJECT_INHERIT_ACE,
     PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT};
@@ -66,12 +66,6 @@ pub(super) fn prepare_private_directory(directory: &Path) -> io::Result<PathBuf>
         ));
     }
     let directory = fs::canonicalize(directory)?;
-    if !owner_matches_current_user(&directory)? {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "local approval directory is not owned by the current user",
-        ));
-    }
     set_private_dacl(&directory, true)?;
     if !private_dacl_matches(&directory, true)? {
         return Err(io::Error::new(
@@ -102,44 +96,13 @@ pub(super) fn real_directory(metadata: &fs::Metadata) -> bool {
     metadata.is_dir() && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
 }
 
-fn owner_matches_current_user(path: &Path) -> io::Result<bool> {
-    let path_wide = wide_path(path);
-    let mut owner = null_mut();
-    let mut descriptor = null_mut();
-    // SAFETY: output pointers are valid, and Windows allocates the descriptor
-    // that contains the returned owner SID for LocalFree.
-    let error = unsafe {
-        GetNamedSecurityInfoW(
-            path_wide.as_ptr(),
-            SE_FILE_OBJECT,
-            OWNER_SECURITY_INFORMATION,
-            &mut owner,
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            &mut descriptor,
-        )
-    };
-    if error != 0 {
-        return Err(io::Error::from_raw_os_error(error as i32));
-    }
-    if descriptor.is_null() || owner.is_null() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Windows returned an incomplete local approval owner descriptor",
-        ));
-    }
-    let _descriptor = LocalAllocation(descriptor);
-    Ok(sid_to_string(owner.cast())? == current_user_sid_string()?)
-}
-
 pub(super) fn private_security_descriptor(inherit: bool) -> io::Result<SecurityDescriptor> {
     let sid = current_user_sid_string()?;
-    let sddl = if inherit {
-        format!("D:P(A;OICI;GA;;;{sid})")
-    } else {
-        format!("D:P(A;;GA;;;{sid})")
-    };
+    let inheritance = if inherit { "OICI" } else { "" };
+    // OWNER RIGHTS suppresses the owner's implicit READ_CONTROL and WRITE_DAC
+    // rights. Its zero mask grants nothing; full access is explicit for this
+    // process user SID only.
+    let sddl = format!("D:P(A;{inheritance};GA;;;{sid})(A;{inheritance};0x00000000;;;S-1-3-4)");
     let sddl_wide = wide_string(&sddl);
     let mut descriptor = null_mut();
     // SAFETY: the SDDL is a valid NUL-terminated descriptor built from the
@@ -204,7 +167,6 @@ pub(super) fn set_private_dacl(path: &Path, inherit: bool) -> io::Result<()> {
 
 pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<bool> {
     let path_wide = wide_path(path);
-    let mut owner = null_mut();
     let mut descriptor = null_mut();
     // SAFETY: output fields are valid pointers; Windows allocates the returned
     // descriptor and LocalAllocation releases it below.
@@ -212,8 +174,8 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
         GetNamedSecurityInfoW(
             path_wide.as_ptr(),
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
-            &mut owner,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
             null_mut(),
             null_mut(),
             null_mut(),
@@ -223,16 +185,13 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
     if error != 0 {
         return Err(io::Error::from_raw_os_error(error as i32));
     }
-    if descriptor.is_null() || owner.is_null() {
+    if descriptor.is_null() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Windows returned an incomplete local approval security descriptor",
+            "Windows returned a null local approval security descriptor",
         ));
     }
     let descriptor = LocalAllocation(descriptor);
-    if sid_to_string(owner.cast())? != current_user_sid_string()? {
-        return Ok(false);
-    }
     let mut control = 0;
     let mut revision = 0;
     // SAFETY: descriptor is valid and both output fields are writable.
@@ -268,34 +227,46 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
     {
         return Err(io::Error::last_os_error());
     }
-    if information.AceCount != 1 {
+    if information.AceCount != 2 {
         return Ok(false);
     }
-    let mut ace_pointer = null_mut();
-    // SAFETY: index zero is within the one-entry ACL validated above.
-    if unsafe { GetAce(dacl, 0, &mut ace_pointer) } == 0 || ace_pointer.is_null() {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: GetAce returned an ACE pointer owned by the live ACL.
-    let header = unsafe { &*ace_pointer.cast::<windows_sys::Win32::Security::ACE_HEADER>() };
-    if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
-        return Ok(false);
-    }
-    // SAFETY: the verified ACE type matches ACCESS_ALLOWED_ACE_TYPE, whose
-    // layout contains the access mask and SID immediately after its header.
-    let ace = unsafe { &*ace_pointer.cast::<ACCESS_ALLOWED_ACE>() };
     let expected_flags = if inherit {
         (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) as u8
     } else {
         0
     };
-    if ace.Header.AceFlags != expected_flags
-        || (ace.Mask != GENERIC_ALL && ace.Mask != FILE_ALL_ACCESS)
-    {
-        return Ok(false);
+    let expected_user_sid = current_user_sid_string()?;
+    let mut has_current_user = false;
+    let mut has_owner_rights = false;
+    for index in 0..information.AceCount {
+        let mut ace_pointer = null_mut();
+        // SAFETY: index is below the ACE count returned for this live ACL.
+        if unsafe { GetAce(dacl, index, &mut ace_pointer) } == 0 || ace_pointer.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: GetAce returned an ACE pointer owned by the live ACL.
+        let header = unsafe { &*ace_pointer.cast::<windows_sys::Win32::Security::ACE_HEADER>() };
+        if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
+            return Ok(false);
+        }
+        // SAFETY: the verified ACE type matches ACCESS_ALLOWED_ACE_TYPE, whose
+        // layout contains the access mask and SID immediately after its header.
+        let ace = unsafe { &*ace_pointer.cast::<ACCESS_ALLOWED_ACE>() };
+        if ace.Header.AceFlags != expected_flags {
+            return Ok(false);
+        }
+        let actual_sid = std::ptr::addr_of!(ace.SidStart).cast_mut().cast();
+        match sid_to_string(actual_sid)?.as_str() {
+            sid if sid == expected_user_sid
+                && (ace.Mask == GENERIC_ALL || ace.Mask == FILE_ALL_ACCESS) =>
+            {
+                has_current_user = true;
+            }
+            "S-1-3-4" if ace.Mask == 0 => has_owner_rights = true,
+            _ => return Ok(false),
+        }
     }
-    let actual_sid = std::ptr::addr_of!(ace.SidStart).cast_mut().cast();
-    Ok(sid_to_string(actual_sid)? == current_user_sid_string()?)
+    Ok(has_current_user && has_owner_rights)
 }
 
 pub(super) fn next_owner_id() -> io::Result<String> {

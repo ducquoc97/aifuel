@@ -62,6 +62,7 @@ fn private_pipe_descriptor_is_protected_and_does_not_use_a_default_acl() {
     let sddl = String::from_utf16(&descriptor.sddl()[..descriptor.sddl().len() - 1])
         .expect("expected descriptor is UTF-16");
     assert!(sddl.starts_with("D:P(A;;GA;;;S-1-"));
+    assert!(sddl.contains("(A;;0x00000000;;;S-1-3-4)"));
     assert!(!sddl.contains(";;;WD)"));
     assert!(!sddl.contains(";;;AN)"));
     assert_ne!(pipe::SERVER_PIPE_MODE & PIPE_REJECT_REMOTE_CLIENTS, 0);
