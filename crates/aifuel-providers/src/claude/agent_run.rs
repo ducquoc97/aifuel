@@ -1,7 +1,7 @@
 use crate::agent_execution::{
     CliExecutionAdapter, ExecutionCapabilities, ParsedProviderOutput, parse_public_output,
 };
-use aifuel_core::{AgentRunError, OutputFormat, ProviderKey, RunRequest};
+use aifuel_core::{AgentRunError, AgentSetupGuidance, OutputFormat, ProviderKey, RunRequest};
 use serde_json::Value;
 
 pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
@@ -14,7 +14,16 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     // `plan` and `acceptEdits` do not prove a workspace boundary. Keep
     // workspace-write blocked until native effect tests establish one.
     ExecutionCapabilities::new(true, false, false, true),
-);
+)
+// The Anthropic CLI reference documents this non-interactive version flag.
+.with_version_probe(&["--version"])
+.with_authentication_probe(&["auth", "status"])
+.with_setup_guidance(AgentSetupGuidance {
+    install: "npm install -g @anthropic-ai/claude-code",
+    login: "Run `claude` and complete the browser sign-in prompt. If `ANTHROPIC_API_KEY` is configured, approve it when prompted.",
+    check: "Run `claude --version` to check the install; `claude doctor` gives read-only install and settings diagnostics. AI Fuel separately runs `claude auth status` with a bounded timeout and discards its output.",
+    documentation_url: "https://code.claude.com/docs/en/getting-started",
+});
 
 fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
     let mut args = vec!["--print".to_owned(), request.prompt.clone()];

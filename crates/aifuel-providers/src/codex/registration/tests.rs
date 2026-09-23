@@ -32,6 +32,29 @@ fn codex_registration_uses_the_documented_user_config_and_gateway_command() {
 }
 
 #[test]
+fn per_run_gateway_entry_adds_only_exact_tool_allowlist_arguments() {
+    let executable = Path::new("/opt/AI Fuel/aifuel");
+    let allowed_tools = vec!["docs__search".to_owned(), "repo__read_file".to_owned()];
+
+    let entry = CODEX_REGISTRATION
+        .runtime_entry(executable, &allowed_tools)
+        .expect("runtime entry should be valid");
+
+    assert_eq!(
+        entry,
+        serde_json::json!({
+            "command":"/opt/AI Fuel/aifuel",
+            "args":[
+                "mcp", "gateway", "--agent", "codex",
+                "--tool", "docs__search",
+                "--tool", "repo__read_file"
+            ],
+            "env_vars":["XDG_CONFIG_HOME"]
+        })
+    );
+}
+
+#[test]
 fn writes_only_the_gateway_entry_and_preserves_comments_and_other_servers() {
     let original = br#"# Keep the user's model setting.
 model = "gpt-5"

@@ -1,6 +1,10 @@
 pub mod launcher;
 pub mod mcp_catalog;
+mod model_catalog;
+pub mod model_cli;
 pub mod profile;
+pub mod run_cli;
+mod run_selection;
 pub mod selection_cli;
 
 use aifuel_app::{AgentMcpSetupFacade, AgentRunFacade, McpGatewayFacade, MonitoringFacade};
@@ -8,6 +12,8 @@ use aifuel_providers::{CollectionConfig, DiscoveryContext, ProviderMonitoring};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+
+pub use model_catalog::{model_catalog_snapshot, refresh_model_catalog};
 
 /// Construct the monitoring dependencies at the executable boundary.
 pub fn monitoring_facade() -> Result<MonitoringFacade<ProviderMonitoring>, String> {
@@ -34,6 +40,8 @@ pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
     let manager = aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
         .with_execution_policy(&config.policy)
         .with_session_store(session_store_path()?)?;
+    #[cfg(any(unix, windows))]
+    let manager = manager.with_local_approval_channel(approval_owner_directory()?)?;
     if config.policy.retain_content {
         manager.with_content_store(content_store_path()?)
     } else {
@@ -48,23 +56,6 @@ pub fn execution_config_path() -> Result<PathBuf, String> {
         .join("execution.json"))
 }
 
-/// Load the last successful model catalog snapshot for the execution MCP
-/// endpoint. A missing cache is an explicit unknown catalog, not an empty
-/// successful discovery.
-pub fn model_catalog_snapshot() -> Result<Vec<serde_json::Value>, String> {
-    let home = user_home_dir()?;
-    let path = user_config_dir(&home)?
-        .join("aifuel")
-        .join("model-catalog.json");
-    let store = aifuel_app::selection::CatalogEvidenceStore::load(path)
-        .map_err(|error| error.to_string())?;
-    Ok(store
-        .scopes()
-        .filter_map(|scope| store.snapshot(scope))
-        .map(|snapshot| serde_json::to_value(snapshot).expect("catalog snapshot serializes"))
-        .collect())
-}
-
 pub fn session_store_path() -> Result<PathBuf, String> {
     let home = user_home_dir()?;
     Ok(user_config_dir(&home)?
@@ -75,6 +66,22 @@ pub fn session_store_path() -> Result<PathBuf, String> {
 pub fn content_store_path() -> Result<PathBuf, String> {
     let home = user_home_dir()?;
     Ok(user_config_dir(&home)?.join("aifuel").join("run-content"))
+}
+
+pub fn approval_owner_directory() -> Result<PathBuf, String> {
+    let home = user_home_dir()?;
+    Ok(user_config_dir(&home)?
+        .join("aifuel")
+        .join("approval-owners"))
+}
+
+#[cfg(any(unix, windows))]
+pub fn submit_local_approval(
+    run_id: &str,
+    input_id: &str,
+    decision: aifuel_app::LocalApprovalDecision,
+) -> Result<(), String> {
+    aifuel_app::submit_local_approval(&approval_owner_directory()?, run_id, input_id, decision)
 }
 
 /// Apply global defaults and an optional named profile to one explicit CLI

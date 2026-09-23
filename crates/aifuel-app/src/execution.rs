@@ -132,6 +132,7 @@ mod tests {
             access: AccessMode::ReadOnly,
             resume: None,
             timeout: Some(Duration::from_secs(1)),
+            interaction_handler: None,
         }
     }
 

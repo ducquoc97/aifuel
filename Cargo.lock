@@ -29,6 +29,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -60,11 +61,13 @@ dependencies = [
 name = "aifuel-providers"
 version = "0.1.0"
 dependencies = [
+ "aifuel-app",
  "aifuel-core",
  "chrono",
  "futures-util",
  "process-wrap",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "toml_edit",

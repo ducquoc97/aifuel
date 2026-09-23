@@ -16,3 +16,12 @@ pub fn agent_mcp_registration_adapter(
         _ => None,
     }
 }
+
+pub(crate) fn codex_mcp_runtime_entry(
+    gateway_executable: &std::path::Path,
+    allowed_tools: &[String],
+) -> Result<serde_json::Value, String> {
+    codex::CODEX_REGISTRATION
+        .runtime_entry(gateway_executable, allowed_tools)
+        .map_err(|error| error.to_string())
+}

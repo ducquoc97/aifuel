@@ -1,6 +1,7 @@
 use aifuel_core::{
     AIFUEL_GATEWAY_REGISTRATION_NAME, AgentMcpRegistrationAdapter, AgentMcpRegistrationError,
 };
+use serde_json::json;
 use serde_json::{Map, Value as JsonValue};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -106,6 +107,31 @@ impl AgentMcpRegistrationAdapter for CodexMcpRegistration {
 }
 
 impl CodexMcpRegistration {
+    pub(super) fn runtime_entry(
+        &self,
+        gateway_executable: &Path,
+        allowed_tools: &[String],
+    ) -> Result<JsonValue, AgentMcpRegistrationError> {
+        let command = gateway_executable
+            .to_str()
+            .ok_or_else(|| config_error("AI Fuel executable path is not valid Unicode"))?;
+        let mut args = vec![
+            "mcp".to_owned(),
+            "gateway".to_owned(),
+            "--agent".to_owned(),
+            self.host_id().to_owned(),
+        ];
+        for tool in allowed_tools {
+            args.push("--tool".to_owned());
+            args.push(tool.clone());
+        }
+        Ok(json!({
+            "command":command,
+            "args":args,
+            "env_vars":["XDG_CONFIG_HOME"]
+        }))
+    }
+
     fn parse_config(
         &self,
         config: Option<&[u8]>,

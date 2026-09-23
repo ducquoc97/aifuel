@@ -150,6 +150,45 @@ impl ToolSnapshot {
         }
     }
 
+    /// Restrict the advertised tool list and its call routes to the exact
+    /// requested gateway names. A missing or ambiguous name fails the whole
+    /// snapshot rather than silently widening or reducing the selection.
+    pub(super) fn retain_exact_tools(
+        &mut self,
+        allowed_tools: Option<&[String]>,
+    ) -> Result<(), McpError> {
+        let Some(allowed_tools) = allowed_tools else {
+            return Ok(());
+        };
+
+        let mut requested = HashMap::with_capacity(allowed_tools.len());
+        for name in allowed_tools {
+            if requested.insert(name.as_str(), ()).is_some() {
+                return Err(McpError::invalid_params(
+                    "gateway tool allowlist contains a duplicate tool name",
+                    None,
+                ));
+            }
+            let matching_tools = self
+                .tools
+                .iter()
+                .filter(|tool| tool.name.as_ref() == name)
+                .count();
+            if matching_tools != 1 || !self.routes.contains_key(name) {
+                return Err(McpError::internal_error(
+                    "a requested gateway tool was not discovered exactly once",
+                    None,
+                ));
+            }
+        }
+
+        self.tools
+            .retain(|tool| requested.contains_key(tool.name.as_ref()));
+        self.routes
+            .retain(|name, _route| requested.contains_key(name.as_str()));
+        Ok(())
+    }
+
     pub(super) async fn page(
         &self,
         cursor: Option<&str>,
@@ -232,7 +271,6 @@ mod tests {
     use super::{ServerToolSnapshot, ToolRoute, ToolSnapshot};
     use rmcp::model::Tool;
     use serde_json::json;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[test]
@@ -282,15 +320,93 @@ mod tests {
         );
     }
 
+    #[test]
+    fn exact_allowlist_filters_both_advertised_tools_and_call_routes() {
+        let docs = snapshot_with_tools(
+            "docs",
+            &[("docs__search", "search"), ("docs__read", "read")],
+        );
+        let mut combined = ToolSnapshot::aggregate("gateway-session", &[docs], 1)
+            .expect("gateway tool identities should aggregate");
+
+        combined
+            .retain_exact_tools(Some(&["docs__search".to_owned()]))
+            .expect("the requested tool should be available");
+
+        assert_eq!(
+            combined
+                .tools
+                .iter()
+                .map(|tool| tool.name.as_ref())
+                .collect::<Vec<_>>(),
+            vec!["docs__search"]
+        );
+        assert_eq!(
+            combined.routes.get("docs__search"),
+            Some(&ToolRoute {
+                server_id: "docs".to_owned(),
+                upstream_name: "search".to_owned(),
+            })
+        );
+        assert!(!combined.routes.contains_key("docs__read"));
+        assert!(!combined.routes.contains_key("docs__not_requested"));
+    }
+
+    #[test]
+    fn exact_allowlist_rejects_unknown_gateway_tools() {
+        let docs = snapshot("docs", "docs__search", "search");
+        let mut combined = ToolSnapshot::aggregate("gateway-session", &[docs], 1)
+            .expect("gateway tool identities should aggregate");
+
+        let error = combined
+            .retain_exact_tools(Some(&["docs__missing".to_owned()]))
+            .expect_err("unknown tools must fail closed");
+
+        assert!(error.to_string().contains("not discovered exactly once"));
+        assert_eq!(combined.tools.len(), 1);
+        assert_eq!(combined.routes.len(), 1);
+    }
+
+    #[test]
+    fn exact_allowlist_rejects_duplicate_names() {
+        let docs = snapshot("docs", "docs__search", "search");
+        let mut combined = ToolSnapshot::aggregate("gateway-session", &[docs], 1)
+            .expect("gateway tool identities should aggregate");
+
+        let error = combined
+            .retain_exact_tools(Some(&[
+                "docs__search".to_owned(),
+                "docs__search".to_owned(),
+            ]))
+            .expect_err("duplicate allowlist entries must be rejected");
+
+        assert!(error.to_string().contains("duplicate tool name"));
+    }
+
     fn snapshot(
         server_id: &str,
         public_name: &str,
         upstream_name: &str,
     ) -> Arc<ServerToolSnapshot> {
+        snapshot_with_tools(server_id, &[(public_name, upstream_name)])
+    }
+
+    fn snapshot_with_tools(
+        server_id: &str,
+        public_tools: &[(&str, &str)],
+    ) -> Arc<ServerToolSnapshot> {
         Arc::new(ServerToolSnapshot {
             server_id: server_id.to_owned(),
-            tools: vec![Arc::new(tool(public_name))],
-            routes: HashMap::from([(public_name.to_owned(), upstream_name.to_owned())]),
+            tools: public_tools
+                .iter()
+                .map(|(public_name, _)| Arc::new(tool(public_name)))
+                .collect(),
+            routes: public_tools
+                .iter()
+                .map(|(public_name, upstream_name)| {
+                    (public_name.to_string(), upstream_name.to_string())
+                })
+                .collect(),
         })
     }
 

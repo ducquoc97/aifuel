@@ -40,6 +40,10 @@ impl ContentRetention {
 pub struct ExecutionPolicy {
     #[serde(default)]
     pub allowed_roots: Vec<PathBuf>,
+    /// Exact Gateway tool names that may be selected by read-only Agent Runs.
+    /// An empty list keeps external tools disabled for read-only runs.
+    #[serde(default)]
+    pub allowed_read_only_external_tools: Vec<String>,
     #[serde(default)]
     pub retain_content: bool,
 }

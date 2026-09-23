@@ -1,3 +1,7 @@
+pub(crate) mod app_server;
+pub(crate) mod interaction;
+pub(crate) mod model_catalog;
+
 use super::{CatalogProvider, MonitoringFuture, ProviderMonitoring};
 use crate::usage_helpers::{
     deep_find, number, percent_value, period_for_seconds, read_json, response_json, timestamp,

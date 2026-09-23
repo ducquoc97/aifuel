@@ -5,6 +5,13 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 mod agent_mcp_setup;
+#[cfg(unix)]
+mod approval_ipc;
+#[cfg(windows)]
+#[path = "approval_ipc_windows.rs"]
+mod approval_ipc;
+#[cfg(any(unix, windows))]
+mod approval_ipc_protocol;
 mod catalog;
 mod content_store;
 mod execution;
@@ -17,6 +24,10 @@ pub use agent_mcp_setup::{
     AgentMcpSetupAction, AgentMcpSetupError, AgentMcpSetupFacade, AgentMcpSetupOptions,
     AgentMcpSetupResult,
 };
+#[cfg(any(unix, windows))]
+pub use approval_ipc::submit_local_approval;
+#[cfg(any(unix, windows))]
+pub use approval_ipc_protocol::LocalApprovalDecision;
 pub use catalog::{McpCatalogError, McpCatalogFacade, McpCatalogSelection};
 pub use execution::AgentRunFacade;
 pub use gateway::{
