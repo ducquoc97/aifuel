@@ -29,12 +29,18 @@ fn pending_mapping_routes_to_its_owner_and_drop_cleans_pipe_and_records() {
     })
     .expect("start private named-pipe owner");
     let owner_record = server.owner_record.clone();
+    let owner_lock = records::owner_lock_path(&owner_record);
     let pipe_name = server.pipe_name.clone();
     server
         .register_pending("run-owned-by-this-process", "pending-approval")
         .expect("register pending owner mapping");
     let pending =
         records::pending_record_path(&directory, "run-owned-by-this-process", "pending-approval");
+    let active_owner = records::active_owner_record(&owner_record, &directory)
+        .expect("read the lock-protected owner record")
+        .expect("owner record is live");
+    assert_eq!(active_owner.owner_id, server.owner_id);
+    assert!(owner_lock.exists());
 
     submit_local_approval(
         &directory,
@@ -49,6 +55,7 @@ fn pending_mapping_routes_to_its_owner_and_drop_cleans_pipe_and_records() {
 
     drop(server);
     assert!(!owner_record.exists());
+    assert!(!owner_lock.exists());
     assert!(!pending.exists());
     assert!(security::private_dacl_matches(&directory, true).expect("read directory DACL"));
     fs::remove_dir_all(directory).expect("remove test directory");

@@ -44,6 +44,10 @@ pub(super) fn owner_record_path(directory: &Path, owner_id: &str) -> PathBuf {
     directory.join(format!("{owner_id}.json"))
 }
 
+pub(super) fn owner_lock_path(owner_record: &Path) -> PathBuf {
+    owner_record.with_extension("lock")
+}
+
 pub(super) fn pending_record_path(directory: &Path, run_id: &str, input_id: &str) -> PathBuf {
     let mut digest = Sha256::new();
     digest.update((run_id.len() as u64).to_be_bytes());
@@ -59,25 +63,41 @@ pub(super) fn pending_record_path(directory: &Path, run_id: &str, input_id: &str
 }
 
 pub(super) fn write_owner_record(path: &Path, record: &OwnerRecord) -> io::Result<File> {
+    let lock_path = owner_lock_path(path);
     let temporary = path.with_extension("tmp");
+    let lock_file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)?;
     let result = (|| {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .read(true)
-            .write(true)
-            .open(&temporary)?;
-        security::set_private_dacl(&temporary, false)?;
-        FileExt::lock(&file)?;
-        serde_json::to_writer(&mut file, record).map_err(io::Error::other)?;
-        file.sync_all()?;
-        fs::hard_link(&temporary, path)?;
-        fs::remove_file(&temporary)?;
-        Ok(file)
+        security::set_private_dacl(&lock_path, false)?;
+        FileExt::lock(&lock_file)?;
+
+        let result = (|| {
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(&temporary)?;
+            security::set_private_dacl(&temporary, false)?;
+            serde_json::to_writer(&mut file, record).map_err(io::Error::other)?;
+            file.sync_all()?;
+            fs::hard_link(&temporary, path)?;
+            fs::remove_file(&temporary)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     })();
-    if result.is_err() {
+    if let Err(error) = result {
+        drop(lock_file);
+        let _ = fs::remove_file(&lock_path);
         let _ = fs::remove_file(&temporary);
+        return Err(error);
     }
-    result
+    Ok(lock_file)
 }
 
 pub(super) fn write_pending_record(
@@ -107,21 +127,37 @@ pub(super) fn active_owner_record(
     path: &Path,
     directory: &Path,
 ) -> Result<Option<OwnerRecord>, String> {
-    let mut file = match open_checked_file(path, true, true) {
+    let lock_path = owner_lock_path(path);
+    let lock_file = match open_checked_file(&lock_path, true, true) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.to_string()),
     };
-    let opened_identity = file_identity(&file).map_err(|error| error.to_string())?;
+    let opened_lock_identity = file_identity(&lock_file).map_err(|error| error.to_string())?;
 
-    match FileExt::try_lock(&file) {
+    match FileExt::try_lock(&lock_file) {
         Ok(()) => {
-            remove_stale_owner_record(path, directory, opened_identity);
+            if let Some(opened_record_identity) =
+                current_file_identity(path).map_err(|error| error.to_string())?
+            {
+                remove_stale_owner_record(path, directory, opened_record_identity);
+            } else if let Some(owner_id) = owner_id_for_record_path(path, directory) {
+                remove_pending_records_for_owner(directory, &owner_id);
+            }
+            drop(lock_file);
+            remove_private_record(&lock_path, opened_lock_identity);
             Ok(None)
         }
         Err(TryLockError::WouldBlock) => {
+            let mut file = match open_checked_file(path, true, false) {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.to_string()),
+            };
+            let opened_record_identity = file_identity(&file).map_err(|error| error.to_string())?;
             let record = read_owner_record(&mut file).map_err(|error| error.to_string())?;
-            if current_file_identity(path).ok().flatten() == Some(opened_identity)
+            if current_file_identity(&lock_path).ok().flatten() == Some(opened_lock_identity)
+                && current_file_identity(path).ok().flatten() == Some(opened_record_identity)
                 && valid_owner_record(path, directory, &record)
             {
                 Ok(Some(record))
@@ -194,16 +230,16 @@ fn remove_stale_owner_record(path: &Path, directory: &Path, opened: FileIdentity
     if current_file_identity(path).ok().flatten() != Some(opened) {
         return;
     }
-    if let Some(owner_id) = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|owner_id| {
-            valid_owner_id(owner_id) && path == owner_record_path(directory, owner_id)
-        })
-    {
-        remove_pending_records_for_owner(directory, owner_id);
+    if let Some(owner_id) = owner_id_for_record_path(path, directory) {
+        remove_pending_records_for_owner(directory, &owner_id);
     }
     let _ = fs::remove_file(path);
+}
+
+fn owner_id_for_record_path(path: &Path, directory: &Path) -> Option<String> {
+    let owner_id = path.file_stem()?.to_str()?;
+    (valid_owner_id(owner_id) && path == owner_record_path(directory, owner_id))
+        .then(|| owner_id.to_owned())
 }
 
 pub(super) fn remove_pending_records_for_owner(directory: &Path, owner_id: &str) {

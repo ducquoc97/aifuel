@@ -27,8 +27,8 @@ pub(crate) struct LocalApprovalServer {
     directory: PathBuf,
     pipe_name: String,
     owner_record: PathBuf,
-    // Keeping this descriptor open keeps the cross-process owner lock held.
-    _owner_file: File,
+    // Keeping this descriptor open keeps the separate cross-process owner lock.
+    owner_lock: Option<File>,
     pipe_handle: Option<Arc<OwnedHandle>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
@@ -47,7 +47,7 @@ impl LocalApprovalServer {
         let pipe_name = records::pipe_name(&owner_id);
         let pipe_handle = pipe::create_server_pipe(&pipe_name)?;
         let owner_record = records::owner_record_path(&directory, &owner_id);
-        let owner_file = records::write_owner_record(
+        let owner_lock = records::write_owner_record(
             &owner_record,
             &records::OwnerRecord {
                 owner_id: owner_id.clone(),
@@ -65,6 +65,8 @@ impl LocalApprovalServer {
             Ok(worker) => worker,
             Err(error) => {
                 records::remove_private_record_by_path(&owner_record);
+                drop(owner_lock);
+                records::remove_private_record_by_path(&records::owner_lock_path(&owner_record));
                 return Err(error);
             }
         };
@@ -74,7 +76,7 @@ impl LocalApprovalServer {
             directory,
             pipe_name,
             owner_record,
-            _owner_file: owner_file,
+            owner_lock: Some(owner_lock),
             pipe_handle: Some(pipe_handle),
             stop,
             worker: Some(worker),
@@ -123,6 +125,8 @@ impl Drop for LocalApprovalServer {
         self.pipe_handle.take();
         records::remove_pending_records_for_owner(&self.directory, &self.owner_id);
         records::remove_private_record_by_path(&self.owner_record);
+        self.owner_lock.take();
+        records::remove_private_record_by_path(&records::owner_lock_path(&self.owner_record));
     }
 }
 
