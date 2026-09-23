@@ -104,8 +104,7 @@ impl RunManager {
             return Err(RunManagementError::new(
                 RunManagementErrorCode::InputConflict,
                 format!(
-                    "ordinary input response exceeds the {} byte limit",
-                    MAX_ANSWER_BYTES_PER_RUN
+                    "ordinary input response exceeds the {MAX_ANSWER_BYTES_PER_RUN} byte limit"
                 ),
             ));
         }
@@ -118,9 +117,9 @@ impl RunManager {
             ));
         }
         let mut pending_guard = record.pending_input.lock().expect("pending input mutex");
-        if !pending_guard
+        if pending_guard
             .as_ref()
-            .is_some_and(|pending| pending.input_id == input_id)
+            .is_none_or(|pending| pending.input_id != input_id)
         {
             return Err(RunManagementError::new(
                 RunManagementErrorCode::InputConflict,

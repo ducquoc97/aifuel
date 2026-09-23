@@ -208,7 +208,16 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
     let expected = private_security_descriptor(inherit)?;
     let expected = String::from_utf16(&expected.sddl()[..expected.sddl().len() - 1])
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    Ok(actual == expected)
+    Ok(normalize_private_dacl(&actual) == normalize_private_dacl(&expected))
+}
+
+fn normalize_private_dacl(sddl: &str) -> String {
+    // Windows may rewrite GENERIC_ALL to the equivalent file-object access
+    // mask when storing a filesystem DACL. Compare the effective access, not
+    // that presentation detail.
+    sddl.replace(";FA;;;", ";GA;;;")
+        .replace(";0x1f01ff;;;", ";GA;;;")
+        .replace(";0x001f01ff;;;", ";GA;;;")
 }
 
 pub(super) fn next_owner_id() -> io::Result<String> {
