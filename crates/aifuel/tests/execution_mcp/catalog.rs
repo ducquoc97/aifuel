@@ -211,8 +211,7 @@ fn install_fake_codex_catalog(directory: &TestDirectory, catalog: &str, success:
         use std::os::unix::fs::PermissionsExt;
         let script = if success {
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'codex-cli fixture-1'; exit 0; fi\nif [ \"$1\" = \"debug\" ] && [ \"$2\" = \"models\" ] && [ \"$3\" = \"--bundled\" ]; then printf '%s' '{}'; exit 0; fi\necho unexpected invocation >&2; exit 64\n",
-                catalog
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'codex-cli fixture-1'; exit 0; fi\nif [ \"$1\" = \"debug\" ] && [ \"$2\" = \"models\" ] && [ \"$3\" = \"--bundled\" ]; then printf '%s' '{catalog}'; exit 0; fi\necho unexpected invocation >&2; exit 64\n"
             )
         } else {
             "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'codex-cli fixture-1'; exit 0; fi\nif [ \"$1\" = \"debug\" ]; then echo '{not json}'; exit 0; fi\nexit 64\n".to_owned()
