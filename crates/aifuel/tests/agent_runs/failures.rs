@@ -37,15 +37,8 @@ fn provider_failure_keeps_stdout_stderr_and_provider_exit_code() {
     assert_eq!(result["status"], "failed");
     assert_eq!(result["state"], "failed");
     assert_eq!(result["exit_code"], 17);
-    let line_ending = if cfg!(windows) { "\r\n" } else { "\n" };
-    assert_eq!(
-        result["output"],
-        format!("partial provider output{line_ending}")
-    );
-    assert_eq!(
-        result["diagnostics"],
-        format!("provider failure detail{line_ending}")
-    );
+    assert_eq!(result["output"], "partial provider output\n");
+    assert_eq!(result["diagnostics"], "provider failure detail\n");
     assert_eq!(result["session_id"], serde_json::Value::Null);
     assert_eq!(result["effective_model"], serde_json::Value::Null);
 }

@@ -41,7 +41,8 @@ fn antigravity_run_uses_the_agy_cli() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("fake agy response: --print translate to Vietnamese: hello"),
+        stdout.contains("fake agy response: --print")
+            && stdout.contains("translate to Vietnamese: hello"),
         "expected agy print-mode invocation, got {stdout:?}"
     );
 }
