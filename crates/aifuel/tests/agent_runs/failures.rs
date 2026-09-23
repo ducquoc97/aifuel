@@ -4,7 +4,10 @@ use std::process::Command;
 #[cfg(unix)]
 use std::process::Stdio;
 
-use crate::support::{TestDirectory, ai_fuel_config_dir, path_with};
+use crate::support::{TestDirectory, path_with};
+
+#[cfg(unix)]
+use crate::support::ai_fuel_config_dir;
 
 #[test]
 fn provider_failure_keeps_stdout_stderr_and_provider_exit_code() {
