@@ -199,6 +199,8 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
         return Err(io::Error::last_os_error());
     }
     if control & SE_DACL_PROTECTED == 0 {
+        #[cfg(test)]
+        eprintln!("[DEBUG-approval-acl] DACL is not protected");
         return Ok(false);
     }
     let mut present = 0;
@@ -211,6 +213,8 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
         return Err(io::Error::last_os_error());
     }
     if present == 0 || dacl.is_null() {
+        #[cfg(test)]
+        eprintln!("[DEBUG-approval-acl] DACL is absent");
         return Ok(false);
     }
     let mut information = ACL_SIZE_INFORMATION::default();
@@ -228,6 +232,11 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
         return Err(io::Error::last_os_error());
     }
     if information.AceCount != 2 {
+        #[cfg(test)]
+        eprintln!(
+            "[DEBUG-approval-acl] expected 2 ACEs, found {}",
+            information.AceCount
+        );
         return Ok(false);
     }
     let expected_flags = if inherit {
@@ -247,26 +256,51 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
         // SAFETY: GetAce returned an ACE pointer owned by the live ACL.
         let header = unsafe { &*ace_pointer.cast::<windows_sys::Win32::Security::ACE_HEADER>() };
         if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
+            #[cfg(test)]
+            eprintln!(
+                "[DEBUG-approval-acl] ACE {index} type={} is not allow",
+                header.AceType
+            );
             return Ok(false);
         }
         // SAFETY: the verified ACE type matches ACCESS_ALLOWED_ACE_TYPE, whose
         // layout contains the access mask and SID immediately after its header.
         let ace = unsafe { &*ace_pointer.cast::<ACCESS_ALLOWED_ACE>() };
         if ace.Header.AceFlags != expected_flags {
+            #[cfg(test)]
+            eprintln!(
+                "[DEBUG-approval-acl] ACE {index} flags=0x{:02x}, expected=0x{:02x}",
+                ace.Header.AceFlags, expected_flags
+            );
             return Ok(false);
         }
         let actual_sid = std::ptr::addr_of!(ace.SidStart).cast_mut().cast();
-        match sid_to_string(actual_sid)?.as_str() {
-            sid if sid == expected_user_sid
-                && (ace.Mask == GENERIC_ALL || ace.Mask == FILE_ALL_ACCESS) =>
-            {
-                has_current_user = true;
-            }
-            "S-1-3-4" if ace.Mask == 0 => has_owner_rights = true,
-            _ => return Ok(false),
+        let actual_sid = sid_to_string(actual_sid)?;
+        if actual_sid == expected_user_sid
+            && (ace.Mask == GENERIC_ALL || ace.Mask == FILE_ALL_ACCESS)
+        {
+            has_current_user = true;
+        } else if actual_sid == "S-1-3-4" && ace.Mask == 0 {
+            has_owner_rights = true;
+        } else {
+            #[cfg(test)]
+            eprintln!(
+                "[DEBUG-approval-acl] ACE {index} user_sid={} owner_rights_sid={} mask=0x{:08x}",
+                actual_sid == expected_user_sid,
+                actual_sid == "S-1-3-4",
+                ace.Mask
+            );
+            return Ok(false);
         }
     }
-    Ok(has_current_user && has_owner_rights)
+    if !has_current_user || !has_owner_rights {
+        #[cfg(test)]
+        eprintln!(
+            "[DEBUG-approval-acl] current_user={has_current_user}, owner_rights={has_owner_rights}"
+        );
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 pub(super) fn next_owner_id() -> io::Result<String> {
