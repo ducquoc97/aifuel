@@ -159,7 +159,7 @@ fn executable_names(program: &OsStr) -> Vec<OsString> {
     {
         let extensions =
             std::env::var_os("PATHEXT").unwrap_or_else(|| OsString::from(".COM;.EXE;.BAT;.CMD"));
-        return extensions
+        extensions
             .to_string_lossy()
             .split(';')
             .filter(|extension| !extension.is_empty())
