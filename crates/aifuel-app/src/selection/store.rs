@@ -143,11 +143,11 @@ fn temporary_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(".{name}.tmp-{}-{suffix}", std::process::id()))
 }
 
-fn set_private_permissions(file: &std::fs::File) -> io::Result<()> {
+fn set_private_permissions(_file: &std::fs::File) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        _file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
 }

@@ -7,20 +7,22 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicU64, Ordering};
-use windows_sys::Win32::Foundation::LocalFree;
+use windows_sys::Win32::Foundation::{GENERIC_ALL, LocalFree};
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW,
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW, SDDL_REVISION_1,
-    SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+    GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows_sys::Win32::Security::Cryptography::{
     BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
 };
 use windows_sys::Win32::Security::{
-    DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetTokenInformation,
-    PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, AclSizeInformation, CONTAINER_INHERIT_ACE,
+    DACL_SECURITY_INFORMATION, GetAce, GetAclInformation, GetSecurityDescriptorControl,
+    GetSecurityDescriptorDacl, GetTokenInformation, OBJECT_INHERIT_ACE,
+    PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT};
+use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 static NEXT_OWNER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -39,6 +41,7 @@ impl Drop for LocalAllocation {
 
 pub(super) struct SecurityDescriptor {
     allocation: LocalAllocation,
+    #[cfg(test)]
     sddl: Vec<u16>,
 }
 
@@ -47,6 +50,7 @@ impl SecurityDescriptor {
         self.allocation.0
     }
 
+    #[cfg(test)]
     pub(super) fn sddl(&self) -> &[u16] {
         &self.sddl
     }
@@ -117,6 +121,7 @@ pub(super) fn private_security_descriptor(inherit: bool) -> io::Result<SecurityD
     }
     Ok(SecurityDescriptor {
         allocation: LocalAllocation(descriptor),
+        #[cfg(test)]
         sddl: sddl_wide,
     })
 }
@@ -187,37 +192,69 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
         ));
     }
     let descriptor = LocalAllocation(descriptor);
-    let mut actual = null_mut();
-    let mut length = 0;
-    // SAFETY: descriptor is valid and the output is allocated by Windows.
+    let mut control = 0;
+    let mut revision = 0;
+    // SAFETY: descriptor is valid and both output fields are writable.
+    if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if control & SE_DACL_PROTECTED == 0 {
+        return Ok(false);
+    }
+    let mut present = 0;
+    let mut dacl = null_mut();
+    let mut defaulted = 0;
+    // SAFETY: descriptor is valid and DACL outputs are writable.
+    if unsafe { GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut dacl, &mut defaulted) }
+        == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    if present == 0 || dacl.is_null() {
+        return Ok(false);
+    }
+    let mut information = ACL_SIZE_INFORMATION::default();
+    // SAFETY: dacl is returned by Windows from the live security descriptor;
+    // information is a writable buffer of the documented size.
     if unsafe {
-        ConvertSecurityDescriptorToStringSecurityDescriptorW(
-            descriptor.0,
-            SDDL_REVISION_1,
-            DACL_SECURITY_INFORMATION,
-            &mut actual,
-            &mut length,
+        GetAclInformation(
+            dacl,
+            (&mut information as *mut ACL_SIZE_INFORMATION).cast(),
+            std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+            AclSizeInformation,
         )
     } == 0
     {
         return Err(io::Error::last_os_error());
     }
-    let actual = LocalAllocation(actual.cast());
-    // SAFETY: Windows returned a valid NUL-terminated UTF-16 allocation.
-    let actual = unsafe { wide_ptr_string(actual.0.cast()) }?;
-    let expected = private_security_descriptor(inherit)?;
-    let expected = String::from_utf16(&expected.sddl()[..expected.sddl().len() - 1])
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    Ok(normalize_private_dacl(&actual) == normalize_private_dacl(&expected))
-}
-
-fn normalize_private_dacl(sddl: &str) -> String {
-    // Windows may rewrite GENERIC_ALL to the equivalent file-object access
-    // mask when storing a filesystem DACL. Compare the effective access, not
-    // that presentation detail.
-    sddl.replace(";FA;;;", ";GA;;;")
-        .replace(";0x1f01ff;;;", ";GA;;;")
-        .replace(";0x001f01ff;;;", ";GA;;;")
+    if information.AceCount != 1 {
+        return Ok(false);
+    }
+    let mut ace_pointer = null_mut();
+    // SAFETY: index zero is within the one-entry ACL validated above.
+    if unsafe { GetAce(dacl, 0, &mut ace_pointer) } == 0 || ace_pointer.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: GetAce returned an ACE pointer owned by the live ACL.
+    let header = unsafe { &*ace_pointer.cast::<windows_sys::Win32::Security::ACE_HEADER>() };
+    if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
+        return Ok(false);
+    }
+    // SAFETY: the verified ACE type matches ACCESS_ALLOWED_ACE_TYPE, whose
+    // layout contains the access mask and SID immediately after its header.
+    let ace = unsafe { &*ace_pointer.cast::<ACCESS_ALLOWED_ACE>() };
+    let expected_flags = if inherit {
+        (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) as u8
+    } else {
+        0
+    };
+    if ace.Header.AceFlags != expected_flags
+        || (ace.Mask != GENERIC_ALL && ace.Mask != FILE_ALL_ACCESS)
+    {
+        return Ok(false);
+    }
+    let actual_sid = std::ptr::addr_of!(ace.SidStart).cast_mut().cast();
+    Ok(sid_to_string(actual_sid)? == current_user_sid_string()?)
 }
 
 pub(super) fn next_owner_id() -> io::Result<String> {
@@ -315,10 +352,14 @@ fn current_user_sid_string() -> io::Result<String> {
             "current process token does not contain a user SID",
         ));
     }
+    sid_to_string(user.User.Sid.cast())
+}
+
+fn sid_to_string(sid: *mut c_void) -> io::Result<String> {
     let mut sid_string = null_mut();
-    // SAFETY: the SID pointer refers into the live token-information buffer;
-    // Windows allocates the NUL-terminated result for LocalFree.
-    if unsafe { ConvertSidToStringSidW(user.User.Sid, &mut sid_string) } == 0 {
+    // SAFETY: SID points to a valid SID in a live token buffer or ACL; Windows
+    // allocates the NUL-terminated result for LocalFree.
+    if unsafe { ConvertSidToStringSidW(sid, &mut sid_string) } == 0 {
         return Err(io::Error::last_os_error());
     }
     let sid_string = LocalAllocation(sid_string.cast());
