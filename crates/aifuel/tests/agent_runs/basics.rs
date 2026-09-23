@@ -273,7 +273,7 @@ fn codex_cli_run_uses_the_local_approval_command_and_resumes() {
         .read_to_string(&mut remaining_stderr)
         .expect("remaining diagnostics should be readable");
 
-    assert!(status.success(), "{}{}", approval_line, remaining_stderr);
+    assert!(status.success(), "{approval_line}{remaining_stderr}");
     assert_eq!(stdout, "fake codex app-server response");
     let requests: Vec<serde_json::Value> = fs::read_to_string(log_path)
         .expect("App Server requests should be logged")
