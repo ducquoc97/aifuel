@@ -84,7 +84,7 @@ pub(crate) async fn execute(
         cwd,
     )
     .await;
-    if result.is_err() || !child.try_wait().map_err(AgentRunError::Io)?.is_some() {
+    if result.is_err() || child.try_wait().map_err(AgentRunError::Io)?.is_none() {
         let _ = kill_and_wait(&mut child).await;
     }
     let stderr = timeout(SHUTDOWN_TIMEOUT, stderr_reader)

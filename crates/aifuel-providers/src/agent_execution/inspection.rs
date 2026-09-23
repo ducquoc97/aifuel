@@ -260,7 +260,7 @@ fn probe_version(path: &Path, args: &[&str]) -> AgentVersionEvidence {
     match parse_version_token(&output) {
         Some(version) => AgentVersionEvidence {
             version: Some(version),
-            reason: format!("reported by the documented {:?} version command", args),
+            reason: format!("reported by the documented {args:?} version command"),
         },
         None => version_probe_unknown(
             "the version command output did not contain one unambiguous version",
