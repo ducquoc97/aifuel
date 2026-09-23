@@ -130,13 +130,19 @@ pub(super) fn active_owner_record(
     let lock_path = owner_lock_path(path);
     let lock_file = match open_checked_file(&lock_path, true, true) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            #[cfg(test)]
+            eprintln!("[DEBUG-owner-lock] sidecar is missing");
+            return Ok(None);
+        }
         Err(error) => return Err(error.to_string()),
     };
     let opened_lock_identity = file_identity(&lock_file).map_err(|error| error.to_string())?;
 
     match FileExt::try_lock(&lock_file) {
         Ok(()) => {
+            #[cfg(test)]
+            eprintln!("[DEBUG-owner-lock] acquired sidecar lock; owner is stale");
             if let Some(opened_record_identity) =
                 current_file_identity(path).map_err(|error| error.to_string())?
             {
@@ -149,17 +155,29 @@ pub(super) fn active_owner_record(
             Ok(None)
         }
         Err(TryLockError::WouldBlock) => {
+            #[cfg(test)]
+            eprintln!("[DEBUG-owner-lock] sidecar is held by a live owner");
             let mut file = match open_checked_file(path, true, false) {
                 Ok(file) => file,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    #[cfg(test)]
+                    eprintln!("[DEBUG-owner-lock] owner record is missing");
+                    return Ok(None);
+                }
                 Err(error) => return Err(error.to_string()),
             };
             let opened_record_identity = file_identity(&file).map_err(|error| error.to_string())?;
             let record = read_owner_record(&mut file).map_err(|error| error.to_string())?;
-            if current_file_identity(&lock_path).ok().flatten() == Some(opened_lock_identity)
-                && current_file_identity(path).ok().flatten() == Some(opened_record_identity)
-                && valid_owner_record(path, directory, &record)
-            {
+            let lock_identity_matches =
+                current_file_identity(&lock_path).ok().flatten() == Some(opened_lock_identity);
+            let record_identity_matches =
+                current_file_identity(path).ok().flatten() == Some(opened_record_identity);
+            let record_is_valid = valid_owner_record(path, directory, &record);
+            #[cfg(test)]
+            eprintln!(
+                "[DEBUG-owner-lock] lock_identity={lock_identity_matches} record_identity={record_identity_matches} record_valid={record_is_valid}"
+            );
+            if lock_identity_matches && record_identity_matches && record_is_valid {
                 Ok(Some(record))
             } else {
                 Ok(None)
