@@ -236,6 +236,45 @@ fn ordinary_input_waits_and_resumes_while_permissions_stay_local_only() {
 }
 
 #[test]
+fn worker_start_does_not_overwrite_pending_owner_input() {
+    let manager = RunManager::new(Vec::<Arc<dyn AgentExecutionAdapter>>::new());
+    let record = Arc::new(RunRecord::new(
+        "run-worker-start-input".to_owned(),
+        &request(),
+        None,
+        None,
+    ));
+    record.push_event(RunEventKind::Started, None);
+    manager
+        .inner
+        .records
+        .lock()
+        .expect("run records mutex")
+        .insert(record.run_id.clone(), Arc::clone(&record));
+    let pending = manager
+        .request_input(&record.run_id, RunInputKind::Ordinary, "choose a target")
+        .expect("owner input is accepted during startup");
+
+    assert!(super::super::workers::mark_worker_running(
+        &manager, &record
+    ));
+    let snapshot = record.snapshot();
+    assert_eq!(snapshot.state, RunState::WaitingForInput);
+    assert_eq!(snapshot.pending_input, Some(pending));
+    assert_eq!(
+        record
+            .events
+            .lock()
+            .expect("run events mutex")
+            .events
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        [RunEventKind::Started, RunEventKind::WaitingForInput]
+    );
+}
+
+#[test]
 fn cancellation_is_idempotent_and_terminal_state_is_immutable() {
     let wait = Arc::new(AtomicBool::new(true));
     let adapter = Arc::new(ProbeAdapter {

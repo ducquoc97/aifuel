@@ -56,20 +56,30 @@ pub(super) fn run_worker(
         inner,
         _owner: None,
     };
-    {
-        let mut metadata = record.metadata.lock().expect("run metadata mutex");
-        if metadata.state == RunState::Cancelling {
-            drop(metadata);
-            manager.complete(&record, Err(AgentRunError::Cancelled));
-            return;
-        }
-        metadata.state = RunState::Running;
+    if !mark_worker_running(&manager, &record) {
+        manager.complete(&record, Err(AgentRunError::Cancelled));
+        return;
     }
-    manager.push_event(&record, RunEventKind::Running, None);
     let result = adapter.execute_with_output_handler(
         &request,
         &record.cancellation,
         output_handler.as_ref(),
     );
     manager.complete(&record, result);
+}
+
+pub(super) fn mark_worker_running(manager: &RunManager, record: &Arc<RunRecord>) -> bool {
+    let mut metadata = record.metadata.lock().expect("run metadata mutex");
+    if metadata.state == RunState::Cancelling {
+        return false;
+    }
+    let transitioned = metadata.state == RunState::Starting;
+    if transitioned {
+        metadata.state = RunState::Running;
+    }
+    drop(metadata);
+    if transitioned {
+        manager.push_event(record, RunEventKind::Running, None);
+    }
+    true
 }
