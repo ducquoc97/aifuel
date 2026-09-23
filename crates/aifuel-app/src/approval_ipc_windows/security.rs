@@ -233,10 +233,44 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
     }
     if information.AceCount != 2 {
         #[cfg(test)]
-        eprintln!(
-            "[DEBUG-approval-acl] expected 2 ACEs, found {}",
-            information.AceCount
-        );
+        {
+            let expected_user_sid = current_user_sid_string().ok();
+            for index in 0..information.AceCount {
+                let mut ace_pointer = null_mut();
+                // SAFETY: index is below the ACE count returned for this ACL.
+                if unsafe { GetAce(dacl, index, &mut ace_pointer) } == 0 || ace_pointer.is_null() {
+                    continue;
+                }
+                // SAFETY: GetAce returned an ACE pointer owned by the live ACL.
+                let header =
+                    unsafe { &*ace_pointer.cast::<windows_sys::Win32::Security::ACE_HEADER>() };
+                if header.AceType == ACCESS_ALLOWED_ACE_TYPE as u8 {
+                    // SAFETY: the verified ACE type has the access mask and
+                    // SID immediately after the ACE header.
+                    let ace = unsafe { &*ace_pointer.cast::<ACCESS_ALLOWED_ACE>() };
+                    let actual_sid = std::ptr::addr_of!(ace.SidStart).cast_mut().cast();
+                    let sid_class = match sid_to_string(actual_sid) {
+                        Ok(sid) if expected_user_sid.as_deref() == Some(sid.as_str()) => "user",
+                        Ok(sid) if sid == "S-1-3-4" => "owner-rights",
+                        Ok(_) => "other",
+                        Err(_) => "unreadable",
+                    };
+                    eprintln!(
+                        "[DEBUG-approval-acl] ACE {index} type={} flags=0x{:02x} mask=0x{:08x} sid={sid_class}",
+                        header.AceType, ace.Header.AceFlags, ace.Mask
+                    );
+                } else {
+                    eprintln!(
+                        "[DEBUG-approval-acl] ACE {index} type={} flags=0x{:02x}",
+                        header.AceType, header.AceFlags
+                    );
+                }
+            }
+            eprintln!(
+                "[DEBUG-approval-acl] expected 2 ACEs, found {}",
+                information.AceCount
+            );
+        }
         return Ok(false);
     }
     let expected_flags = if inherit {
