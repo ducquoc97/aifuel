@@ -2,16 +2,16 @@
 
 Tracks [issue #75](https://github.com/ducquoc97/aifuel/issues/75). Build and controlled-process tests are separate from native-agent acceptance. No cell is passed by executable discovery, help output, configuration registration, or an exit code alone.
 
-## Environment inspected on 2026-09-22 (Codex rechecked on 2026-09-23)
+## Environment inspected on 2026-09-22 (provider versions rechecked on 2026-09-23)
 
 The development host is WSL2 (`6.6.87.2-microsoft-standard-WSL2`). It does not establish native Linux, Windows, or macOS acceptance.
 
-| Agent Integration | Installed version | WSL evidence at initial inspection | Native Windows | macOS | Linux |
+| Agent Integration | Installed version | WSL evidence at 2026-09-23 recheck | Native Windows | macOS | Linux |
 | --- | --- | --- | --- | --- | --- |
 | Codex | 0.156.0 | Live managed acceptance passed for the exact prompt, repository boundaries, selected Gateway tool, resume, and cancellation; see evidence below | Outstanding | Outstanding | Outstanding |
-| Claude Code | 2.1.223 | Version and help inspected; effects not verified | Outstanding | Outstanding | Outstanding |
-| GitHub Copilot CLI | 1.0.87 | Version and help inspected; effects not verified | Outstanding | Outstanding | Outstanding |
-| Antigravity CLI | 1.2.8 | Version and help inspected; effects not verified | Outstanding | Outstanding | Outstanding |
+| Claude Code | 2.1.223 | Exact managed translation prompt passed with an explicit unverified `sonnet` override; repository, Gateway, and lifecycle effects remain unverified | Outstanding | Outstanding | Outstanding |
+| GitHub Copilot CLI | 1.0.88 | Exact managed translation attempt timed out at 90 seconds with no output; no result recorded | Outstanding | Outstanding | Outstanding |
+| Antigravity CLI | 1.2.8 | Exact managed translation prompt passed with an explicit unverified model override; repository/effect enforcement remains unverified | Outstanding | Outstanding | Outstanding |
 | Gemini CLI | Not installed | Blocked by missing executable | Outstanding | Outstanding | Outstanding |
 
 The final follow-up in `rust-user-paths.md` records earlier translation and Gateway calls. They are historical evidence only; the current branch's managed-run acceptance is recorded below.
@@ -26,7 +26,19 @@ The AI Fuel release binary was built from this completion worktree and run with 
 - A successful native Codex session was resumed in the same disposable repository under a read-only sandbox and returned the file contents without modifying it.
 - An execution-MCP-owned Codex run was cancelled. The run reached the `cancelled` terminal state, and the observed App Server process was gone after cancellation.
 
-Codex logged that `bubblewrap` was not on `PATH` and that it used its bundled fallback. The read-only and workspace-root enforcement checks above still produced the expected blocked results. This is WSL evidence only; it does not establish native Linux, Windows, or macOS behavior. The other four WSL provider integrations and all native-platform cells remain outstanding.
+Codex logged that `bubblewrap` was not on `PATH` and that it used its bundled fallback. The read-only and workspace-root enforcement checks above still produced the expected blocked results. This is WSL evidence only; it does not establish native Linux, Windows, or macOS behavior. WSL Copilot, Antigravity, and Gemini, Claude's remaining effects, and all native-platform cells remain outstanding.
+
+### WSL Claude Code managed-run evidence (2026-09-23)
+
+The AI Fuel release binary from commit `e6e9123` ran Claude Code 2.1.223 with the exact translation prompt and `--access read-only`. The response succeeded and preserved `requested_model: sonnet`; AI Fuel reported the override as explicit with unknown catalog evidence, and Claude did not report an effective model. No output or tool side effects were requested. This is one prompt-only result, not evidence for repository writes, Gateway routing, cancellation, resume, or native-platform support. The Claude WSL acceptance cell remains incomplete.
+
+### WSL Copilot CLI managed-run attempt (2026-09-23)
+
+Copilot CLI 1.0.88 was invoked through AI Fuel with the exact translation prompt, `--model auto`, `--access read-only`, and a 90-second deadline. The run timed out with no output and a `timed_out` result; the requested model remained an unverified explicit override and no effective model was reported. No automatic login or permission-expanding tool option was enabled. This attempt does not establish authentication or execution support; the WSL Copilot acceptance cell remains outstanding.
+
+### WSL Antigravity managed-run evidence (2026-09-23)
+
+Antigravity CLI 1.2.8 listed `gemini-3.8-flash-low` as an available native model. AI Fuel's Antigravity catalog remains unsupported, so this exact ID was supplied as an explicit override and correctly retained as unknown catalog evidence. The exact translation prompt succeeded under `--access read-only`; the provider did not report an effective model. A separate attempt to use a disposable working directory for a write-effect check was rejected by AI Fuel's configured execution-root policy before provider launch. The temporary directory was removed and no file was created. This proves the root-policy denial only, not Antigravity sandbox enforcement. Its WSL acceptance cell remains outstanding.
 
 ## Enforcement observations
 
