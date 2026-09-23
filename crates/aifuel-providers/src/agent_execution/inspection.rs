@@ -168,7 +168,7 @@ fn executable_names(program: &OsStr) -> Vec<OsString> {
                 candidate.push(extension);
                 candidate
             })
-            .collect();
+            .collect()
     }
     #[cfg(not(windows))]
     {
