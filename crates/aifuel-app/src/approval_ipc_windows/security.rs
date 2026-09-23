@@ -18,7 +18,7 @@ use windows_sys::Win32::Security::Cryptography::{
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, AclSizeInformation, CONTAINER_INHERIT_ACE,
     DACL_SECURITY_INFORMATION, GetAce, GetAclInformation, GetSecurityDescriptorControl,
-    GetSecurityDescriptorDacl, GetTokenInformation, OBJECT_INHERIT_ACE,
+    GetSecurityDescriptorDacl, GetTokenInformation, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
     PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT};
@@ -66,6 +66,12 @@ pub(super) fn prepare_private_directory(directory: &Path) -> io::Result<PathBuf>
         ));
     }
     let directory = fs::canonicalize(directory)?;
+    if !owner_matches_current_user(&directory)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "local approval directory is not owned by the current user",
+        ));
+    }
     set_private_dacl(&directory, true)?;
     if !private_dacl_matches(&directory, true)? {
         return Err(io::Error::new(
@@ -94,6 +100,37 @@ pub(super) fn canonical_private_directory(directory: &Path) -> Result<PathBuf, S
 
 pub(super) fn real_directory(metadata: &fs::Metadata) -> bool {
     metadata.is_dir() && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
+}
+
+fn owner_matches_current_user(path: &Path) -> io::Result<bool> {
+    let path_wide = wide_path(path);
+    let mut owner = null_mut();
+    let mut descriptor = null_mut();
+    // SAFETY: output pointers are valid, and Windows allocates the descriptor
+    // that contains the returned owner SID for LocalFree.
+    let error = unsafe {
+        GetNamedSecurityInfoW(
+            path_wide.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut descriptor,
+        )
+    };
+    if error != 0 {
+        return Err(io::Error::from_raw_os_error(error as i32));
+    }
+    if descriptor.is_null() || owner.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows returned an incomplete local approval owner descriptor",
+        ));
+    }
+    let _descriptor = LocalAllocation(descriptor);
+    Ok(sid_to_string(owner.cast())? == current_user_sid_string()?)
 }
 
 pub(super) fn private_security_descriptor(inherit: bool) -> io::Result<SecurityDescriptor> {
@@ -167,6 +204,7 @@ pub(super) fn set_private_dacl(path: &Path, inherit: bool) -> io::Result<()> {
 
 pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<bool> {
     let path_wide = wide_path(path);
+    let mut owner = null_mut();
     let mut descriptor = null_mut();
     // SAFETY: output fields are valid pointers; Windows allocates the returned
     // descriptor and LocalAllocation releases it below.
@@ -174,8 +212,8 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
         GetNamedSecurityInfoW(
             path_wide.as_ptr(),
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            null_mut(),
+            DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+            &mut owner,
             null_mut(),
             null_mut(),
             null_mut(),
@@ -185,13 +223,16 @@ pub(super) fn private_dacl_matches(path: &Path, inherit: bool) -> io::Result<boo
     if error != 0 {
         return Err(io::Error::from_raw_os_error(error as i32));
     }
-    if descriptor.is_null() {
+    if descriptor.is_null() || owner.is_null() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Windows returned a null local approval security descriptor",
+            "Windows returned an incomplete local approval security descriptor",
         ));
     }
     let descriptor = LocalAllocation(descriptor);
+    if sid_to_string(owner.cast())? != current_user_sid_string()? {
+        return Ok(false);
+    }
     let mut control = 0;
     let mut revision = 0;
     // SAFETY: descriptor is valid and both output fields are writable.
