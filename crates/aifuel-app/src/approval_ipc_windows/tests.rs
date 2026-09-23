@@ -36,7 +36,7 @@ fn pending_mapping_routes_to_its_owner_and_drop_cleans_pipe_and_records() {
         .expect("register pending owner mapping");
     let pending =
         records::pending_record_path(&directory, "run-owned-by-this-process", "pending-approval");
-    let active_owner = records::active_owner_record(&owner_record, &directory)
+    let active_owner = records::active_owner_record(&owner_record, &server.directory)
         .expect("read the lock-protected owner record")
         .expect("owner record is live");
     assert_eq!(active_owner.owner_id, server.owner_id);

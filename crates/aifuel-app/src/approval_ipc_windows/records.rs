@@ -74,6 +74,7 @@ pub(super) fn write_owner_record(path: &Path, record: &OwnerRecord) -> io::Resul
         security::set_private_dacl(&lock_path, false)?;
         FileExt::lock(&lock_file)?;
 
+        let mut published_identity = None;
         let result = (|| {
             let mut file = OpenOptions::new()
                 .create_new(true)
@@ -83,10 +84,15 @@ pub(super) fn write_owner_record(path: &Path, record: &OwnerRecord) -> io::Resul
             security::set_private_dacl(&temporary, false)?;
             serde_json::to_writer(&mut file, record).map_err(io::Error::other)?;
             file.sync_all()?;
+            let identity = file_identity(&file)?;
             fs::hard_link(&temporary, path)?;
+            published_identity = Some(identity);
             fs::remove_file(&temporary)
         })();
         if result.is_err() {
+            if let Some(identity) = published_identity {
+                remove_private_record(path, identity);
+            }
             let _ = fs::remove_file(&temporary);
         }
         result
@@ -130,19 +136,13 @@ pub(super) fn active_owner_record(
     let lock_path = owner_lock_path(path);
     let lock_file = match open_checked_file(&lock_path, true, true) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            #[cfg(test)]
-            eprintln!("[DEBUG-owner-lock] sidecar is missing");
-            return Ok(None);
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.to_string()),
     };
     let opened_lock_identity = file_identity(&lock_file).map_err(|error| error.to_string())?;
 
     match FileExt::try_lock(&lock_file) {
         Ok(()) => {
-            #[cfg(test)]
-            eprintln!("[DEBUG-owner-lock] acquired sidecar lock; owner is stale");
             if let Some(opened_record_identity) =
                 current_file_identity(path).map_err(|error| error.to_string())?
             {
@@ -155,15 +155,9 @@ pub(super) fn active_owner_record(
             Ok(None)
         }
         Err(TryLockError::WouldBlock) => {
-            #[cfg(test)]
-            eprintln!("[DEBUG-owner-lock] sidecar is held by a live owner");
             let mut file = match open_checked_file(path, true, false) {
                 Ok(file) => file,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    #[cfg(test)]
-                    eprintln!("[DEBUG-owner-lock] owner record is missing");
-                    return Ok(None);
-                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => return Err(error.to_string()),
             };
             let opened_record_identity = file_identity(&file).map_err(|error| error.to_string())?;
@@ -173,10 +167,6 @@ pub(super) fn active_owner_record(
             let record_identity_matches =
                 current_file_identity(path).ok().flatten() == Some(opened_record_identity);
             let record_is_valid = valid_owner_record(path, directory, &record);
-            #[cfg(test)]
-            eprintln!(
-                "[DEBUG-owner-lock] lock_identity={lock_identity_matches} record_identity={record_identity_matches} record_valid={record_is_valid}"
-            );
             if lock_identity_matches && record_identity_matches && record_is_valid {
                 Ok(Some(record))
             } else {
