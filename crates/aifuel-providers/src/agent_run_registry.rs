@@ -72,6 +72,16 @@ mod tests {
             declarations[&AgentCapability::WorkspaceWrite].state,
             CapabilityState::Supported
         );
+
+        let antigravity = agent_run_adapters()
+            .iter()
+            .find(|adapter| adapter.provider() == ProviderKey::Antigravity)
+            .expect("Antigravity is compiled");
+        assert_eq!(
+            antigravity.declared_agent_capabilities()[&AgentCapability::ReadOnly].state,
+            CapabilityState::Unsupported,
+            "the terminal-only sandbox is not a verified read-only project boundary"
+        );
     }
 
     #[test]

@@ -101,6 +101,21 @@ impl CliExecutionAdapter {
     }
 
     fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
+        // A prompt-only run receives an AI Fuel-owned temporary directory.
+        // Project runs require the provider to declare a verified read-only
+        // boundary before the native process can see the selected workspace.
+        // Native resumes may carry project context in the provider session,
+        // including through direct RunManager/AgentRunFacade callers that do
+        // not resolve the stored session's working directory first.
+        if (request.working_directory.is_some() || request.resume.is_some())
+            && request.access == AccessMode::ReadOnly
+            && !self.capabilities.supports_read_only()
+        {
+            return Err(AgentRunError::InvalidRequest(format!(
+                "{} cannot enforce read-only access for a project or resumed session",
+                self.provider
+            )));
+        }
         if request.external_tools.is_some() && !self.capabilities.supports_external_tools {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} cannot enforce an exact external MCP tool selection",
@@ -470,5 +485,97 @@ impl CliExecutionAdapter {
             resumed_from: request.resume.clone(),
             working_directory: working_directory.to_path_buf(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_execution::parse_public_output;
+
+    fn read_only_project_request() -> RunRequest {
+        RunRequest {
+            provider: aifuel_core::ProviderKey::Antigravity,
+            model: Some("model-a".to_owned()),
+            effort: None,
+            external_tools: None,
+            account: None,
+            prompt: "hello".to_owned(),
+            output: OutputFormat::Text,
+            working_directory: Some(std::env::temp_dir()),
+            access: AccessMode::ReadOnly,
+            resume: None,
+            timeout: None,
+            interaction_handler: None,
+        }
+    }
+
+    #[test]
+    fn read_only_project_access_requires_verified_provider_enforcement() {
+        let request = read_only_project_request();
+        let unverified = CliExecutionAdapter::new(
+            aifuel_core::ProviderKey::Antigravity,
+            "agy",
+            &[],
+            &[],
+            |_| Ok(Vec::new()),
+            parse_public_output,
+            ExecutionCapabilities::new(false, false, false, false),
+        );
+        assert!(matches!(
+            unverified.validate(&request),
+            Err(AgentRunError::InvalidRequest(_))
+        ));
+
+        let verified = CliExecutionAdapter::new(
+            aifuel_core::ProviderKey::Codex,
+            "codex",
+            &[],
+            &[],
+            |_| Ok(Vec::new()),
+            parse_public_output,
+            ExecutionCapabilities::new(false, false, false, false).with_read_only(),
+        );
+        let mut codex_request = request;
+        codex_request.provider = aifuel_core::ProviderKey::Codex;
+        assert!(verified.validate(&codex_request).is_ok());
+    }
+
+    #[test]
+    fn unverified_read_only_prompt_only_runs_do_not_claim_a_project_boundary() {
+        let mut request = read_only_project_request();
+        request.working_directory = None;
+        let adapter = CliExecutionAdapter::new(
+            aifuel_core::ProviderKey::Antigravity,
+            "agy",
+            &[],
+            &[],
+            |_| Ok(Vec::new()),
+            parse_public_output,
+            ExecutionCapabilities::new(false, false, false, false).with_unsupported_read_only(),
+        );
+
+        assert!(adapter.validate(&request).is_ok());
+    }
+
+    #[test]
+    fn unverified_read_only_resumes_are_rejected_without_a_resolved_working_directory() {
+        let mut request = read_only_project_request();
+        request.working_directory = None;
+        request.resume = Some("native-session".to_owned());
+        let adapter = CliExecutionAdapter::new(
+            aifuel_core::ProviderKey::Antigravity,
+            "agy",
+            &[],
+            &[],
+            |_| Ok(Vec::new()),
+            parse_public_output,
+            ExecutionCapabilities::new(false, false, false, false).with_unsupported_read_only(),
+        );
+
+        assert!(matches!(
+            adapter.validate(&request),
+            Err(AgentRunError::InvalidRequest(_))
+        ));
     }
 }

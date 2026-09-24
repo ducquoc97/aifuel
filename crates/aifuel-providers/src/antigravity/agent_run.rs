@@ -11,9 +11,10 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     &["--print", "--output-format"],
     build_args,
     parse_output,
-    // The native sandbox help only promises terminal restrictions, not a
-    // bounded workspace write policy.
-    ExecutionCapabilities::new(true, false, false, true),
+    // The native sandbox is not a verified workspace read-only boundary. A
+    // live WSL test redirected a requested file write to Antigravity's global
+    // scratch area instead of the selected workspace.
+    ExecutionCapabilities::new(true, false, false, true).with_unsupported_read_only(),
 )
 .with_setup_guidance(AgentSetupGuidance {
     install: "macOS/Linux: `curl -fsSL https://antigravity.google/cli/install.sh | bash`; Windows PowerShell: `irm https://antigravity.google/cli/install.ps1 | iex`.",

@@ -64,6 +64,15 @@ impl ExecutionCapabilities {
         self
     }
 
+    pub(crate) const fn with_unsupported_read_only(mut self) -> Self {
+        self.read_only = CapabilityState::Unsupported;
+        self
+    }
+
+    pub(super) const fn supports_read_only(&self) -> bool {
+        matches!(self.read_only, CapabilityState::Supported)
+    }
+
     pub(crate) const fn with_ordinary_input(mut self) -> Self {
         self.supports_ordinary_input = true;
         self

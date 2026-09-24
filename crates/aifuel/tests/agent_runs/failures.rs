@@ -7,7 +7,7 @@ use std::process::Stdio;
 use crate::support::{TestDirectory, path_with};
 
 #[cfg(unix)]
-use crate::support::ai_fuel_config_dir;
+use crate::support::{ai_fuel_config_dir, install_fake_codex_app_server};
 
 #[test]
 fn provider_failure_keeps_stdout_stderr_and_provider_exit_code() {
@@ -93,7 +93,7 @@ fn provider_process_timeout_returns_captured_output_and_timeout_status() {
 
 #[cfg(unix)]
 #[test]
-fn stdin_prompt_and_working_directory_reach_the_selected_cli() {
+fn stdin_prompt_and_working_directory_reach_the_verified_codex_adapter() {
     use std::io::Write;
     use std::os::unix::fs::symlink;
 
@@ -101,12 +101,10 @@ fn stdin_prompt_and_working_directory_reach_the_selected_cli() {
     let physical_working_directory = directory.path().join("workspace");
     let working_directory = directory.path().join("workspace-alias");
     let home = directory.path().join("home");
-    let bin = directory.path().join("bin");
     fs::create_dir_all(&physical_working_directory).expect("workspace should be creatable");
     symlink(&physical_working_directory, &working_directory)
         .expect("working-directory alias should be creatable");
     fs::create_dir_all(&home).expect("temporary home should be creatable");
-    fs::create_dir_all(&bin).expect("bin should be creatable");
     let config = ai_fuel_config_dir(&home);
     fs::create_dir_all(&config).expect("AI Fuel config directory should exist");
     fs::write(
@@ -121,23 +119,26 @@ fn stdin_prompt_and_working_directory_reach_the_selected_cli() {
         .to_string(),
     )
     .expect("execution policy should be writable");
-    install_cwd_echo_command(&bin, "gemini");
+    let app_server_log = install_fake_codex_app_server(directory.path());
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([
             "run",
             "--provider",
-            "gemini",
+            "codex",
             "--model",
             "test-model",
             "--working-directory",
             working_directory.to_str().expect("test path is UTF-8"),
+            "--output",
+            "json",
         ])
-        .env("PATH", path_with(&bin))
+        .env("PATH", path_with(directory.path()))
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env("APPDATA", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("AIFUEL_CODEX_FIXTURE_LOG", &app_server_log)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -158,17 +159,38 @@ fn stdin_prompt_and_working_directory_reach_the_selected_cli() {
         "aifuel run should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("managed run should return JSON");
     let expected_working_directory =
         fs::canonicalize(&working_directory).expect("working-directory alias should resolve");
     assert_ne!(working_directory, expected_working_directory);
-    let expected_prefix = format!("{}\n", expected_working_directory.display());
     assert!(
-        stdout.starts_with(&expected_prefix),
-        "expected child cwd prefix {expected_prefix:?}, got {stdout:?}"
+        result["output"]
+            .as_str()
+            .expect("Codex should return public text")
+            .contains("fake codex app-server response")
     );
-    assert!(stdout.contains("prompt from stdin"));
-    assert!(!config.join("agent-sessions.json").exists());
+    let requests = fs::read_to_string(app_server_log)
+        .expect("App Server request frames should be logged")
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("App Server frames should be valid JSON");
+    assert_eq!(
+        requests[2]["params"]["cwd"],
+        expected_working_directory.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        requests[3]["params"]["input"][0]["text"],
+        "prompt from stdin"
+    );
+    assert!(
+        fs::read_dir(&physical_working_directory)
+            .expect("workspace should remain inspectable")
+            .next()
+            .is_none(),
+        "read-only Codex run should not write into the repository workspace"
+    );
 }
 
 #[cfg(unix)]
@@ -212,21 +234,4 @@ fn install_slow_run_command(directory: &std::path::Path, command_name: &str) {
         .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions).expect("slow fake executable should be executable");
-}
-
-#[cfg(unix)]
-fn install_cwd_echo_command(directory: &std::path::Path, command_name: &str) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = directory.join(command_name);
-    fs::write(
-        &path,
-        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then printf '%s\\n' '--prompt --approval-mode --output-format'; exit 0; fi\npwd -P\nprintf '%s\\n' \"$*\"\n",
-    )
-    .expect("fake cwd executable should be writable");
-    let mut permissions = fs::metadata(&path)
-        .expect("fake executable should exist")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("fake executable should be executable");
 }
