@@ -1,95 +1,16 @@
+#[cfg(unix)]
 use std::fs;
+#[cfg(unix)]
 use std::process::Command;
 
 #[cfg(unix)]
 use std::process::Stdio;
 
+#[cfg(unix)]
 use crate::support::{TestDirectory, path_with};
 
 #[cfg(unix)]
 use crate::support::{ai_fuel_config_dir, install_fake_codex_app_server};
-
-#[test]
-fn provider_failure_keeps_stdout_stderr_and_provider_exit_code() {
-    let directory = TestDirectory::new("provider-failure");
-    install_failing_command(directory.path(), "gemini");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args([
-            "run",
-            "--provider",
-            "gemini",
-            "--model",
-            "test-model",
-            "--prompt",
-            "hello",
-            "--output",
-            "json",
-        ])
-        .env("PATH", path_with(directory.path()))
-        .env("HOME", directory.path())
-        .env("USERPROFILE", directory.path())
-        .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
-        .output()
-        .expect("aifuel should start");
-
-    assert_eq!(output.status.code(), Some(4));
-    let result: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("run should return its structured result");
-    assert_eq!(result["status"], "failed");
-    assert_eq!(result["state"], "failed");
-    assert_eq!(result["exit_code"], 17);
-    assert_eq!(result["output"], "partial provider output\n");
-    let diagnostics_line_ending = if cfg!(windows) { "\r\n" } else { "\n" };
-    assert_eq!(
-        result["diagnostics"],
-        format!("provider failure detail{diagnostics_line_ending}")
-    );
-    assert_eq!(result["session_id"], serde_json::Value::Null);
-    assert_eq!(result["effective_model"], serde_json::Value::Null);
-}
-
-#[cfg(unix)]
-#[test]
-fn provider_process_timeout_returns_captured_output_and_timeout_status() {
-    let directory = TestDirectory::new("provider-timeout");
-    install_slow_run_command(directory.path(), "gemini");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args([
-            "run",
-            "--provider",
-            "gemini",
-            "--model",
-            "test-model",
-            "--prompt",
-            "hello",
-            "--output",
-            "json",
-            "--timeout",
-            "1s",
-        ])
-        .env("PATH", path_with(directory.path()))
-        .env("HOME", directory.path())
-        .env("USERPROFILE", directory.path())
-        .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
-        .output()
-        .expect("aifuel should start");
-
-    assert_eq!(output.status.code(), Some(5));
-    let result: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("timed out run should return its result");
-    assert_eq!(result["status"], "timeout");
-    assert_eq!(result["state"], "timed_out");
-    assert!(
-        result["output"]
-            .as_str()
-            .unwrap()
-            .contains("partial provider output")
-    );
-}
 
 #[cfg(unix)]
 #[test]
@@ -191,47 +112,4 @@ fn stdin_prompt_and_working_directory_reach_the_verified_codex_adapter() {
             .is_none(),
         "read-only Codex run should not write into the repository workspace"
     );
-}
-
-#[cfg(unix)]
-fn install_failing_command(directory: &std::path::Path, command_name: &str) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = directory.join(command_name);
-    fs::write(
-        &path,
-        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then printf '%s\\n' '--prompt --approval-mode --output-format'; exit 0; fi\nprintf 'partial provider output\\n'\nprintf 'provider failure detail\\n' >&2\nexit 17\n",
-    )
-    .expect("fake failing executable should be writable");
-    let mut permissions = fs::metadata(&path)
-        .expect("fake executable should exist")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("fake executable should be executable");
-}
-
-#[cfg(windows)]
-fn install_failing_command(directory: &std::path::Path, command_name: &str) {
-    fs::write(
-        directory.join(format!("{command_name}.cmd")),
-        "@echo off\nif \"%~1\"==\"--help\" (echo --prompt --approval-mode --output-format & exit /b 0)\necho partial provider output\n>&2 echo provider failure detail\nexit /b 17\n",
-    )
-    .expect("fake failing executable should be writable");
-}
-
-#[cfg(unix)]
-fn install_slow_run_command(directory: &std::path::Path, command_name: &str) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = directory.join(command_name);
-    fs::write(
-        &path,
-        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then printf '%s\\n' '--prompt --approval-mode --output-format'; exit 0; fi\nprintf 'partial provider output\\n'\nexec sleep 30\n",
-    )
-    .expect("slow fake executable should be writable");
-    let mut permissions = fs::metadata(&path)
-        .expect("slow fake executable should exist")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("slow fake executable should be executable");
 }

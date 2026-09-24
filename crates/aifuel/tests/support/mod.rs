@@ -91,10 +91,6 @@ pub fn install_fake_command(directory: &Path, command_name: &str) {
     }
 }
 
-pub fn install_fake_gemini(directory: &Path) {
-    install_fake_command(directory, "gemini");
-}
-
 /// Install a small Codex App Server fixture that speaks JSONL over stdio.
 /// Returns the path where it records each request frame.
 pub fn install_fake_codex_app_server(directory: &Path) -> PathBuf {
@@ -189,24 +185,6 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     }
 
     log_path
-}
-
-#[cfg(unix)]
-pub fn install_slow_help_gemini(directory: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = directory.join("gemini");
-    fs::write(
-        &path,
-        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\nsleep 2\nexit 0\nfi\nprintf 'unexpected execution\\n'\n",
-    )
-    .expect("slow fake Gemini executable should be writable");
-    let mut permissions = fs::metadata(&path)
-        .expect("slow fake Gemini executable should exist")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions)
-        .expect("slow fake Gemini executable should be executable");
 }
 
 pub fn path_with(directory: &Path) -> std::ffi::OsString {

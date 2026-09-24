@@ -2,16 +2,16 @@
 
 Tracks [issue #75](https://github.com/ducquoc97/aifuel/issues/75). Build and controlled-process tests are separate from native-agent acceptance. No cell is passed by executable discovery, help output, configuration registration, or an exit code alone.
 
-## Environment inspected on 2026-09-22 (provider versions rechecked on 2026-09-23)
+## Environment inspected on 2026-09-22 (provider versions rechecked on 2026-09-24)
 
 The development host is WSL2 (`6.6.87.2-microsoft-standard-WSL2`). It does not establish native Linux, Windows, or macOS acceptance.
 
-| Agent Integration | Installed version | WSL evidence at 2026-09-23 recheck | Native Windows | macOS | Linux |
+| Agent Integration | Installed version | WSL evidence at 2026-09-24 recheck | Native Windows | macOS | Linux |
 | --- | --- | --- | --- | --- | --- |
-| Codex | 0.156.0 | Live managed acceptance passed for the exact prompt, repository boundaries, selected Gateway tool, resume, and cancellation; see evidence below | Outstanding | Outstanding | Outstanding |
-| Claude Code | 2.1.223 | Prompt-only exact translation passed with an explicit unverified `sonnet` override; project read-only, Gateway, and lifecycle effects remain unverified and project starts are fail-closed | Outstanding | Outstanding | Outstanding |
-| GitHub Copilot CLI | 1.0.88 | Prompt-only exact translation attempt timed out at 90 seconds with no output; project read-only starts are fail-closed | Outstanding | Outstanding | Outstanding |
-| Antigravity CLI | 1.2.8 | Prompt-only exact translation passed; a project read-only write attempt reported an out-of-workspace scratch write, so AI Fuel now blocks that project mode | Outstanding | Outstanding | Outstanding |
+| Codex | 0.156.1 | Current release CLI passed the exact prompt with ReadOnly and a selected Gateway tool; earlier sandbox and lifecycle evidence used 0.156.0 | Outstanding | Outstanding | Outstanding |
+| Claude Code | 2.1.223 | Prompt-only ReadOnly and workspace-write requests now reject before launch; exact Gateway routing is explicitly unsupported by the adapter | Outstanding | Outstanding | Outstanding |
+| GitHub Copilot CLI | 1.0.88 | Prompt-only ReadOnly and workspace-write requests now reject before launch; exact Gateway routing is explicitly unsupported by the adapter | Outstanding | Outstanding | Outstanding |
+| Antigravity CLI | 1.2.8 (last version identified 2026-09-23) | Executable remains present; prompt-only ReadOnly and workspace-write requests reject before launch; exact Gateway routing is explicitly unsupported | Outstanding | Outstanding | Outstanding |
 | Gemini CLI | Not installed | Blocked by missing executable | Outstanding | Outstanding | Outstanding |
 
 The final follow-up in `rust-user-paths.md` records earlier translation and Gateway calls. They are historical evidence only; the current branch's managed-run acceptance is recorded below.
@@ -38,7 +38,23 @@ Copilot CLI 1.0.88 was invoked through AI Fuel with the exact translation prompt
 
 ### WSL Antigravity managed-run evidence (2026-09-23)
 
-Antigravity CLI 1.2.8 listed `gemini-3.8-flash-low` as an available native model. AI Fuel's Antigravity catalog remains unsupported, so this exact ID was supplied as an explicit override and correctly retained as unknown catalog evidence. The exact translation prompt succeeded under `--access read-only` with no working directory (prompt-only mode); the provider did not report an effective model. In a disposable, configured project workspace, a read-only request to create `forbidden.txt` returned success, but Antigravity reported writing the file in its native scratch directory outside the selected workspace. The workspace itself remained empty. AI Fuel did not inspect or remove the reported native scratch artifact because it is outside this worktree. This does not establish read-only enforcement. The adapter now declares Antigravity project read-only unsupported, and AI Fuel rejects unverified read-only project runs before launching providers. Its WSL acceptance cell remains outstanding.
+Antigravity CLI 1.2.8 listed `gemini-3.8-flash-low` as an available native model. AI Fuel's Antigravity catalog remains unsupported, so this exact ID was supplied as an explicit override and correctly retained as unknown catalog evidence. The exact translation prompt succeeded under `--access read-only` with no working directory (prompt-only mode); the provider did not report an effective model. In a disposable, configured project workspace, a read-only request to create `forbidden.txt` returned success, but Antigravity reported writing the file in its native scratch directory outside the selected workspace. The workspace itself remained empty. AI Fuel did not inspect or remove the reported native scratch artifact because it is outside this worktree. This does not establish read-only enforcement. The adapter declares Antigravity read-only unsupported, and AI Fuel rejects its read-only requests before launching providers. Its WSL acceptance cell remains outstanding.
+
+### WSL prompt and Gateway follow-up (2026-09-24)
+
+The host is WSL2 (`6.6.87.2-microsoft-standard-WSL2`). Non-interactive version probes returned Codex `0.156.1`, Claude Code `2.1.223`, and GitHub Copilot CLI `1.0.88`. `agy` was present at `/home/willnguyen/.local/bin/agy`; its version remains the last observed `1.2.8` because Antigravity documents no non-interactive version command. `gemini --version` found no executable. The release binary was built from the PR worktree after `cea230a`, with the prompt-only ReadOnly gate change in the working tree.
+
+- `rtk target/release/aifuel run --provider codex --model gpt-6-astra --prompt "translate to Vietnamese: Fetch Codex redemption detail through account/rateLimits/read" --access read-only --timeout 90s --output json` succeeded in 18 seconds. Codex returned the Vietnamese text “Lấy thông tin chi tiết về việc đổi thưởng Codex thông qua account/rateLimits/read.” It reported effective model `gpt-6-astra` and effort `medium`. The model catalog cache was stale (oldest scope age 89,883 seconds); account entitlement and future execution availability remain unknown. Codex logged that it used its bundled bubblewrap because `bubblewrap` was absent from `PATH`.
+- A disposable local stdio MCP fixture was selected as `issue75__echo` under an isolated `XDG_CONFIG_HOME` in `target/issue75-gateway`. The temporary execution policy allowlisted only that exact tool. A bounded prompt-only Codex run requested the tool with message `ISSUE75_GATEWAY_CALL_20260924`. In a PTY, the run accepted the provider's default effort and prompt-only scope, then approved the exact Gateway tool request with `{}`. AI Fuel returned `AIFUEL_ISSUE75_GATEWAY_MARKER_20260924`; the fixture log recorded a JSON-RPC `tools/call` with the same request message and Codex version `0.156.1` under the ReadOnly sandbox. A non-interactive attempt stopped at the provider's form-input request before the fixture received a call.
+- On 2026-09-24, the same exact translation prompt with `--access read-only` and `--access workspace-write` exited with code 2 for Claude, Copilot, and Antigravity. The CLI reported that each adapter could not enforce the requested access and rejected before provider launch. Exact `issue75__echo` Gateway requests with `--access workspace-write` also exited with code 2 and reported that each adapter could not enforce exact external MCP tool selection. These results record the supported boundary; they do not count as native prompt execution for those providers.
+
+The successful live prompt and Gateway tool call are WSL Codex evidence only. Earlier 2026-09-23 Claude and Antigravity prompt successes used the then-permitted prompt-only ReadOnly path and are historical evidence for those adapter versions. The 2026-09-24 gate now rejects those requests until the adapters establish an access boundary. WSL acceptance remains incomplete for Claude, Copilot, Antigravity, Gemini, and every native Windows, macOS, and Linux cell.
+
+### Controlled verification for the ReadOnly gate (2026-09-24)
+
+The end-to-end `aifuel run` regression uses fake provider executables for Claude, Copilot, Gemini, and Antigravity. Before the gate change, the Antigravity request returned the fake provider response. With the gate change, all four prompt-only ReadOnly requests exit with code 2 before a provider response; the supported Codex CLI test explicitly requests ReadOnly and verifies the App Server sandbox value. Generic CLI process failure and timeout tests use a test adapter that declares ReadOnly support.
+
+`rtk cargo test --workspace -- --test-threads=1` passed 307 tests across 44 suites. `rtk cargo fmt --all -- --check`, `rtk cargo check --workspace`, and `rtk cargo clippy --workspace --all-targets --all-features -- -D warnings` also passed.
 
 ## Enforcement observations
 
@@ -68,7 +84,7 @@ The execution MCP endpoint now uses the same selection resolver as the CLI for e
 
 Exact external tool selections are routed through the AI Fuel Gateway for Codex runs and filtered both when tools are listed and when calls are routed. Managed Codex runs disable user plugins and verify the connected server/tool inventory before the first turn. Read-only runs require an exact local allowlist. Local approvals use Unix-domain sockets on Unix hosts and a current-user-restricted named-pipe backend on Windows. WSL Codex live checks and controlled cross-platform tests exercise those interfaces; remaining native provider/platform cells are separate gates. Catalog entitlement and execution evidence remain unknown until observed.
 
-Project and resumed-session read-only requests now require the provider adapter to declare read-only enforcement; unknown and unsupported providers are rejected before process launch. Codex is currently the only adapter with verified read-only support. Fresh prompt-only agent processes use an AI Fuel-owned temporary working directory. Generic CLI capability help probes are separate, bounded setup processes and do not receive the prompt. Native provider scratch and transcript behavior remains outside AI Fuel's retention control.
+All read-only requests, including prompt-only and resumed-session requests, require the provider adapter to declare read-only enforcement; unknown and unsupported providers are rejected before process launch. A prompt-only run's AI Fuel-owned temporary working directory does not sandbox task-directed writes outside that directory. Codex is currently the only adapter with verified read-only support. Generic CLI capability help probes are separate, bounded setup processes and do not receive the prompt. Native provider scratch and transcript behavior remains outside AI Fuel's retention control.
 
 ## Interaction protocol evidence
 

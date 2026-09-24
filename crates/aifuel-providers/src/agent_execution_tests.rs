@@ -86,6 +86,7 @@ fn provider_execution_capabilities_are_data_not_provider_key_checks() {
         no_arguments,
         parse_public_output,
         ExecutionCapabilities::new(true, false, false, true)
+            .with_read_only()
             .with_external_tools()
             .with_effort(),
     );
@@ -117,7 +118,7 @@ fn declared_executor_override_runs_before_cli_preflight() {
         &["required-flag"],
         no_arguments,
         parse_public_output,
-        ExecutionCapabilities::new(true, false, true, true),
+        ExecutionCapabilities::new(true, false, true, true).with_read_only(),
     )
     .with_executor(marker_executor);
 
@@ -157,7 +158,7 @@ fn cancellation_kills_and_reaps_the_provider_process_and_keeps_partial_output() 
         &["--prompt", "--approval-mode", "--output-format"],
         no_arguments,
         parse_public_output,
-        ExecutionCapabilities::new(true, false, true, true),
+        ExecutionCapabilities::new(true, false, true, true).with_read_only(),
     );
     let request = request();
     let cancellation = RunCancellationToken::new();

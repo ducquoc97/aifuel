@@ -12,7 +12,7 @@ use crate::support::{
 };
 
 #[test]
-fn antigravity_run_uses_the_agy_cli() {
+fn antigravity_prompt_only_read_only_is_rejected_before_launch() {
     let directory = TestDirectory::new("antigravity-run");
     install_fake_command(directory.path(), "agy");
 
@@ -34,17 +34,13 @@ fn antigravity_run_uses_the_agy_cli() {
         .output()
         .expect("aifuel should start");
 
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success(),
-        "Antigravity Agent Run should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr.contains("antigravity cannot enforce read-only access"),
+        "expected a read-only enforcement error, got {stderr:?}"
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("fake agy response: --print")
-            && stdout.contains("translate to Vietnamese: hello"),
-        "expected agy print-mode invocation, got {stdout:?}"
-    );
+    assert!(output.stdout.is_empty(), "Antigravity must not launch");
 }
 
 #[test]
@@ -80,6 +76,8 @@ fn account_selection_remains_explicitly_unsupported_for_each_current_adapter() {
                 "run",
                 "--provider",
                 provider,
+                "--access",
+                "workspace-write",
                 "--model",
                 "test-model",
                 "--account",
@@ -105,7 +103,7 @@ fn account_selection_remains_explicitly_unsupported_for_each_current_adapter() {
 }
 
 #[test]
-fn each_adapter_keeps_its_model_access_and_output_argument_contract() {
+fn codex_jsonl_run_keeps_its_model_and_access_argument_contract() {
     let directory = TestDirectory::new("codex-options");
     let log_path = install_fake_codex_app_server(directory.path());
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
@@ -158,34 +156,6 @@ fn each_adapter_keeps_its_model_access_and_output_argument_contract() {
         .collect();
     assert_eq!(requests[2]["params"]["model"], "selected-model");
     assert_eq!(requests[2]["params"]["sandbox"], "workspace-write");
-
-    let directory = TestDirectory::new("copilot-json");
-    install_fake_command(directory.path(), "copilot");
-    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args([
-            "run",
-            "--provider",
-            "copilot",
-            "--model",
-            "selected-model",
-            "--prompt",
-            "hello",
-            "--output",
-            "json",
-        ])
-        .env("PATH", path_with(directory.path()))
-        .env("HOME", directory.path())
-        .env("USERPROFILE", directory.path())
-        .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
-        .output()
-        .expect("aifuel should start");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--model selected-model"));
-    assert!(stdout.contains("--plan"));
-    assert!(stdout.contains("--output-format json"));
 }
 
 #[cfg(unix)]

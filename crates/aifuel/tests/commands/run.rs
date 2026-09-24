@@ -1,60 +1,68 @@
 use std::fs;
 use std::process::Command;
 
-#[cfg(unix)]
-use crate::support::install_slow_help_gemini;
 use crate::support::{
-    TestDirectory, install_fake_codex_app_server, install_fake_command, install_fake_gemini,
-    path_with,
+    TestDirectory, install_fake_codex_app_server, install_fake_command, path_with,
 };
 
 #[test]
-fn run_delegates_a_prompt_to_the_selected_gemini_integration() {
-    let directory = TestDirectory::new("run");
-    install_fake_gemini(directory.path());
+fn run_rejects_prompt_only_read_only_without_verified_provider_enforcement() {
+    for (provider, executable) in [
+        ("claude", "claude"),
+        ("copilot", "copilot"),
+        ("gemini", "gemini"),
+        ("antigravity", "agy"),
+    ] {
+        let directory = TestDirectory::new(&format!("{provider}-prompt-read-only"));
+        install_fake_command(directory.path(), executable);
+
+        let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+            .args([
+                "run",
+                "--provider",
+                provider,
+                "--model",
+                "test-model",
+                "--prompt",
+                "hello",
+                "--access",
+                "read-only",
+            ])
+            .env("PATH", path_with(directory.path()))
+            .env("HOME", directory.path())
+            .env("USERPROFILE", directory.path())
+            .env("APPDATA", directory.path())
+            .env("XDG_CONFIG_HOME", directory.path().join(".config"))
+            .output()
+            .expect("aifuel should start");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{provider}: {stderr}");
+        assert!(
+            stderr.contains(&format!("{provider} cannot enforce read-only access")),
+            "expected a read-only enforcement error for {provider}, got {stderr:?}"
+        );
+        assert!(stdout.is_empty(), "{provider} must not launch: {stdout:?}");
+    }
+}
+
+#[test]
+fn supported_codex_run_emits_a_structured_result_when_json_is_requested() {
+    let directory = TestDirectory::new("json-run");
+    let log_path = install_fake_codex_app_server(directory.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([
             "run",
             "--provider",
-            "gemini",
+            "codex",
             "--model",
             "test-model",
             "--prompt",
             "hello",
-        ])
-        .env("PATH", path_with(directory.path()))
-        .env("HOME", directory.path())
-        .env("USERPROFILE", directory.path())
-        .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
-        .output()
-        .expect("aifuel should start");
-
-    assert!(
-        output.status.success(),
-        "aifuel run should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "fake gemini response: --prompt hello --skip-trust --model test-model --approval-mode plan --output-format text"
-    );
-}
-#[test]
-fn run_emits_a_structured_result_when_json_is_requested() {
-    let directory = TestDirectory::new("json-run");
-    install_fake_gemini(directory.path());
-
-    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args([
-            "run",
-            "--provider",
-            "gemini",
-            "--model",
-            "gemini-3-flash",
-            "--prompt",
-            "hello",
+            "--access",
+            "read-only",
             "--output",
             "json",
         ])
@@ -63,14 +71,15 @@ fn run_emits_a_structured_result_when_json_is_requested() {
         .env("USERPROFILE", directory.path())
         .env("APPDATA", directory.path())
         .env("XDG_CONFIG_HOME", directory.path().join(".config"))
+        .env("AIFUEL_CODEX_FIXTURE_LOG", &log_path)
         .output()
         .expect("aifuel should start");
 
     assert!(output.status.success());
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("run should emit JSON");
-    assert_eq!(value["provider"], "gemini");
-    assert_eq!(value["requested_model"], "gemini-3-flash");
+    assert_eq!(value["provider"], "codex");
+    assert_eq!(value["requested_model"], "test-model");
     assert!(value["effective_model"].is_null());
     assert_eq!(value["state"], "succeeded");
     assert_eq!(value["status"], "succeeded");
@@ -79,36 +88,7 @@ fn run_emits_a_structured_result_when_json_is_requested() {
         value["output"]
             .as_str()
             .expect("provider output should be text")
-            .contains("--output-format json")
-    );
-}
-#[test]
-fn run_uses_the_selected_claude_integration() {
-    let directory = TestDirectory::new("claude-run");
-    install_fake_command(directory.path(), "claude");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args([
-            "run",
-            "--provider",
-            "claude",
-            "--model",
-            "test-model",
-            "--prompt",
-            "hello",
-        ])
-        .env("PATH", path_with(directory.path()))
-        .env("HOME", directory.path())
-        .env("USERPROFILE", directory.path())
-        .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
-        .output()
-        .expect("aifuel should start");
-
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "fake claude response: --print hello --model test-model --permission-mode plan --output-format text"
+            .contains("fake codex app-server response")
     );
 }
 
@@ -126,6 +106,8 @@ fn run_uses_the_selected_codex_integration() {
             "test-model",
             "--prompt",
             "hello",
+            "--access",
+            "read-only",
         ])
         .env("PATH", path_with(directory.path()))
         .env("HOME", directory.path())
@@ -157,36 +139,6 @@ fn run_uses_the_selected_codex_integration() {
     assert_eq!(requests[2]["params"]["sandbox"], "read-only");
     assert_eq!(requests[3]["method"], "turn/start");
     assert_eq!(requests[3]["params"]["input"][0]["text"], "hello");
-}
-
-#[test]
-fn run_uses_the_selected_copilot_integration() {
-    let directory = TestDirectory::new("copilot-run");
-    install_fake_command(directory.path(), "copilot");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args([
-            "run",
-            "--provider",
-            "copilot",
-            "--model",
-            "test-model",
-            "--prompt",
-            "hello",
-        ])
-        .env("PATH", path_with(directory.path()))
-        .env("HOME", directory.path())
-        .env("USERPROFILE", directory.path())
-        .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
-        .output()
-        .expect("aifuel should start");
-
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "fake copilot response: --prompt hello --plan --model test-model --output-format text"
-    );
 }
 
 #[test]
@@ -223,37 +175,5 @@ fn model_catalog_list_reports_a_missing_cache_without_fabricating_models() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
         "No cached model catalog evidence for codex."
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn run_timeout_applies_to_provider_capability_preflight() {
-    let directory = TestDirectory::new("slow-preflight");
-    install_slow_help_gemini(directory.path());
-
-    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args([
-            "run",
-            "--provider",
-            "gemini",
-            "--model",
-            "test-model",
-            "--prompt",
-            "hello",
-            "--timeout",
-            "1s",
-        ])
-        .env("PATH", path_with(directory.path()))
-        .env("HOME", directory.path())
-        .env("USERPROFILE", directory.path())
-        .env("APPDATA", directory.path())
-        .env("XDG_CONFIG_HOME", directory.path().join(".config"))
-        .output()
-        .expect("aifuel should start");
-
-    assert_eq!(output.status.code(), Some(5));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("provider capability preflight timed out")
     );
 }

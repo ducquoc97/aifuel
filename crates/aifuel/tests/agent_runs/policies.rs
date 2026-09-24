@@ -87,7 +87,7 @@ fn unverified_read_only_project_modes_are_rejected_before_launch() {
         assert_eq!(output.status.code(), Some(2), "{provider}");
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .contains("cannot enforce read-only access for a project or resumed session"),
+                .contains("cannot enforce read-only access for this request"),
             "{provider}"
         );
         assert!(output.stdout.is_empty(), "{provider}");
@@ -150,40 +150,34 @@ fn project_runs_outside_configured_execution_roots_are_rejected_by_the_manager()
 }
 
 #[test]
-fn copilot_rejects_unverified_write_and_jsonl_capabilities() {
-    for (flag, value, message) in [
-        (
+fn copilot_rejects_unverified_workspace_write_before_launch() {
+    let directory = TestDirectory::new("copilot-unsupported-write");
+    install_fake_command(directory.path(), "copilot");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+        .args([
+            "run",
+            "--provider",
+            "copilot",
+            "--model",
+            "test-model",
             "--access",
             "workspace-write",
-            "cannot enforce workspace-write access",
-        ),
-        ("--output", "jsonl", "cannot provide verified JSONL output"),
-    ] {
-        let directory = TestDirectory::new(&format!("copilot-unsupported-{value}"));
-        install_fake_command(directory.path(), "copilot");
+            "--prompt",
+            "hello",
+        ])
+        .env("PATH", path_with(directory.path()))
+        .env("HOME", directory.path())
+        .env("USERPROFILE", directory.path())
+        .env("APPDATA", directory.path())
+        .output()
+        .expect("aifuel should start");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-            .args([
-                "run",
-                "--provider",
-                "copilot",
-                "--model",
-                "test-model",
-                flag,
-                value,
-                "--prompt",
-                "hello",
-            ])
-            .env("PATH", path_with(directory.path()))
-            .env("HOME", directory.path())
-            .env("USERPROFILE", directory.path())
-            .env("APPDATA", directory.path())
-            .output()
-            .expect("aifuel should start");
-
-        assert_eq!(output.status.code(), Some(2));
-        assert!(String::from_utf8_lossy(&output.stderr).contains(message));
-    }
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot enforce workspace-write access")
+    );
+    assert!(output.stdout.is_empty(), "Copilot must not launch");
 }
 
 #[test]
@@ -197,6 +191,8 @@ fn requested_effort_is_rejected_until_the_provider_reports_a_verified_value() {
             "gemini",
             "--model",
             "test-model",
+            "--access",
+            "workspace-write",
             "--effort",
             "high",
             "--prompt",
