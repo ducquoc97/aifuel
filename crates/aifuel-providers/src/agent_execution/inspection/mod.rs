@@ -406,5 +406,4 @@ fn terminate_and_reap(child: &mut Box<dyn StdChildWrapper>) {
 }
 
 #[cfg(all(test, unix))]
-#[path = "inspection_tests.rs"]
 mod tests;

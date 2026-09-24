@@ -12,5 +12,4 @@ pub(crate) use process::{
 };
 
 #[cfg(test)]
-#[path = "agent_execution_tests.rs"]
 mod tests;
