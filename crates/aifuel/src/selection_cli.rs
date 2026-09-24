@@ -5,7 +5,7 @@
 //! enter an explicit model ID; the returned evidence label keeps that choice
 //! visibly unknown to callers.
 
-use aifuel_app::selection::{CatalogModel, SelectionSettings};
+use aifuel_app::selection::{CatalogModel, CatalogProvenance, SelectionSettings};
 use aifuel_core::{CapabilityState, ProviderKey};
 use std::fmt;
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -16,6 +16,13 @@ pub struct PickerModel {
     pub provider: ProviderKey,
     pub model_id: String,
     pub display_label: Option<String>,
+    pub provenance: CatalogProvenance,
+    pub advertisement: CapabilityState,
+    pub entitlement: CapabilityState,
+    pub execution: CapabilityState,
+    pub scope_label: Option<String>,
+    pub catalog_age_seconds: u64,
+    pub default_effort: Option<String>,
     pub effort_values: Vec<String>,
     pub effort_state: CapabilityState,
 }
@@ -26,6 +33,13 @@ impl From<&CatalogModel> for PickerModel {
             provider: model.provider,
             model_id: model.model_id.clone(),
             display_label: model.display_label.clone(),
+            provenance: model.provenance,
+            advertisement: model.advertisement,
+            entitlement: model.entitlement,
+            execution: model.execution,
+            scope_label: None,
+            catalog_age_seconds: 0,
+            default_effort: model.default_effort.clone(),
             effort_values: model.efforts.values.clone(),
             effort_state: model.efforts.state,
         }
@@ -136,37 +150,51 @@ pub fn pick(
         .into_iter()
         .filter(|model| model.provider == provider)
         .collect::<Vec<_>>();
-    let (model, model_evidence, effort_values, effort_state) = match settings.model.clone() {
-        Some(model) => {
-            let evidence = models
-                .iter()
-                .find(|candidate| candidate.model_id == model)
-                .map_or(PickerModelEvidence::ExplicitOverrideUnknown, |_| {
-                    PickerModelEvidence::Catalog
-                });
-            let effort = models
-                .iter()
-                .find(|candidate| candidate.model_id == model)
-                .map(|candidate| (candidate.effort_values.clone(), candidate.effort_state))
-                .unwrap_or_default();
-            (model, evidence, effort.0, effort.1)
-        }
-        None => {
-            let Some(selected) = choose_model(input, output, provider, &models)? else {
-                return Ok(Err(PickerOutcome::Cancelled));
-            };
-            (
-                selected.model_id,
-                selected.evidence,
-                selected.effort_values,
-                selected.effort_state,
-            )
-        }
-    };
+    let (model, model_evidence, effort_values, effort_state, default_effort) =
+        match settings.model.clone() {
+            Some(model) => {
+                let evidence = models
+                    .iter()
+                    .find(|candidate| candidate.model_id == model)
+                    .map_or(PickerModelEvidence::ExplicitOverrideUnknown, |_| {
+                        PickerModelEvidence::Catalog
+                    });
+                let effort = models
+                    .iter()
+                    .find(|candidate| candidate.model_id == model)
+                    .map(|candidate| {
+                        (
+                            candidate.effort_values.clone(),
+                            candidate.effort_state,
+                            candidate.default_effort.clone(),
+                        )
+                    })
+                    .unwrap_or_default();
+                (model, evidence, effort.0, effort.1, effort.2)
+            }
+            None => {
+                let Some(selected) = choose_model(input, output, provider, &models)? else {
+                    return Ok(Err(PickerOutcome::Cancelled));
+                };
+                (
+                    selected.model_id,
+                    selected.evidence,
+                    selected.effort_values,
+                    selected.effort_state,
+                    selected.default_effort,
+                )
+            }
+        };
     settings.model = Some(model);
 
     if settings.effort.is_none() {
-        settings.effort = choose_effort(input, output, &effort_values, effort_state)?;
+        settings.effort = choose_effort(
+            input,
+            output,
+            &effort_values,
+            effort_state,
+            default_effort.as_deref(),
+        )?;
     }
 
     let working_directory = match options.working_directory {
@@ -185,11 +213,31 @@ pub fn pick(
     }))
 }
 
+/// Prompt only for a provider, used when resuming a native session whose
+/// provider is not otherwise selected. The session remains authoritative for
+/// its stored model, effort, and repository scope.
+pub fn pick_provider(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    providers: &[ProviderKey],
+) -> Result<Result<ProviderKey, PickerOutcome>, PickerError> {
+    let providers = if providers.is_empty() {
+        ProviderKey::ALL.to_vec()
+    } else {
+        providers.to_vec()
+    };
+    Ok(match choose_provider(input, output, &providers)? {
+        Some(provider) => Ok(provider),
+        None => Err(PickerOutcome::Cancelled),
+    })
+}
+
 struct ChosenModel {
     model_id: String,
     evidence: PickerModelEvidence,
     effort_values: Vec<String>,
     effort_state: CapabilityState,
+    default_effort: Option<String>,
 }
 
 fn choose_provider(
@@ -241,13 +289,29 @@ fn choose_model(
             evidence: PickerModelEvidence::ExplicitOverrideUnknown,
             effort_values: Vec::new(),
             effort_state: CapabilityState::Unknown,
+            default_effort: None,
         }));
     }
 
+    writeln!(
+        output,
+        "Catalog records keep model advertisement, account entitlement, and execution availability as separate evidence states."
+    )?;
     writeln!(output, "Select model (c to cancel):")?;
     for (index, model) in models.iter().enumerate() {
         let label = model.display_label.as_deref().unwrap_or(&model.model_id);
-        writeln!(output, "  {}. {} [{}]", index + 1, label, model.model_id)?;
+        writeln!(
+            output,
+            "  {}. {} [{}] | advertisement: {}, entitlement: {}, execution: {}, scope: {} (catalog age: {}s)",
+            index + 1,
+            label,
+            model.model_id,
+            capability_state_label(model.advertisement),
+            capability_state_label(model.entitlement),
+            capability_state_label(model.execution),
+            model.scope_label.as_deref().unwrap_or("unknown context"),
+            model.catalog_age_seconds
+        )?;
     }
     writeln!(
         output,
@@ -267,6 +331,7 @@ fn choose_model(
             evidence: PickerModelEvidence::ExplicitOverrideUnknown,
             effort_values: Vec::new(),
             effort_state: CapabilityState::Unknown,
+            default_effort: None,
         }));
     }
     let index = parse_index(&value, models.len(), "model")?;
@@ -276,7 +341,16 @@ fn choose_model(
         evidence: PickerModelEvidence::Catalog,
         effort_values: model.effort_values.clone(),
         effort_state: model.effort_state,
+        default_effort: model.default_effort.clone(),
     }))
+}
+
+fn capability_state_label(state: CapabilityState) -> &'static str {
+    match state {
+        CapabilityState::Supported => "supported",
+        CapabilityState::Unsupported => "unsupported",
+        CapabilityState::Unknown => "unknown",
+    }
 }
 
 fn choose_effort(
@@ -284,11 +358,16 @@ fn choose_effort(
     output: &mut impl Write,
     values: &[String],
     state: CapabilityState,
+    default_effort: Option<&str>,
 ) -> Result<Option<String>, PickerError> {
+    let default_label = default_effort.map_or_else(
+        || "the provider default".to_owned(),
+        |effort| format!("the catalog-reported default {effort:?}"),
+    );
     if values.is_empty() {
         writeln!(
             output,
-            "Effort evidence is {}; press Enter for the provider default or enter an explicit value (c to cancel).",
+            "Effort evidence is {}; press Enter for {default_label} or enter an explicit value (c to cancel).",
             match state {
                 CapabilityState::Supported => "known but empty",
                 CapabilityState::Unsupported => "unsupported",
@@ -304,7 +383,7 @@ fn choose_effort(
 
     writeln!(
         output,
-        "Select effort (Enter for provider default, c to cancel):"
+        "Select effort (Enter for {default_label}, c to cancel):"
     )?;
     for (index, value) in values.iter().enumerate() {
         writeln!(output, "  {}. {}", index + 1, value)?;
@@ -387,65 +466,5 @@ fn is_cancel(value: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    #[test]
-    fn picker_uses_catalog_model_and_prompt_only_scope_without_inventing_ids() {
-        let options = PickerOptions {
-            models: vec![PickerModel {
-                provider: ProviderKey::Codex,
-                model_id: "provider-exact-id".to_owned(),
-                display_label: Some("Observed model".to_owned()),
-                effort_values: vec!["high".to_owned()],
-                effort_state: CapabilityState::Supported,
-            }],
-            ..PickerOptions::default()
-        };
-        let mut input = Cursor::new(b"2\n1\n\np\n".to_vec());
-        let mut output = Vec::new();
-        let result = pick(&mut input, &mut output, options)
-            .expect("controlled terminal should be accepted")
-            .expect("picker should return a selection");
-        assert_eq!(result.settings.provider, Some(ProviderKey::Codex));
-        assert_eq!(result.settings.model.as_deref(), Some("provider-exact-id"));
-        assert_eq!(result.settings.effort, None);
-        assert_eq!(result.working_directory, None);
-        assert_eq!(result.model_evidence, PickerModelEvidence::Catalog);
-    }
-
-    #[test]
-    fn picker_labels_explicit_model_override_as_unknown() {
-        let options = PickerOptions::default();
-        let mut input = Cursor::new(b"1\nmy-deliberate-model\n\np\n".to_vec());
-        let mut output = Vec::new();
-        let result = pick(&mut input, &mut output, options)
-            .expect("controlled terminal should be accepted")
-            .expect("picker should return a selection");
-        assert_eq!(
-            result.model_evidence,
-            PickerModelEvidence::ExplicitOverrideUnknown
-        );
-        assert_eq!(
-            result.settings.model.as_deref(),
-            Some("my-deliberate-model")
-        );
-        assert!(
-            String::from_utf8(output)
-                .expect("picker output is text")
-                .contains("support remains unknown")
-        );
-    }
-
-    #[test]
-    fn picker_cancel_is_explicit() {
-        let mut input = Cursor::new(b"c\n".to_vec());
-        let mut output = Vec::new();
-        assert_eq!(
-            pick(&mut input, &mut output, PickerOptions::default())
-                .expect("controlled terminal should be accepted"),
-            Err(PickerOutcome::Cancelled)
-        );
-    }
-}
+#[path = "selection_cli_tests.rs"]
+mod tests;

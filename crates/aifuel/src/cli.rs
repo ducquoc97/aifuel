@@ -1,8 +1,4 @@
-use aifuel::launcher;
-use aifuel_core::{ProviderStatus, StatusReport};
-use std::io::IsTerminal;
-use std::path::PathBuf;
-use std::time::Duration;
+use aifuel_core::{ProviderKey, ProviderStatus, StatusReport};
 
 use crate::dashboard;
 
@@ -12,7 +8,16 @@ where
 {
     let args: Vec<String> = args.into_iter().collect();
     if args.first().map(String::as_str) == Some("run") {
-        return run_launcher(&args[1..]);
+        return aifuel::run_cli::run(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("profile") {
+        return aifuel::profile::run(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("model") {
+        return aifuel::model_cli::run(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("approve") {
+        return run_local_approval(&args[1..]);
     }
     if args.first().map(String::as_str) == Some("mcp") {
         return match args.get(1).map(String::as_str) {
@@ -26,7 +31,26 @@ where
                 if !args[2..].is_empty() {
                     return Err("Usage: aifuel mcp execution".to_owned());
                 }
-                aifuel_mcp::execution::serve(aifuel::execution_run_manager()?)?;
+                let selection =
+                    aifuel_app::selection::SelectionStore::load(aifuel::execution_config_path()?)
+                        .map_err(|error| error.to_string())?;
+                let manager = aifuel::execution_run_manager()?;
+                let catalog = aifuel::model_catalog_snapshot()?;
+                let runtime = tokio::runtime::Runtime::new()
+                    .map_err(|error| format!("could not start model catalog runtime: {error}"))?;
+                let refresh_catalog = move |provider: Option<ProviderKey>| {
+                    let providers = provider.map_or_else(|| ProviderKey::ALL.to_vec(), |p| vec![p]);
+                    providers
+                        .into_iter()
+                        .map(|provider| runtime.block_on(aifuel::refresh_model_catalog(provider)))
+                        .collect::<Result<Vec<_>, _>>()
+                };
+                aifuel_mcp::execution::serve_with_selection_and_catalog_refresh(
+                    manager,
+                    selection,
+                    catalog,
+                    refresh_catalog,
+                )?;
                 Ok(0)
             }
             Some("setup") => crate::mcp_setup::run(&args[2..]),
@@ -91,14 +115,69 @@ where
     })
 }
 
+fn run_local_approval(args: &[String]) -> Result<u8, String> {
+    #[cfg(any(unix, windows))]
+    {
+        run_local_approval_supported(args)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = args;
+        Err("local approval IPC is not supported on this platform yet".to_owned())
+    }
+}
+
+#[cfg(any(unix, windows))]
+fn run_local_approval_supported(args: &[String]) -> Result<u8, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!(
+            "Usage: aifuel approve --run RUN_ID --input INPUT_ID --decision accept|decline|cancel"
+        );
+        println!("Delivers one pending permission decision to its owning local Agent Run process.");
+        return Ok(0);
+    }
+    let mut run_id = None;
+    let mut input_id = None;
+    let mut decision = None;
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        index += 1;
+        let value = args
+            .get(index)
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag {
+            "--run" => run_id = Some(value.clone()),
+            "--input" => input_id = Some(value.clone()),
+            "--decision" => decision = Some(value.clone()),
+            _ => return Err(format!("unknown approval argument {flag:?}")),
+        }
+        index += 1;
+    }
+    let run_id = run_id.ok_or_else(|| "approve requires --run RUN_ID".to_owned())?;
+    let input_id = input_id.ok_or_else(|| "approve requires --input INPUT_ID".to_owned())?;
+    let decision = match decision.as_deref() {
+        Some("accept") => aifuel_app::LocalApprovalDecision::Accept,
+        Some("decline") => aifuel_app::LocalApprovalDecision::Decline,
+        Some("cancel") => aifuel_app::LocalApprovalDecision::Cancel,
+        _ => return Err("--decision must be accept, decline, or cancel".to_owned()),
+    };
+    aifuel::submit_local_approval(&run_id, &input_id, decision)?;
+    println!("Approval response delivered.");
+    Ok(0)
+}
+
 fn print_help() {
     println!("aifuel - monitor and explicitly launch AI coding providers");
     println!();
     println!("Usage: aifuel [--text | --json]");
     println!("       aifuel run --provider PROVIDER_ID [OPTIONS]");
+    println!("       aifuel profile list|save|remove");
+    println!("       aifuel model list|refresh [--provider PROVIDER_ID] [--json]");
+    println!("       aifuel approve --run RUN_ID --input INPUT_ID --decision DECISION");
     println!("       aifuel mcp");
     println!("       aifuel mcp execution");
-    println!("       aifuel mcp gateway --agent MCP_HOST_ID");
+    println!("       aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...]");
     println!("       aifuel mcp setup --agent MCP_HOST_ID [--dry-run] [--remove]");
     println!("       aifuel mcp servers list|validate|add|remove|select");
     println!();
@@ -112,14 +191,16 @@ fn print_help() {
 
 fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("Usage: aifuel mcp gateway --agent MCP_HOST_ID");
+        println!("Usage: aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...]");
         println!();
         println!("Serves the selected external MCP server over standard input and output.");
         println!("The central catalog is aifuel/mcp.json in the user config directory.");
+        println!("When --tool is supplied, only those exact Gateway tool names are exposed.");
         return Ok(0);
     }
 
     let mut agent = None;
+    let mut allowed_tools = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -129,6 +210,7 @@ fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
                 }
                 agent = Some(next_value(args, &mut index, "--agent")?);
             }
+            "--tool" => allowed_tools.push(next_value(args, &mut index, "--tool")?),
             unknown => return Err(format!("unknown argument {unknown:?} for mcp gateway")),
         }
         index += 1;
@@ -141,67 +223,12 @@ fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
     let facade = aifuel::mcp_gateway_facade(&agent)?;
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("could not start MCP Gateway runtime: {error}"))?;
-    runtime.block_on(aifuel_mcp::gateway::serve(facade))?;
+    let allowed_tools = (!allowed_tools.is_empty()).then_some(allowed_tools);
+    runtime.block_on(aifuel_mcp::gateway::serve_with_tool_allowlist(
+        facade,
+        allowed_tools,
+    ))?;
     Ok(0)
-}
-
-fn run_launcher(args: &[String]) -> Result<u8, String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_run_help();
-        return Ok(0);
-    }
-    let request = parse_run_args(args)?;
-    let output_format = request.output;
-    let result = match launcher::execute(&request) {
-        Ok(result) => result,
-        Err(launcher::LaunchError::UnsupportedProvider(provider)) => {
-            eprintln!("aifuel: provider {provider} has no verified agent integration");
-            return Ok(3);
-        }
-        Err(launcher::LaunchError::Timeout(error)) => {
-            eprintln!("aifuel: {error}");
-            return Ok(5);
-        }
-        Err(error) => {
-            eprintln!("aifuel: {error}");
-            return Ok(2);
-        }
-    };
-
-    match output_format {
-        launcher::OutputFormat::Text => {
-            print!("{}", result.output);
-            if let Some(diagnostics) = &result.diagnostics {
-                eprint!("{diagnostics}");
-            } else if let Some(error) = &result.error {
-                eprint!("{error}");
-            }
-        }
-        launcher::OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&result)
-                    .map_err(|error| format!("could not encode run result: {error}"))?
-            );
-        }
-        launcher::OutputFormat::Jsonl => {
-            for line in result.output.lines().filter(|line| !line.is_empty()) {
-                println!("{line}");
-            }
-            println!(
-                "{}",
-                serde_json::json!({"type": "run_result", "result": result})
-            );
-        }
-    }
-
-    if result.timed_out {
-        Ok(5)
-    } else if result.status == launcher::RunStatus::Succeeded {
-        Ok(0)
-    } else {
-        Ok(4)
-    }
 }
 
 fn render_status_text(report: &StatusReport) -> String {
@@ -315,133 +342,11 @@ fn format_countdown(seconds: f64) -> String {
     }
 }
 
-fn parse_run_args(args: &[String]) -> Result<launcher::RunRequest, String> {
-    let mut provider = None;
-    let mut model = None;
-    let mut effort = None;
-    let mut account = None;
-    let mut prompt = None;
-    let mut prompt_file = None;
-    let mut prompt_count = 0;
-    let mut prompt_file_count = 0;
-    let mut output = launcher::OutputFormat::Text;
-    let mut working_directory: Option<PathBuf> = None;
-    let mut access = launcher::AccessMode::ReadOnly;
-    let mut resume = None;
-    let mut timeout = None;
-
-    let mut index = 0;
-    while index < args.len() {
-        let argument = args[index].as_str();
-        match argument {
-            "--help" | "-h" => {
-                print_run_help();
-                return Err(String::new());
-            }
-            "--provider" => {
-                provider = Some(next_value(args, &mut index, argument)?);
-            }
-            "--model" => model = Some(next_value(args, &mut index, argument)?),
-            "--effort" => effort = Some(next_value(args, &mut index, argument)?),
-            "--account" => account = Some(next_value(args, &mut index, argument)?),
-            "--prompt" => {
-                prompt_count += 1;
-                prompt = Some(next_value(args, &mut index, argument)?)
-            }
-            "--prompt-file" => {
-                prompt_file_count += 1;
-                prompt_file = Some(PathBuf::from(next_value(args, &mut index, argument)?))
-            }
-            "--output" => {
-                output = launcher::OutputFormat::parse(&next_value(args, &mut index, argument)?)?;
-            }
-            "--working-directory" | "--cwd" => {
-                working_directory = Some(PathBuf::from(next_value(args, &mut index, argument)?));
-            }
-            "--access" => {
-                access = launcher::AccessMode::parse(&next_value(args, &mut index, argument)?)?
-            }
-            "--resume" => resume = Some(next_value(args, &mut index, argument)?),
-            "--timeout" => timeout = parse_timeout(&next_value(args, &mut index, argument)?)?,
-            unknown => return Err(format!("unknown argument {unknown:?} for run")),
-        }
-        index += 1;
-    }
-
-    let provider = provider.ok_or_else(|| "run requires --provider PROVIDER_ID".to_owned())?;
-    let provider = provider
-        .parse()
-        .map_err(|error: aifuel_core::InvalidProviderKey| error.to_string())?;
-    if prompt_count > 1 || prompt_file_count > 1 {
-        return Err("provide exactly one value for the selected prompt option".to_owned());
-    }
-    if prompt.is_some() && prompt_file.is_some() {
-        return Err("use exactly one of --prompt or --prompt-file".to_owned());
-    }
-    let prompt = match (prompt, prompt_file) {
-        (Some(prompt), None) => prompt,
-        (None, Some(path)) => {
-            launcher::read_prompt_file(&path).map_err(|error| error.to_string())?
-        }
-        (None, None) if std::io::stdin().is_terminal() => {
-            return Err("run requires --prompt, --prompt-file, or piped stdin".to_owned());
-        }
-        (None, None) => launcher::read_stdin_prompt().map_err(|error| error.to_string())?,
-        (Some(_), Some(_)) => unreachable!("prompt sources are checked above"),
-    };
-
-    Ok(launcher::RunRequest {
-        provider,
-        model,
-        effort,
-        account,
-        prompt,
-        output,
-        working_directory,
-        access,
-        resume,
-        timeout,
-    })
-}
-
 pub(super) fn next_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
     *index += 1;
     args.get(*index)
         .cloned()
         .ok_or_else(|| format!("{flag} requires a value"))
-}
-
-fn parse_timeout(value: &str) -> Result<Option<Duration>, String> {
-    if value == "0" {
-        return Ok(None);
-    }
-    let (number, multiplier) = value
-        .strip_suffix('s')
-        .map(|value| (value, 1))
-        .or_else(|| value.strip_suffix('m').map(|value| (value, 60)))
-        .or_else(|| value.strip_suffix('h').map(|value| (value, 60 * 60)))
-        .ok_or_else(|| {
-            "timeout must use seconds, minutes, or hours (for example 30s)".to_owned()
-        })?;
-    let number: u64 = number
-        .parse()
-        .map_err(|_| format!("invalid timeout {value:?}"))?;
-    Ok(Some(Duration::from_secs(number.saturating_mul(multiplier))))
-}
-
-fn print_run_help() {
-    println!("Usage: aifuel run --provider PROVIDER_ID [OPTIONS]");
-    println!();
-    println!("  --prompt TEXT                         prompt text");
-    println!("  --prompt-file PATH                    read prompt from a file");
-    println!("  --model MODEL_ID                      explicit model");
-    println!("  --effort LEVEL                        requested model effort");
-    println!("  --account ACCOUNT_ID                  explicit account");
-    println!("  --output text|json|jsonl              result format (default: text)");
-    println!("  --working-directory PATH              optional project directory");
-    println!("  --access read-only|workspace-write    permission profile");
-    println!("  --resume SESSION_ID                   explicit session continuation");
-    println!("  --timeout DURATION                    optional deadline; no deadline by default");
 }
 
 #[cfg(test)]
@@ -453,16 +358,16 @@ mod tests {
 
     #[test]
     fn text_output_has_an_intentional_empty_state() {
-        let output = render_status_text(&StatusReport::cold(0.0));
-
-        assert!(output.contains("No provider-specific logins found."));
+        assert!(
+            render_status_text(&StatusReport::cold(0.0))
+                .contains("No provider-specific logins found.")
+        );
     }
 
     #[test]
     fn json_output_has_the_normalized_status_schema() {
         let value =
             serde_json::to_value(StatusReport::cold(0.0)).expect("status report should serialize");
-
         assert_eq!(value["schema_version"], STATUS_SCHEMA_VERSION);
         assert_eq!(value["collection"]["state"], "not_collected");
         assert!(
@@ -480,19 +385,6 @@ mod tests {
     }
 
     #[test]
-    fn run_has_no_default_overall_deadline() {
-        let args = [
-            "--provider".to_owned(),
-            "gemini".to_owned(),
-            "--prompt".to_owned(),
-            "hello".to_owned(),
-        ];
-        let request = parse_run_args(&args).expect("run arguments should parse");
-
-        assert_eq!(request.timeout, None);
-    }
-
-    #[test]
     fn text_output_includes_codex_reset_credits_and_expiry() {
         let mut provider = ProviderUsage::success(ProviderKey::Codex, Vec::new());
         provider.reset_credits = Some(ResetCredits {
@@ -505,9 +397,7 @@ mod tests {
             }],
         });
         let report = StatusReport::from_usage(1_800_000_000.0, vec![provider], Vec::new());
-
         let output = render_status_text(&report);
-
         assert!(output.contains("Redeem usage limit reset"));
         assert!(output.contains("You have 2 usage limit resets available."));
         assert!(output.contains("Full reset"));

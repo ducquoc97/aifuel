@@ -1,7 +1,7 @@
 use crate::agent_execution::{
     CliExecutionAdapter, ExecutionCapabilities, ParsedProviderOutput, parse_public_output,
 };
-use aifuel_core::{AgentRunError, OutputFormat, ProviderKey, RunRequest};
+use aifuel_core::{AgentRunError, AgentSetupGuidance, OutputFormat, ProviderKey, RunRequest};
 use serde_json::Value;
 
 pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
@@ -12,7 +12,15 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     build_args,
     parse_output,
     ExecutionCapabilities::new(true, false, false, false),
-);
+)
+// Use the documented flag; the `copilot version` command checks for updates.
+.with_version_probe(&["--version"])
+.with_setup_guidance(AgentSetupGuidance {
+    install: "npm install -g @github/copilot",
+    login: "Start `copilot`, then enter `/login` in its interactive UI.",
+    check: "Run `copilot --version` to check the installed version; AI Fuel does not inspect Copilot sign-in state.",
+    documentation_url: "https://docs.github.com/en/copilot/get-started/cli-quickstart",
+});
 
 fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
     let mut args = vec![

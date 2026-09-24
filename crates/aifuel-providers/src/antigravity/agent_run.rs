@@ -1,7 +1,7 @@
 use crate::agent_execution::{
     CliExecutionAdapter, ExecutionCapabilities, ParsedProviderOutput, parse_public_output,
 };
-use aifuel_core::{AgentRunError, OutputFormat, ProviderKey, RunRequest};
+use aifuel_core::{AgentRunError, AgentSetupGuidance, OutputFormat, ProviderKey, RunRequest};
 use serde_json::Value;
 
 pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
@@ -11,10 +11,19 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     &["--print", "--output-format"],
     build_args,
     parse_output,
-    // The native sandbox help only promises terminal restrictions, not a
-    // bounded workspace write policy.
-    ExecutionCapabilities::new(true, false, false, true),
-);
+    // The native sandbox is not a verified workspace read-only boundary. A
+    // live WSL test redirected a requested file write to Antigravity's global
+    // scratch area instead of the selected workspace.
+    ExecutionCapabilities::new(true, false, false, true).with_unsupported_read_only(),
+)
+.with_setup_guidance(AgentSetupGuidance {
+    install: "macOS/Linux: `curl -fsSL https://antigravity.google/cli/install.sh | bash`; Windows PowerShell: `irm https://antigravity.google/cli/install.ps1 | iex`.",
+    login: "Run `agy` interactively; follow first-launch sign-in, which may open a browser.",
+    check: "No non-interactive version or authentication status command is documented. Start `agy` manually to check setup; AI Fuel does not launch it.",
+    documentation_url: "https://antigravity.google/docs/cli/install",
+});
+// The official Antigravity CLI reference does not document a non-interactive
+// version command, so native version inspection deliberately starts no process.
 
 fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
     let mut args = vec![

@@ -14,6 +14,10 @@ Minimum code that solves the problem. Nothing speculative.
 No features beyond what was asked. No abstractions for single-use code.
 Test: would a senior engineer say this is overcomplicated? If yes, simplify.
 
+## Code review structure
+Split source files over 1,000 lines into focused modules inside a directory named after the original file.
+When two or more sibling source files share a module prefix before an underscore, move them into a directory named for that prefix and remove the prefix from their filenames. For example, `module_a.py` and `module_b.py` become `module/a.py` and `module/b.py`.
+
 ## Surgical Changes
 Touch only what you must. Clean up only your own mess.
 Don't "improve" adjacent code, comments, or formatting.

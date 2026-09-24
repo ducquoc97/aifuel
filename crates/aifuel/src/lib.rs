@@ -1,5 +1,10 @@
 pub mod launcher;
 pub mod mcp_catalog;
+mod model_catalog;
+pub mod model_cli;
+pub mod profile;
+pub mod run_cli;
+mod run_selection;
 pub mod selection_cli;
 
 use aifuel_app::{AgentMcpSetupFacade, AgentRunFacade, McpGatewayFacade, MonitoringFacade};
@@ -7,6 +12,8 @@ use aifuel_providers::{CollectionConfig, DiscoveryContext, ProviderMonitoring};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+
+pub use model_catalog::{model_catalog_snapshot, refresh_model_catalog};
 
 /// Construct the monitoring dependencies at the executable boundary.
 pub fn monitoring_facade() -> Result<MonitoringFacade<ProviderMonitoring>, String> {
@@ -30,16 +37,16 @@ pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
     }
     let config = aifuel_app::selection::SelectionStore::load(execution_config_path()?)
         .map_err(|error| error.to_string())?;
+    let manager = aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
+        .with_execution_policy(&config.policy)
+        .with_session_store(session_store_path()?)?;
+    #[cfg(any(unix, windows))]
+    let manager = manager.with_local_approval_channel(approval_owner_directory()?)?;
     if config.policy.retain_content {
-        return Err(
-            "persistent Agent Run content retention is not supported by this execution owner"
-                .to_owned(),
-        );
+        manager.with_content_store(content_store_path()?)
+    } else {
+        Ok(manager)
     }
-    Ok(
-        aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
-            .with_allowed_roots(config.policy.allowed_roots),
-    )
 }
 
 pub fn execution_config_path() -> Result<PathBuf, String> {
@@ -47,6 +54,68 @@ pub fn execution_config_path() -> Result<PathBuf, String> {
     Ok(user_config_dir(&home)?
         .join("aifuel")
         .join("execution.json"))
+}
+
+pub fn session_store_path() -> Result<PathBuf, String> {
+    let home = user_home_dir()?;
+    Ok(user_config_dir(&home)?
+        .join("aifuel")
+        .join("agent-sessions.json"))
+}
+
+pub fn content_store_path() -> Result<PathBuf, String> {
+    let home = user_home_dir()?;
+    Ok(user_config_dir(&home)?.join("aifuel").join("run-content"))
+}
+
+pub fn approval_owner_directory() -> Result<PathBuf, String> {
+    let home = user_home_dir()?;
+    Ok(user_config_dir(&home)?
+        .join("aifuel")
+        .join("approval-owners"))
+}
+
+#[cfg(any(unix, windows))]
+pub fn submit_local_approval(
+    run_id: &str,
+    input_id: &str,
+    decision: aifuel_app::LocalApprovalDecision,
+) -> Result<(), String> {
+    aifuel_app::submit_local_approval(&approval_owner_directory()?, run_id, input_id, decision)
+}
+
+/// Apply global defaults and an optional named profile to one explicit CLI
+/// request. Explicit values remain highest precedence; flags that were omitted
+/// are allowed to inherit from the profile and global defaults.
+pub fn resolve_selection_for_run(
+    mut request: aifuel_core::RunRequest,
+    profile: Option<&str>,
+    access_explicit: bool,
+    deadline_explicit: bool,
+) -> Result<aifuel_core::RunRequest, String> {
+    let config = aifuel_app::selection::SelectionStore::load(execution_config_path()?)
+        .map_err(|error| error.to_string())?;
+    let inputs = aifuel_app::selection::SelectionInputs {
+        explicit: aifuel_app::selection::SelectionSettings {
+            provider: Some(request.provider),
+            model: request.model.clone(),
+            effort: request.effort.clone(),
+            access: access_explicit.then_some(request.access),
+            overall_deadline_seconds: None,
+        },
+        profile: profile.map(str::to_owned),
+        interactive: false,
+        deadline_override: deadline_explicit
+            .then_some(request.timeout.map(|value| value.as_secs())),
+    };
+    let resolved = config
+        .resolve(&inputs, None)
+        .map_err(|error| error.to_string())?;
+    request.model = resolved.model;
+    request.effort = resolved.effort;
+    request.access = resolved.access;
+    request.timeout = resolved.overall_deadline;
+    Ok(request)
 }
 
 /// Compose one independent MCP Host registration adapter with shared setup.

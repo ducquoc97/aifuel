@@ -1,7 +1,9 @@
 use crate::agent_execution::{
     CliExecutionAdapter, ExecutionCapabilities, ParsedProviderOutput, parse_public_output,
 };
-use aifuel_core::{AccessMode, AgentRunError, OutputFormat, ProviderKey, RunRequest};
+use aifuel_core::{
+    AccessMode, AgentRunError, AgentSetupGuidance, OutputFormat, ProviderKey, RunRequest,
+};
 use serde_json::Value;
 
 pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
@@ -13,7 +15,15 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     parse_output,
     // Native workspace enforcement is unverified for the current integration.
     ExecutionCapabilities::new(true, false, false, true),
-);
+)
+// The Gemini CLI reference documents --version as printing and exiting.
+.with_version_probe(&["--version"])
+.with_setup_guidance(AgentSetupGuidance {
+    install: "npm install -g @google/gemini-cli",
+    login: "Start `gemini` and choose a documented sign-in method, such as Sign in with Google.",
+    check: "Run `gemini --version` to check the install. Start `gemini` and complete the interactive auth selection to verify account access; AI Fuel does not inspect local credentials.",
+    documentation_url: "https://geminicli.com/docs/get-started/",
+});
 
 fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
     let mut args = vec![

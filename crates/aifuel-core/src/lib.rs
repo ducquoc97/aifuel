@@ -1,27 +1,36 @@
 //! Stable domain values shared by AI Fuel applications and provider adapters.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
 
+mod agent_integration;
 mod agent_mcp_registration;
 mod execution;
 mod run_management;
 mod status;
+pub use agent_integration::{
+    AgentAuthenticationEvidence, AgentAuthenticationState, AgentCapability,
+    AgentCapabilityAssessment, AgentCapabilityEvidence, AgentIntegrationInfo,
+    AgentPresenceEvidence, AgentPresenceState, AgentSetupGuidance, AgentVersionEvidence,
+};
 pub use agent_mcp_registration::{
     AIFUEL_GATEWAY_REGISTRATION_NAME, AgentMcpRegistrationAdapter, AgentMcpRegistrationError,
 };
 pub use execution::{
-    AccessMode, AgentExecutionAdapter, AgentRunError, ExecutionMode, OutputFormat,
+    AccessMode, AgentExecutionAdapter, AgentInputQuestion, AgentInteractionHandler,
+    AgentInteractionKind, AgentInteractionRequest, AgentInteractionResponse, AgentRunError,
+    AgentRunOutputHandler, ExecutionMode, OutputFormat, PermissionApprovalDecision,
     RunCancellationToken, RunRequest, RunResult, RunStatus,
 };
 pub use run_management::{
     DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS, MAX_ANSWER_BYTES_PER_RUN, MAX_COMPLETED_CONTENT,
     MAX_EVENT_BYTES_PER_RUN, MAX_EVENT_PAGE_BYTES, MAX_OWNER_CONTENT_BYTES, MAX_RUN_RECORDS,
-    ManagedRun, ManagedRunResult, RUN_MANAGEMENT_SCHEMA_VERSION, ResolvedRun, RunEvent,
-    RunEventKind, RunEvents, RunManagementError, RunManagementErrorCode, RunState,
+    ManagedRun, ManagedRunResult, PendingRunInput, RUN_MANAGEMENT_SCHEMA_VERSION, ResolvedRun,
+    RunEvent, RunEventKind, RunEvents, RunInputKind, RunManagementError, RunManagementErrorCode,
+    RunState, StoredSessionSelection,
 };
 pub use status::{
     CapabilityKind, CapabilityState, CatalogPlatformStatus, CatalogProviderStatus,
@@ -43,7 +52,7 @@ pub trait StatusCollector: Send + Sync {
 }
 
 /// A provider represented in the built-in Catalog Provider catalog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKey {
     Claude,

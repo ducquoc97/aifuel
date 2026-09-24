@@ -4,7 +4,9 @@
 //! values are deliberately kept in the core crate so the CLI and execution
 //! MCP endpoint serialize exactly the same contract.
 
-use crate::{AccessMode, OutputFormat, ProviderKey, RunStatus};
+use crate::{
+    AccessMode, AgentInputQuestion, AgentInteractionKind, OutputFormat, ProviderKey, RunStatus,
+};
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;
@@ -172,9 +174,35 @@ pub struct ManagedRun {
     pub provider: ProviderKey,
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
+    pub external_tools: Option<Vec<String>>,
     pub created_at: f64,
     pub completed_at: Option<f64>,
     pub content_available: bool,
+    pub pending_input: Option<PendingRunInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunInputKind {
+    Ordinary,
+    Permission,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PendingRunInput {
+    pub input_id: String,
+    pub run_id: String,
+    pub kind: RunInputKind,
+    pub interaction_kind: AgentInteractionKind,
+    pub description: String,
+    pub native_method: Option<String>,
+    /// Typed provider questions for presentation by the owner.
+    pub questions: Vec<AgentInputQuestion>,
+    pub question_ids: Vec<String>,
+    /// Opaque native parameters retained separately for diagnostics and
+    /// provider-specific context, not for parsing ordinary question text.
+    pub parameters: Option<serde_json::Value>,
+    pub requires_expanded_access: bool,
 }
 
 /// The safe, serializable result of resolving a request. Prompt content is
@@ -186,6 +214,7 @@ pub struct ResolvedRun {
     pub provider: ProviderKey,
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
+    pub external_tools: Option<Vec<String>>,
     pub requested_account: Option<String>,
     pub output: OutputFormat,
     pub working_directory: Option<PathBuf>,
@@ -194,12 +223,27 @@ pub struct ResolvedRun {
     pub timeout_seconds: Option<u64>,
 }
 
+/// Metadata-only selection remembered for a native Agent Session.
+///
+/// A missing model or effort means the prior run requested the provider's
+/// native default; it does not claim a concrete effective value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredSessionSelection {
+    pub schema_version: u32,
+    pub session_id: String,
+    pub provider: ProviderKey,
+    pub requested_model: Option<String>,
+    pub requested_effort: Option<String>,
+}
+
 /// The public event categories emitted by the run manager.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunEventKind {
     Started,
     Running,
+    WaitingForInput,
+    WaitingForApproval,
     StateChanged,
     Output,
     Diagnostic,

@@ -32,6 +32,22 @@ impl Drop for TestDirectory {
     }
 }
 
+pub fn ai_fuel_config_dir(root: &Path) -> PathBuf {
+    #[cfg(windows)]
+    let path = root.join("aifuel");
+
+    #[cfg(target_os = "macos")]
+    let path = root
+        .join("Library")
+        .join("Application Support")
+        .join("aifuel");
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let path = root.join(".config").join("aifuel");
+
+    path
+}
+
 pub fn install_fake_command(directory: &Path, command_name: &str) {
     #[cfg(unix)]
     {
@@ -75,26 +91,100 @@ pub fn install_fake_command(directory: &Path, command_name: &str) {
     }
 }
 
-pub fn install_fake_gemini(directory: &Path) {
-    install_fake_command(directory, "gemini");
+/// Install a small Codex App Server fixture that speaks JSONL over stdio.
+/// Returns the path where it records each request frame.
+pub fn install_fake_codex_app_server(directory: &Path) -> PathBuf {
+    let log_path = directory.join("codex-app-server.jsonl");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let executable = directory.join("codex");
+        fs::write(
+            &executable,
+            r##"#!/bin/sh
+if [ "$1" != "app-server" ] || [ "$2" != "--stdio" ]; then
+    printf 'unexpected Codex invocation: %s\n' "$*" >&2
+    exit 64
+fi
+while IFS= read -r line; do
+    if [ -n "${AIFUEL_CODEX_FIXTURE_LOG:-}" ]; then
+        printf '%s\n' "$line" >> "$AIFUEL_CODEX_FIXTURE_LOG"
+    fi
+    case "$line" in
+        *'"id":0'*)
+            printf '%s\n' '{"id":0,"result":{}}'
+            ;;
+        *'"id":1'*)
+            printf '%s\n' '{"id":1,"result":{"thread":{"id":"fixture-thread"}}}'
+            ;;
+        *'"id":2'*)
+            printf '%s\n' '{"id":2,"result":{}}'
+            if [ "${AIFUEL_CODEX_FIXTURE_APPROVAL:-}" = "1" ]; then
+                printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"command":"touch fixture","reason":"run a command"}}'
+                continue
+            fi
+            if [ -n "${AIFUEL_CODEX_FIXTURE_DELAY_SECONDS:-}" ]; then
+                sleep "$AIFUEL_CODEX_FIXTURE_DELAY_SECONDS"
+            fi
+            printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"fake codex app-server response"}}'
+            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+            ;;
+        *'"decision":"accept"'*)
+            printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"fake codex app-server response"}}'
+            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+            ;;
+    esac
+done
+"##,
+        )
+        .expect("fake Codex App Server should be writable");
+        let mut permissions = fs::metadata(&executable)
+            .expect("fake Codex executable should exist")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(executable, permissions)
+            .expect("fake Codex executable should be executable");
+    }
+
+    #[cfg(windows)]
+    {
+        let script = directory.join("codex-app-server.ps1");
+        fs::write(
+            &script,
+            r#"
+$ErrorActionPreference = 'Stop'
+while ($null -ne ($line = [Console]::In.ReadLine())) {
+    if ($env:AIFUEL_CODEX_FIXTURE_LOG) {
+        [System.IO.File]::AppendAllText($env:AIFUEL_CODEX_FIXTURE_LOG, $line + "`n")
+    }
+    $request = ConvertFrom-Json $line
+    if ($null -eq $request.id) { continue }
+    switch ([string]$request.id) {
+        '0' { [Console]::Out.WriteLine('{"id":0,"result":{}}') }
+        '1' { [Console]::Out.WriteLine('{"id":1,"result":{"thread":{"id":"fixture-thread"}}}') }
+        '2' {
+            [Console]::Out.WriteLine('{"id":2,"result":{}}')
+            if ($env:AIFUEL_CODEX_FIXTURE_DELAY_SECONDS) {
+                Start-Sleep -Seconds ([int]$env:AIFUEL_CODEX_FIXTURE_DELAY_SECONDS)
+            }
+            [Console]::Out.WriteLine('{"method":"item/agentMessage/delta","params":{"delta":"fake codex app-server response"}}')
+            [Console]::Out.WriteLine('{"method":"turn/completed","params":{"turn":{"status":"completed"}}}')
+        }
+    }
 }
+"#,
+        )
+        .expect("fake Codex App Server script should be writable");
+        fs::write(
+            directory.join("codex.cmd"),
+            "@echo off\n%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"%~dp0codex-app-server.ps1\"\n",
+        )
+        .expect("fake Codex command wrapper should be writable");
+    }
 
-#[cfg(unix)]
-pub fn install_slow_help_gemini(directory: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = directory.join("gemini");
-    fs::write(
-        &path,
-        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\nsleep 2\nexit 0\nfi\nprintf 'unexpected execution\\n'\n",
-    )
-    .expect("slow fake Gemini executable should be writable");
-    let mut permissions = fs::metadata(&path)
-        .expect("slow fake Gemini executable should exist")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions)
-        .expect("slow fake Gemini executable should be executable");
+    log_path
 }
 
 pub fn path_with(directory: &Path) -> std::ffi::OsString {

@@ -124,6 +124,7 @@ mod tests {
             provider,
             model: None,
             effort: None,
+            external_tools: None,
             account: None,
             prompt: "hello".to_owned(),
             output: OutputFormat::Text,
@@ -131,6 +132,7 @@ mod tests {
             access: AccessMode::ReadOnly,
             resume: None,
             timeout: Some(Duration::from_secs(1)),
+            interaction_handler: None,
         }
     }
 

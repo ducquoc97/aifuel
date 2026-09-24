@@ -1,7 +1,9 @@
 //! Public contracts for explicit Agent Runs.
 
-use crate::ProviderKey;
+use crate::{AgentIntegrationInfo, ProviderKey};
 use serde::Serialize;
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
@@ -66,13 +68,16 @@ pub enum RunStatus {
 }
 
 /// One explicit request to run a provider CLI through its execution adapter.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RunRequest {
     pub provider: ProviderKey,
     pub model: Option<String>,
     /// Requested model-specific effort. Adapters report an effective value
     /// only when the native provider exposes it.
     pub effort: Option<String>,
+    /// Exact AI Fuel Gateway tool names requested for this run. A provider
+    /// adapter may accept them only when it can enforce this snapshot.
+    pub external_tools: Option<Vec<String>>,
     pub account: Option<String>,
     pub prompt: String,
     pub output: OutputFormat,
@@ -80,6 +85,86 @@ pub struct RunRequest {
     pub access: AccessMode,
     pub resume: Option<String>,
     pub timeout: Option<Duration>,
+    /// Optional owner callback for provider-native questions and approvals.
+    pub interaction_handler: Option<Arc<dyn AgentInteractionHandler>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInteractionKind {
+    OrdinaryInput,
+    McpElicitation,
+    CommandApproval,
+    FileChangeApproval,
+    PermissionProfileApproval,
+}
+
+/// One normalized question for an Agent Run owner to present to a user.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AgentInputQuestion {
+    pub id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentInteractionRequest {
+    pub request_id: Value,
+    pub method: String,
+    pub kind: AgentInteractionKind,
+    pub description: String,
+    /// Provider-normalized questions safe for an owner to present directly.
+    pub questions: Vec<AgentInputQuestion>,
+    /// Opaque provider parameters retained for diagnostics and provider-native
+    /// response handling. Owners must not parse question wire formats here.
+    pub parameters: Value,
+    /// Whether this native request asks to widen the permissions already
+    /// established by the Agent Run. Providers normalize their wire formats
+    /// into this policy signal before the application sees the request.
+    pub requires_expanded_access: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionApprovalDecision {
+    Accept,
+    Decline,
+    Cancel,
+}
+
+#[derive(Debug, Clone)]
+pub enum AgentInteractionResponse {
+    Answers(BTreeMap<String, Vec<String>>),
+    Elicitation(serde_json::Value),
+    Permission(PermissionApprovalDecision),
+    PermissionProfile { permissions: Value, scope: String },
+}
+
+/// Owner callback used by provider adapters when native App Server protocols
+/// request ordinary user input or permission approval.
+pub trait AgentInteractionHandler: Send + Sync + std::fmt::Debug {
+    fn interact(
+        &self,
+        request: AgentInteractionRequest,
+        cancellation: &RunCancellationToken,
+    ) -> Result<AgentInteractionResponse, AgentRunError>;
+}
+
+impl fmt::Debug for RunRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RunRequest")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("effort", &self.effort)
+            .field("external_tools", &self.external_tools)
+            .field("account", &self.account)
+            .field("prompt", &"<redacted>")
+            .field("output", &self.output)
+            .field("working_directory", &self.working_directory)
+            .field("access", &self.access)
+            .field("resume", &self.resume)
+            .field("timeout", &self.timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The observed outcome and local metadata for one Agent Run.
@@ -171,6 +256,11 @@ impl RunCancellationToken {
     }
 }
 
+/// Owner-provided sink for normalized public answer deltas during a run.
+pub trait AgentRunOutputHandler: Send + Sync + fmt::Debug {
+    fn on_output(&self, delta: &str);
+}
+
 /// Provider-specific implementation of the optional Agent Execution capability.
 ///
 /// An adapter handles exactly its `provider()` and never falls back to another
@@ -178,6 +268,59 @@ impl RunCancellationToken {
 /// cancellation for any process they start.
 pub trait AgentExecutionAdapter: Send + Sync {
     fn provider(&self) -> ProviderKey;
+
+    /// Return provider-owned setup instructions without inspecting local
+    /// credentials or starting a native process.
+    fn setup_guidance(&self) -> Option<crate::AgentSetupGuidance> {
+        None
+    }
+
+    /// Return provider-owned declarations for each independently listed
+    /// capability. Declarations are metadata, not evidence of current native
+    /// enforcement.
+    fn declared_agent_capabilities(
+        &self,
+    ) -> BTreeMap<crate::AgentCapability, crate::AgentCapabilityEvidence> {
+        crate::AgentCapability::ALL
+            .into_iter()
+            .map(|capability| {
+                (
+                    capability,
+                    crate::AgentCapabilityEvidence {
+                        state: crate::CapabilityState::Unknown,
+                        reason: format!(
+                            "{capability:?} capability is not declared by this adapter"
+                        ),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Return provider-owned presence, version, and capability evidence for
+    /// the current local integration context. Implementations that do not
+    /// inspect that context report unknown evidence by default.
+    fn agent_info(&self) -> AgentIntegrationInfo {
+        AgentIntegrationInfo::from_inspection(
+            self.provider(),
+            crate::AgentPresenceEvidence {
+                state: crate::AgentPresenceState::Unknown,
+                reason: "the registered adapter does not expose native presence inspection"
+                    .to_owned(),
+            },
+            crate::AgentVersionEvidence {
+                version: None,
+                reason: "the registered adapter does not expose native version inspection"
+                    .to_owned(),
+            },
+            crate::AgentAuthenticationEvidence {
+                state: crate::AgentAuthenticationState::Unknown,
+                reason: "authentication is not inspected during listing to avoid reading local credentials or starting an auth flow; use provider setup guidance for manual login and checks".to_owned(),
+            },
+            self.declared_agent_capabilities(),
+        )
+        .with_setup_guidance(self.setup_guidance())
+    }
 
     /// Validate capability metadata without starting a provider process.
     fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
@@ -197,4 +340,15 @@ pub trait AgentExecutionAdapter: Send + Sync {
         request: &RunRequest,
         cancellation: &RunCancellationToken,
     ) -> Result<RunResult, AgentRunError>;
+
+    /// Execute while reporting normalized public answer deltas to the owner.
+    /// Adapters without a live-output protocol retain their ordinary behavior.
+    fn execute_with_output_handler(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+        _output_handler: &dyn AgentRunOutputHandler,
+    ) -> Result<RunResult, AgentRunError> {
+        self.execute(request, cancellation)
+    }
 }

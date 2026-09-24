@@ -1,21 +1,64 @@
 //! Connection-owned Agent Runs. This endpoint never grants permissions.
 
+mod catalog;
+mod tools;
+
+use self::catalog::list_models;
+use self::tools::tool_definitions;
+
 use aifuel_app::RunManager;
-use aifuel_core::{AccessMode, OutputFormat, RunManagementError, RunRequest};
+use aifuel_app::selection::{
+    GlobalSelectionConfig, SelectionInputs, SelectionSettings, SelectionSource, SelectionSources,
+    StoredSession,
+};
+use aifuel_core::{
+    AccessMode, OutputFormat, ProviderKey, RunManagementError, RunRequest, StoredSessionSelection,
+};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Read, Write};
 use std::path::PathBuf;
-use std::time::Duration;
 
 const MAX_FRAME_BYTES: u64 = 1024 * 1024;
 
 pub fn serve(manager: RunManager) -> Result<(), String> {
-    let result = serve_connection(&manager);
+    serve_with_catalog(manager, Vec::new())
+}
+
+pub fn serve_with_catalog(manager: RunManager, catalog: Vec<Value>) -> Result<(), String> {
+    serve_with_selection_and_catalog_refresh(
+        manager,
+        GlobalSelectionConfig::default(),
+        catalog,
+        |_| Err("model catalog refresh is unavailable".to_owned()),
+    )
+}
+
+/// Serve the execution endpoint with application-owned selection and catalog
+/// discovery. The MCP layer only filters and reports provider-owned evidence.
+pub fn serve_with_selection_and_catalog_refresh<F>(
+    manager: RunManager,
+    selection: GlobalSelectionConfig,
+    catalog: Vec<Value>,
+    refresh_catalog: F,
+) -> Result<(), String>
+where
+    F: Fn(Option<ProviderKey>) -> Result<Vec<Value>, String>,
+{
+    let mut catalog = catalog;
+    let result = serve_connection(&manager, &selection, &mut catalog, &refresh_catalog);
     manager.shutdown();
     result
 }
 
-fn serve_connection(manager: &RunManager) -> Result<(), String> {
+fn serve_connection<F>(
+    manager: &RunManager,
+    selection: &GlobalSelectionConfig,
+    catalog: &mut Vec<Value>,
+    refresh_catalog: &F,
+) -> Result<(), String>
+where
+    F: Fn(Option<ProviderKey>) -> Result<Vec<Value>, String>,
+{
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut output = io::BufWriter::new(io::stdout().lock());
@@ -75,7 +118,13 @@ fn serve_connection(manager: &RunManager) -> Result<(), String> {
                 json!({"jsonrpc":"2.0","id":id,"result":{"tools":tool_definitions()}})
             }
             Some("tools/call") => {
-                let result = call(manager, &request["params"]);
+                let result = call(
+                    manager,
+                    selection,
+                    &request["params"],
+                    catalog,
+                    refresh_catalog,
+                );
                 let (value, is_error) = match result {
                     Ok(value) => (value, false),
                     Err(error) => (
@@ -111,7 +160,16 @@ fn encoded(value: impl serde::Serialize) -> Result<Value, RunManagementError> {
         .map_err(|_| RunManagementError::invalid_request("response encoding failed"))
 }
 
-fn call(manager: &RunManager, params: &Value) -> Result<Value, RunManagementError> {
+fn call<F>(
+    manager: &RunManager,
+    selection: &GlobalSelectionConfig,
+    params: &Value,
+    catalog: &mut Vec<Value>,
+    refresh_catalog: &F,
+) -> Result<Value, RunManagementError>
+where
+    F: Fn(Option<ProviderKey>) -> Result<Vec<Value>, String>,
+{
     let name = params["name"]
         .as_str()
         .ok_or_else(|| RunManagementError::invalid_request("tool name is required"))?;
@@ -119,44 +177,66 @@ fn call(manager: &RunManager, params: &Value) -> Result<Value, RunManagementErro
     let args = params.get("arguments").unwrap_or(&empty);
     match name {
         "list_agents" => {
-            only_fields(args, &[])?;
-            Ok(json!({
-                "schema_version": 1,
-                "agents": manager
-                    .registered_providers()
-                    .into_iter()
-                    .map(|provider| json!({
-                        "provider": provider,
-                        "integration": "compiled",
-                        "presence": "unknown",
-                        "authentication": "unknown",
-                        "capabilities": {
-                            "model_catalog": "unknown",
-                            "streaming": "unknown",
-                            "workspace_write": "unknown"
-                        }
-                    }))
-                    .collect::<Vec<_>>()
-            }))
-        }
-        "list_models" => {
             only_fields(args, &["provider"])?;
-            let provider = optional_string(args, "provider")?;
+            let provider = optional_string(args, "provider")?
+                .map(str::parse)
+                .transpose()
+                .map_err(|error: aifuel_core::InvalidProviderKey| {
+                    RunManagementError::invalid_request(error.to_string())
+                })?;
             Ok(json!({
                 "schema_version": 1,
-                "provider": provider,
-                "models": [],
-                "evidence": "unknown",
-                "freshness": "unknown",
-                "diagnostics": "model discovery is not available for this integration"
+                "agents": encoded(manager.list_agents(provider))?
             }))
         }
-        "start_run" => encoded(manager.start_run(parse_request(args)?)?),
-        "resolve_run" => encoded(manager.resolve_run(&parse_request(args)?)?),
-        "resume_session" | "answer_input" => Err(RunManagementError::new(
-            aifuel_core::RunManagementErrorCode::UnsupportedCapability,
-            format!("execution operation {name} is not supported by the selected integration"),
-        )),
+        "list_models" => list_models(args, catalog, refresh_catalog),
+        "start_run" => {
+            let (request, _) = resolve_request(args, selection, false, None)?;
+            encoded(manager.start_run(request)?)
+        }
+        "resolve_run" => {
+            let (request, sources) = resolve_request(args, selection, false, None)?;
+            let mut resolved = encoded(manager.resolve_run(&request)?)?;
+            resolved["selection_sources"] = encoded(sources)?;
+            Ok(resolved)
+        }
+        "resume_session" => {
+            only_fields(
+                args,
+                &[
+                    "session_id",
+                    "profile",
+                    "provider",
+                    "model",
+                    "effort",
+                    "external_tools",
+                    "prompt",
+                    "working_directory",
+                    "access",
+                    "timeout_seconds",
+                ],
+            )?;
+            let session_id = required_string(args, "session_id")?;
+            let stored_session = manager.session_selection(session_id)?;
+            let mut request_args = args.clone();
+            request_args
+                .as_object_mut()
+                .expect("arguments object was validated")
+                .remove("session_id");
+            let (request, _) =
+                resolve_request(&request_args, selection, true, Some(&stored_session))?;
+            encoded(manager.resume_session(session_id, request)?)
+        }
+        "answer_input" => {
+            only_fields(args, &["run_id", "input_id", "response"])?;
+            let run_id = required_string(args, "run_id")?;
+            let input_id = required_string(args, "input_id")?;
+            let response = args
+                .get("response")
+                .cloned()
+                .ok_or_else(|| RunManagementError::invalid_request("response is required"))?;
+            encoded(manager.answer_input_value(run_id, input_id, response)?)
+        }
         "get_run" | "get_result" | "cancel_run" => {
             only_fields(args, &["run_id"])?;
             let id = required_string(args, "run_id")?;
@@ -228,99 +308,149 @@ fn optional_string<'a>(
         .transpose()
 }
 
-fn parse_request(args: &Value) -> Result<RunRequest, RunManagementError> {
+fn parse_tools(args: &Value) -> Result<Option<Vec<String>>, RunManagementError> {
+    let Some(value) = args.get("external_tools") else {
+        return Ok(None);
+    };
+    let tools = value.as_array().ok_or_else(|| {
+        RunManagementError::invalid_request("external_tools must be an array of strings")
+    })?;
+    let mut result = Vec::with_capacity(tools.len());
+    for tool in tools {
+        let tool = tool
+            .as_str()
+            .filter(|tool| !tool.trim().is_empty())
+            .ok_or_else(|| {
+                RunManagementError::invalid_request("external_tools must contain nonempty strings")
+            })?;
+        result.push(tool.to_owned());
+    }
+    Ok(Some(result))
+}
+
+fn resolve_request(
+    args: &Value,
+    selection: &GlobalSelectionConfig,
+    resume: bool,
+    stored_session: Option<&StoredSessionSelection>,
+) -> Result<(RunRequest, SelectionSources), RunManagementError> {
     only_fields(
         args,
         &[
+            "profile",
             "provider",
             "model",
             "effort",
+            "external_tools",
             "prompt",
             "working_directory",
             "access",
             "timeout_seconds",
         ],
     )?;
-    let provider = required_string(args, "provider")?.parse().map_err(
-        |error: aifuel_core::InvalidProviderKey| {
+    let provider = optional_string(args, "provider")?
+        .map(str::parse)
+        .transpose()
+        .map_err(|error: aifuel_core::InvalidProviderKey| {
             RunManagementError::invalid_request(error.to_string())
-        },
-    )?;
-    let access = AccessMode::parse(optional_string(args, "access")?.unwrap_or("read-only"))
+        })?;
+    let model = optional_string(args, "model")?.map(str::to_owned);
+    let effort = optional_string(args, "effort")?.map(str::to_owned);
+    let access = optional_string(args, "access")?
+        .map(AccessMode::parse)
+        .transpose()
         .map_err(RunManagementError::invalid_request)?;
-    let timeout = args
+    let timeout_seconds = args
         .get("timeout_seconds")
         .map(|value| {
-            value
-                .as_u64()
-                .filter(|value| *value > 0)
-                .map(Duration::from_secs)
-                .ok_or_else(|| {
-                    RunManagementError::invalid_request(
-                        "timeout_seconds must be a positive integer",
-                    )
-                })
+            value.as_u64().filter(|value| *value > 0).ok_or_else(|| {
+                RunManagementError::invalid_request("timeout_seconds must be a positive integer")
+            })
         })
         .transpose()?;
-    Ok(RunRequest {
+    let profile = optional_string(args, "profile")?.map(str::to_owned);
+    let explicit = SelectionSettings {
         provider,
-        model: optional_string(args, "model")?.map(str::to_owned),
-        effort: optional_string(args, "effort")?.map(str::to_owned),
-        account: None,
-        prompt: required_string(args, "prompt")?.to_owned(),
-        output: OutputFormat::Json,
-        working_directory: optional_string(args, "working_directory")?.map(PathBuf::from),
+        model,
+        effort,
         access,
-        resume: None,
-        timeout,
-    })
-}
-
-fn tool_definitions() -> Vec<Value> {
-    let mut tools = Vec::new();
-    tools.push(json!({"name":"list_agents","description":"List compiled Agent Integrations and independently observed capability evidence.","inputSchema":{"type":"object","additionalProperties":false},"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}}));
-    tools.push(json!({"name":"list_models","description":"List provider model catalog evidence; unknown evidence remains explicit.","inputSchema":{"type":"object","additionalProperties":false,"properties":{"provider":{"type":"string"}}},"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}}));
-    for (name, description) in [
-        (
-            "resolve_run",
-            "Resolve and validate an Agent Run without starting it.",
-        ),
-        (
-            "start_run",
-            "Start a connection-owned Agent Run. Never automatically replay this operation.",
-        ),
-    ] {
-        tools.push(json!({"name":name,"description":description,"inputSchema":{
-            "type":"object","additionalProperties":false,"required":["provider","prompt"],
-            "properties":{
-                "provider":{"type":"string"},"model":{"type":"string"},"effort":{"type":"string"},"prompt":{"type":"string"},
-                "working_directory":{"type":"string"},"access":{"enum":["read-only","workspace-write"]},
-                "timeout_seconds":{"type":"integer","minimum":1}
-            }
-        },"annotations":{"readOnlyHint":name == "resolve_run","idempotentHint":name == "resolve_run","openWorldHint":true}}));
+        overall_deadline_seconds: timeout_seconds,
+    };
+    let inputs = SelectionInputs {
+        explicit: explicit.clone(),
+        profile: profile.clone(),
+        interactive: false,
+        deadline_override: None,
+    };
+    let session = stored_session.map(|stored| {
+        let mut session = StoredSession::new(stored.session_id.clone(), stored.provider);
+        session.model = stored.requested_model.clone();
+        session.effort = stored.requested_effort.clone();
+        session
+    });
+    let resolved = selection
+        .resolve(&inputs, session.as_ref())
+        .map_err(|error| RunManagementError::invalid_request(error.to_string()))?;
+    if !resume && resolved.model.is_none() {
+        return Err(RunManagementError::invalid_request(
+            "model selection is required; pass model or select a profile/default",
+        ));
     }
-    tools.push(json!({"name":"resume_session","description":"Resume a same-provider native session when supported; this integration currently reports unsupported capability.","inputSchema":{"type":"object","additionalProperties":false,"required":["session_id"],"properties":{"session_id":{"type":"string"},"provider":{"type":"string"},"prompt":{"type":"string"}}},"annotations":{"readOnlyHint":false,"idempotentHint":false,"openWorldHint":true}}));
-    tools.push(json!({"name":"answer_input","description":"Answer an ordinary provider question when the adapter can distinguish it from a permission request; unsupported integrations reject it.","inputSchema":{"type":"object","additionalProperties":false,"required":["run_id","input_id","response"],"properties":{"run_id":{"type":"string"},"input_id":{"type":"string"},"response":{"type":"string"}}},"annotations":{"readOnlyHint":false,"idempotentHint":false,"openWorldHint":false}}));
-    for (name, description) in [
-        ("get_run", "Inspect a run owned by this connection."),
-        ("get_result", "Read a run result without consuming it."),
-        (
-            "cancel_run",
-            "Cancel an owned run; repeated cancellation preserves terminal outcomes.",
-        ),
-        (
-            "read_events",
-            "Read ordered events with an opaque cursor and explicit history gaps.",
-        ),
-    ] {
-        let mut properties = json!({"run_id":{"type":"string"}});
-        if name == "read_events" {
-            properties["cursor"] = json!({"type":"string"});
-            properties["page_bytes"] = json!({"type":"integer","minimum":1,"maximum":1048576});
+    let policy_resolved = if resume {
+        let mut policy_explicit = explicit;
+        if policy_explicit.provider.is_none() {
+            policy_explicit.provider = stored_session.map(|stored| stored.provider);
         }
-        tools.push(json!({"name":name,"description":description,"inputSchema":{
-            "type":"object","additionalProperties":false,"required":["run_id"],"properties":properties
-        },"annotations":{"readOnlyHint":name != "cancel_run","idempotentHint":true,"openWorldHint":false}}));
-    }
-    tools
+        selection
+            .resolve(
+                &SelectionInputs {
+                    explicit: policy_explicit,
+                    profile,
+                    interactive: false,
+                    deadline_override: None,
+                },
+                None,
+            )
+            .map_err(|error| RunManagementError::invalid_request(error.to_string()))?
+    } else {
+        resolved.clone()
+    };
+    let mut sources = resolved.sources.clone();
+    sources.access = policy_resolved.sources.access;
+    sources.overall_deadline = policy_resolved.sources.overall_deadline;
+    let model = if resume
+        && matches!(
+            &resolved.sources.model,
+            SelectionSource::StoredSession | SelectionSource::NativeDefault
+        ) {
+        None
+    } else {
+        resolved.model
+    };
+    let effort = if resume
+        && matches!(
+            &resolved.sources.effort,
+            SelectionSource::StoredSession | SelectionSource::NativeDefault
+        ) {
+        None
+    } else {
+        resolved.effort
+    };
+    Ok((
+        RunRequest {
+            provider: resolved.provider,
+            model,
+            effort,
+            external_tools: parse_tools(args)?,
+            account: None,
+            prompt: required_string(args, "prompt")?.to_owned(),
+            output: OutputFormat::Json,
+            working_directory: optional_string(args, "working_directory")?.map(PathBuf::from),
+            access: policy_resolved.access,
+            resume: None,
+            timeout: policy_resolved.overall_deadline,
+            interaction_handler: None,
+        },
+        sources,
+    ))
 }

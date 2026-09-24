@@ -100,6 +100,7 @@ impl CatalogScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogProvenance {
+    BundledCatalog,
     NativeInterface,
     ProviderApi,
     CompiledAdapter,
@@ -137,6 +138,10 @@ pub struct CatalogModel {
     pub provider: ProviderKey,
     pub model_id: String,
     pub display_label: Option<String>,
+    /// Provider-reported default effort, retained independently from the
+    /// model's supported effort values. Older persisted snapshots omit it.
+    #[serde(default)]
+    pub default_effort: Option<String>,
     pub provenance: CatalogProvenance,
     pub discovered_at: u64,
     pub efforts: EffortEvidence,
@@ -156,6 +161,7 @@ impl CatalogModel {
             provider,
             model_id: model_id.into(),
             display_label: None,
+            default_effort: None,
             provenance,
             discovered_at,
             efforts: EffortEvidence::unknown(),
@@ -167,6 +173,11 @@ impl CatalogModel {
 
     pub fn with_display_label(mut self, display_label: impl Into<String>) -> Self {
         self.display_label = Some(display_label.into());
+        self
+    }
+
+    pub fn with_default_effort(mut self, default_effort: impl Into<String>) -> Self {
+        self.default_effort = Some(default_effort.into());
         self
     }
 

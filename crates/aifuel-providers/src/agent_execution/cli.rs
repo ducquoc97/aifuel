@@ -1,103 +1,28 @@
-use aifuel_core::{
-    AccessMode, AgentExecutionAdapter, AgentRunError, ExecutionMode, OutputFormat,
-    RunCancellationToken, RunRequest, RunResult, RunStatus,
+use super::capabilities::ExecutionCapabilities;
+use super::output::OutputParser;
+use super::process::{
+    MAX_CAPTURE_BYTES, TemporaryDirectory, kill_and_wait, owned_command, program_candidates,
+    read_bounded,
 };
-use process_wrap::tokio::{KillOnDrop, TokioChildWrapper, TokioCommandWrap};
-use std::fs;
+use aifuel_core::{
+    AccessMode, AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter,
+    AgentIntegrationInfo, AgentRunError, AgentRunOutputHandler, AgentSetupGuidance, ExecutionMode,
+    OutputFormat, RunCancellationToken, RunRequest, RunResult, RunStatus,
+};
+use std::future::Future;
 use std::io;
-use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Stdio};
+use std::pin::Pin;
+use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncRead, AsyncReadExt};
-
-#[cfg(windows)]
-use process_wrap::tokio::JobObject;
-#[cfg(unix)]
-use process_wrap::tokio::ProcessGroup;
 
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
-const CAPTURE_READ_BUFFER_BYTES: usize = 16 * 1024;
 
-/// Provider-local parsing keeps native wire formats out of the common run
-/// contract. Parsers return only public answer text and metadata explicitly
-/// reported by the provider. Reasoning and tool output are never copied into
-/// the normalized answer.
-#[derive(Debug, Default)]
-pub(crate) struct ParsedProviderOutput {
-    pub output: String,
-    pub session_id: Option<String>,
-    pub effective_model: Option<String>,
-    pub diagnostics: Option<String>,
-    pub structured: bool,
-    pub terminal: Option<bool>,
-}
-
-pub(crate) type OutputParser = fn(OutputFormat, &str) -> ParsedProviderOutput;
-
-/// Conservative parser shared by adapters whose current native output does
-/// not expose a provider-specific schema through the compiled interface. It
-/// extracts public text fields when present and otherwise preserves plain
-/// output. Structured records are only considered terminal when a terminal
-/// event is explicitly observed.
-pub(crate) fn parse_public_output(format: OutputFormat, text: &str) -> ParsedProviderOutput {
-    if format == OutputFormat::Text {
-        return ParsedProviderOutput {
-            output: text.to_owned(),
-            terminal: Some(true),
-            ..ParsedProviderOutput::default()
-        };
-    }
-
-    let mut parsed = ParsedProviderOutput {
-        structured: true,
-        ..ParsedProviderOutput::default()
-    };
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            parsed.output.push_str(line);
-            parsed.output.push('\n');
-            parsed.structured = false;
-            continue;
-        };
-        if let Some(session) = value
-            .get("session_id")
-            .or_else(|| value.get("sessionId"))
-            .and_then(serde_json::Value::as_str)
-        {
-            parsed.session_id = Some(session.to_owned());
-        }
-        if let Some(model) = value
-            .get("model")
-            .or_else(|| value.get("model_id"))
-            .and_then(serde_json::Value::as_str)
-        {
-            parsed.effective_model = Some(model.to_owned());
-        }
-        let event_type = value.get("type").and_then(serde_json::Value::as_str);
-        let public_text = value
-            .get("text")
-            .or_else(|| value.get("content"))
-            .and_then(serde_json::Value::as_str)
-            .or_else(|| value.get("message").and_then(serde_json::Value::as_str));
-        if let Some(public_text) = public_text {
-            parsed.output.push_str(public_text);
-        }
-        if matches!(
-            event_type,
-            Some("completed" | "result" | "turn.completed" | "message_stop")
-        ) {
-            parsed.terminal = Some(true);
-        } else if matches!(event_type, Some("error" | "failed" | "turn.failed")) {
-            parsed.terminal = Some(false);
-            parsed.diagnostics = public_text.map(str::to_owned);
-        }
-    }
-    if parsed.terminal.is_none() && !parsed.output.is_empty() {
-        parsed.terminal = Some(true);
-    }
-    parsed
-}
+pub(crate) type AsyncRunExecutor =
+    for<'a> fn(
+        &'a RunRequest,
+        &'a RunCancellationToken,
+        Option<&'a dyn AgentRunOutputHandler>,
+    ) -> Pin<Box<dyn Future<Output = Result<RunResult, AgentRunError>> + Send + 'a>>;
 
 pub(crate) struct CliExecutionAdapter {
     provider: aifuel_core::ProviderKey,
@@ -107,29 +32,10 @@ pub(crate) struct CliExecutionAdapter {
     build_args: fn(&RunRequest) -> Result<Vec<String>, AgentRunError>,
     parse_output: OutputParser,
     capabilities: ExecutionCapabilities,
-}
-
-pub(crate) struct ExecutionCapabilities {
-    supports_resume: bool,
-    supports_account_selection: bool,
-    supports_workspace_write: bool,
-    supports_jsonl: bool,
-}
-
-impl ExecutionCapabilities {
-    pub(crate) const fn new(
-        supports_resume: bool,
-        supports_account_selection: bool,
-        supports_workspace_write: bool,
-        supports_jsonl: bool,
-    ) -> Self {
-        Self {
-            supports_resume,
-            supports_account_selection,
-            supports_workspace_write,
-            supports_jsonl,
-        }
-    }
+    executor: Option<AsyncRunExecutor>,
+    version_probe_args: Option<&'static [&'static str]>,
+    authentication_probe_args: Option<&'static [&'static str]>,
+    setup_guidance: Option<AgentSetupGuidance>,
 }
 
 impl CliExecutionAdapter {
@@ -150,11 +56,70 @@ impl CliExecutionAdapter {
             build_args,
             parse_output,
             capabilities,
+            executor: None,
+            version_probe_args: None,
+            authentication_probe_args: None,
+            setup_guidance: None,
         }
     }
 
+    pub(crate) const fn with_executor(mut self, executor: AsyncRunExecutor) -> Self {
+        self.executor = Some(executor);
+        self
+    }
+
+    pub(crate) const fn with_version_probe(mut self, args: &'static [&'static str]) -> Self {
+        self.version_probe_args = Some(args);
+        self
+    }
+
+    pub(crate) const fn with_authentication_probe(mut self, args: &'static [&'static str]) -> Self {
+        self.authentication_probe_args = Some(args);
+        self
+    }
+
+    pub(crate) const fn with_setup_guidance(mut self, guidance: AgentSetupGuidance) -> Self {
+        self.setup_guidance = Some(guidance);
+        self
+    }
+
+    fn declared_capabilities(
+        &self,
+    ) -> std::collections::BTreeMap<AgentCapability, AgentCapabilityEvidence> {
+        self.capabilities.evidence()
+    }
+
+    fn integration_info(&self) -> AgentIntegrationInfo {
+        super::inspection::inspect_agent(
+            self.provider,
+            self.program,
+            self.version_probe_args,
+            self.authentication_probe_args,
+            self.declared_capabilities(),
+        )
+        .with_setup_guidance(self.setup_guidance)
+    }
+
     fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
-        if request.effort.is_some() {
+        // Every read-only run requires the provider to declare a verified
+        // boundary. A prompt-only run's temporary directory does not sandbox
+        // task-directed writes outside that directory.
+        // Native resumes may carry project context in the provider session,
+        // including through direct RunManager/AgentRunFacade callers that do
+        // not resolve the stored session's working directory first.
+        if request.access == AccessMode::ReadOnly && !self.capabilities.supports_read_only() {
+            return Err(AgentRunError::InvalidRequest(format!(
+                "{} cannot enforce read-only access for this request",
+                self.provider
+            )));
+        }
+        if request.external_tools.is_some() && !self.capabilities.supports_external_tools {
+            return Err(AgentRunError::InvalidRequest(format!(
+                "{} cannot enforce an exact external MCP tool selection",
+                self.provider
+            )));
+        }
+        if request.effort.is_some() && !self.capabilities.supports_effort {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} cannot report a verified effort setting",
                 self.provider
@@ -293,6 +258,20 @@ impl AgentExecutionAdapter for CliExecutionAdapter {
         self.provider
     }
 
+    fn setup_guidance(&self) -> Option<AgentSetupGuidance> {
+        self.setup_guidance
+    }
+
+    fn declared_agent_capabilities(
+        &self,
+    ) -> std::collections::BTreeMap<AgentCapability, AgentCapabilityEvidence> {
+        self.declared_capabilities()
+    }
+
+    fn agent_info(&self) -> AgentIntegrationInfo {
+        self.integration_info()
+    }
+
     fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
         // Call the inherent metadata validator explicitly. Calling
         // `self.validate` here would recurse into this trait method.
@@ -304,6 +283,26 @@ impl AgentExecutionAdapter for CliExecutionAdapter {
         request: &RunRequest,
         cancellation: &RunCancellationToken,
     ) -> Result<RunResult, AgentRunError> {
+        self.execute_sync(request, cancellation, None)
+    }
+
+    fn execute_with_output_handler(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+        output_handler: &dyn AgentRunOutputHandler,
+    ) -> Result<RunResult, AgentRunError> {
+        self.execute_sync(request, cancellation, Some(output_handler))
+    }
+}
+
+impl CliExecutionAdapter {
+    fn execute_sync(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+        output_handler: Option<&dyn AgentRunOutputHandler>,
+    ) -> Result<RunResult, AgentRunError> {
         let request = request.clone();
         let cancellation = cancellation.clone();
         std::thread::scope(|scope| {
@@ -313,20 +312,19 @@ impl AgentExecutionAdapter for CliExecutionAdapter {
                     .enable_time()
                     .build()
                     .map_err(|error| AgentRunError::Io(io::Error::other(error)))?;
-                runtime.block_on(self.execute_async(&request, &cancellation))
+                runtime.block_on(self.execute_async(&request, &cancellation, output_handler))
             });
             worker.join().map_err(|_| {
                 AgentRunError::InvalidRequest("provider execution worker panicked".to_owned())
             })?
         })
     }
-}
 
-impl CliExecutionAdapter {
     async fn execute_async(
         &self,
         request: &RunRequest,
         cancellation: &RunCancellationToken,
+        output_handler: Option<&dyn AgentRunOutputHandler>,
     ) -> Result<RunResult, AgentRunError> {
         if request.provider != self.provider {
             return Err(AgentRunError::UnsupportedProvider(request.provider));
@@ -336,9 +334,12 @@ impl CliExecutionAdapter {
                 "prompt must not be empty".to_owned(),
             ));
         }
+        self.validate(request)?;
+        if let Some(executor) = self.executor {
+            return executor(request, cancellation, output_handler).await;
+        }
 
         let started_at = Instant::now();
-        self.validate(request)?;
         let args = (self.build_args)(request)?;
         let program = self
             .preflight(started_at, request.timeout, cancellation)
@@ -484,113 +485,5 @@ impl CliExecutionAdapter {
     }
 }
 
-fn owned_command(
-    program: &str,
-    configure: impl FnOnce(&mut tokio::process::Command),
-) -> TokioCommandWrap {
-    let mut command = TokioCommandWrap::with_new(program, |command| {
-        // Managed providers must not recursively start another AI Fuel
-        // execution owner. The executable boundary rejects this marker.
-        command.env("AIFUEL_MANAGED_RUN", "1");
-        configure(command);
-    });
-    #[cfg(unix)]
-    command.wrap(ProcessGroup::leader());
-    #[cfg(windows)]
-    command.wrap(JobObject);
-    command.wrap(KillOnDrop);
-    command
-}
-
-async fn kill_and_wait(child: &mut Box<dyn TokioChildWrapper>) -> io::Result<ExitStatus> {
-    // Process-group/job wrappers terminate descendants as well as the direct
-    // child. Ignore a race where the group has already exited, then always
-    // wait so owned descendants are reaped before returning to the caller.
-    let kill_error = child.start_kill().err();
-    match Box::into_pin(child.wait()).await {
-        Ok(status) => Ok(status),
-        Err(wait_error) => Err(kill_error.unwrap_or(wait_error)),
-    }
-}
-
-#[derive(Debug)]
-struct CapturedOutput {
-    text: String,
-    #[allow(dead_code)]
-    bytes: usize,
-    #[allow(dead_code)]
-    truncated: bool,
-}
-
-async fn read_bounded<R>(mut reader: R, limit: usize) -> io::Result<CapturedOutput>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut bytes = 0usize;
-    let mut captured = Vec::with_capacity(limit.min(CAPTURE_READ_BUFFER_BYTES));
-    let mut buffer = vec![0u8; CAPTURE_READ_BUFFER_BYTES];
-    loop {
-        let count = reader.read(&mut buffer).await?;
-        if count == 0 {
-            break;
-        }
-        bytes = bytes.saturating_add(count);
-        if captured.len() < limit {
-            let remaining = limit - captured.len();
-            captured.extend_from_slice(&buffer[..count.min(remaining)]);
-        }
-    }
-    Ok(CapturedOutput {
-        text: String::from_utf8_lossy(&captured).into_owned(),
-        bytes,
-        truncated: bytes > captured.len(),
-    })
-}
-
-pub(crate) fn program_candidates(program: &str) -> Vec<String> {
-    #[cfg(windows)]
-    {
-        let mut candidates = vec![program.to_owned()];
-        if !program.ends_with(".cmd") {
-            candidates.push(format!("{program}.cmd"));
-        }
-        if !program.ends_with(".bat") {
-            candidates.push(format!("{program}.bat"));
-        }
-        candidates
-    }
-    #[cfg(not(windows))]
-    {
-        vec![program.to_owned()]
-    }
-}
-
-struct TemporaryDirectory {
-    path: PathBuf,
-}
-
-impl TemporaryDirectory {
-    fn new() -> Result<Self, io::Error> {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("aifuel-run-{}-{stamp}", std::process::id()));
-        fs::create_dir(&path)?;
-        Ok(Self { path })
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TemporaryDirectory {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir(&self.path);
-    }
-}
-
 #[cfg(test)]
-#[path = "agent_execution_tests.rs"]
 mod tests;
