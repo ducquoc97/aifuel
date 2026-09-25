@@ -77,7 +77,7 @@ pub(crate) fn statuses() -> Vec<CatalogProviderStatus> {
         .iter()
         .map(|id| {
             let (monitoring, agent_execution) = match *id {
-                "claude" | "codex" | "copilot" | "gemini" => {
+                "claude" | "codex" | "copilot" | "gemini" | "devin" => {
                     (CapabilityState::Supported, CapabilityState::Supported)
                 }
                 "antigravity" => (CapabilityState::Supported, CapabilityState::Unsupported),

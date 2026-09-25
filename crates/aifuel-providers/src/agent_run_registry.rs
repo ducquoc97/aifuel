@@ -6,6 +6,7 @@ static ADAPTERS: &[&dyn AgentExecutionAdapter] = &[
     &crate::copilot::AGENT_RUN_ADAPTER,
     &crate::gemini::AGENT_RUN_ADAPTER,
     &crate::antigravity::AGENT_RUN_ADAPTER,
+    &crate::devin::AGENT_RUN_ADAPTER,
 ];
 
 /// Return the compiled execution adapters registered for the built-in providers.
@@ -33,6 +34,7 @@ mod tests {
                 ProviderKey::Copilot,
                 ProviderKey::Gemini,
                 ProviderKey::Antigravity,
+                ProviderKey::Devin,
             ]
         );
     }
@@ -121,6 +123,13 @@ mod tests {
                 "Run `agy` interactively; follow first-launch sign-in, which may open a browser.",
                 "No non-interactive version or authentication status command is documented. Start `agy` manually to check setup; AI Fuel does not launch it.",
                 "https://antigravity.google/docs/cli/install",
+            ),
+            (
+                ProviderKey::Devin,
+                "macOS/Linux/WSL: `curl -fsSL https://cli.devin.ai/install.sh | bash`; Windows PowerShell: `irm https://static.devin.ai/cli/setup.ps1 | iex`.",
+                "Run `devin auth login` and complete the browser sign-in prompt.",
+                "Run `devin --version` to check the install; `devin auth status` reports the signed-in account and plan.",
+                "https://docs.devin.ai/cli",
             ),
         ];
 

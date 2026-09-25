@@ -36,7 +36,7 @@ parsing and process behavior; they do not replace live provider acceptance.
 - Provider account selection is fail-closed because the installed provider
   CLIs do not expose a verified account-binding flag through this interface.
 - The 69-provider catalog is represented with explicit capability and
-  per-platform states. Live Rust adapters currently cover the five AI Fuel
+  per-platform states. Live Rust adapters currently cover the six AI Fuel
   integrations; catalog-only providers remain unsupported.
 - The legacy Python source and tests remain as migration reference material.
   The Rust installer and runtime do not invoke Python.
@@ -437,3 +437,37 @@ it with `mcp-copilot-fallback`, and received `fixture-result`.
 
 This follow-up supersedes the earlier Copilot-specific unverified result above;
 that historical record remains unchanged to preserve the evidence timeline.
+
+## Devin CLI
+
+- Provider discovery accepts Devin's per-platform credential file:
+  `~/.local/share/devin/credentials.toml` on Linux,
+  `~/Library/Application Support/devin/credentials.toml` on macOS, and
+  `%APPDATA%/devin/credentials.toml` on Windows. Registry tests prove each
+  path initializes only the Devin provider without parsing file contents.
+- On 2026-09-25, a live Devin Pro account on Linux was exercised through
+  the built `aifuel` binary. `aifuel --text` discovered
+  `~/.local/share/devin/credentials.toml` and collected live quota through
+  `POST {api_server_url}/exa.seat_management_pb.SeatManagementService/GetUserStatus`
+  with `Connect-Protocol-Version: 1` and the stored API key, reporting
+  Daily (100% remaining), Weekly (100% remaining), and Overage credits
+  windows alongside plan `Pro`.
+- A live `aifuel run --provider devin --model swe-2-medium` print-mode
+  run returned the provider answer with exit code 0. A second read-only
+  run asked Devin to create a file; Devin's `auto` permission mode
+  rejected the confirmation-required tool call in non-interactive mode
+  and no file was created.
+- `aifuel mcp setup --agent devin` applied and cleanly removed a
+  user-scope `~/.config/devin/mcp_config.json`
+  `mcpServers.aifuel-gateway` entry with the `aifuel` command,
+  `args = ["mcp", "gateway", "--agent", "devin"]`, and
+  `transport = "stdio"`. Unit tests cover the expected entry,
+  semantic equality across JSON formatting and key order, preservation of
+  unrelated top-level keys and other `mcpServers` entries, creation of
+  the `mcpServers` document when the config is absent, removal of only
+  the gateway entry, and fail-closed errors for malformed JSON or a
+  non-object `mcpServers`.
+- macOS and Windows credential paths and the `--permission-mode
+  accept-edits` workspace-write mapping have not passed live acceptance;
+  resume is declared unsupported because `devin -p` does not report a
+  provider session id on stdout.

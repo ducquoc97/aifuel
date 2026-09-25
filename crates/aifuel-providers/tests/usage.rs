@@ -201,6 +201,64 @@ async fn codex_collection_normalizes_rate_limit_windows_and_account() {
 }
 
 #[tokio::test]
+async fn devin_collection_reads_toml_credentials_and_quota_windows() {
+    let home = TestHome::new();
+    fs::remove_file(home.path.join(".gemini/oauth_creds.json"))
+        .expect("Gemini fixture credentials should be removable");
+    let (endpoint, server) = start_fixed_server(
+        r#"{"userStatus":{"pro":true,"name":"Test User","teamId":"devin-team$account-1","teamsTier":"TEAMS_TIER_DEVIN_PRO","planStatus":{"planInfo":{"planName":"Pro","devinInfo":{"orgId":"org-1","apiUrl":"https://api.devin.ai","accountDisplayName":"Test Org"}},"planStart":"2026-09-25T08:05:10Z","planEnd":"2026-10-25T08:05:10Z","availablePromptCredits":-1,"dailyQuotaRemainingPercent":60,"weeklyQuotaRemainingPercent":40,"overageBalanceMicros":"10000000","dailyQuotaResetAtUnix":"1790409600","weeklyQuotaResetAtUnix":"1790496000"}}}"#,
+    );
+    fs::create_dir_all(home.path.join(".local/share/devin")).expect("Devin directory should exist");
+    let credentials =
+        format!("windsurf_api_key = \"test-devin-key\"\napi_server_url = \"{endpoint}\"\n");
+    fs::write(
+        home.path.join(".local/share/devin/credentials.toml"),
+        &credentials,
+    )
+    .expect("Devin credentials should exist");
+    let config = CollectionConfig {
+        devin_api_server_url: "http://127.0.0.1:1/".to_owned(),
+        ..CollectionConfig::default()
+    };
+    let monitoring =
+        ProviderMonitoring::new(&home.path, config).expect("provider monitoring should initialize");
+    let report = monitoring.collect_status().await;
+    server.join().expect("fixture server should finish");
+
+    assert_eq!(report.providers.len(), 1);
+    assert_eq!(report.providers[0].key, ProviderKey::Devin);
+    assert_eq!(report.providers[0].status, ProviderStatus::Ok);
+    let windows = &report.providers[0].windows;
+    let daily = windows
+        .iter()
+        .find(|window| window.label == "Daily quota")
+        .expect("daily quota window should exist");
+    assert_eq!(daily.period, "daily");
+    assert_eq!(daily.remaining_percent, Some(60.0));
+    assert_eq!(daily.resets_at, Some(1790409600.0));
+    let weekly = windows
+        .iter()
+        .find(|window| window.label == "Weekly quota")
+        .expect("weekly quota window should exist");
+    assert_eq!(weekly.period, "weekly");
+    assert_eq!(weekly.remaining_percent, Some(40.0));
+    assert_eq!(weekly.resets_at, Some(1790496000.0));
+    let overage = windows
+        .iter()
+        .find(|window| window.label == "Overage credits")
+        .expect("overage credits window should exist");
+    assert_eq!(overage.limit, Some(10.0));
+    assert_eq!(overage.remaining_percent, None);
+    assert_eq!(report.providers[0].plan.as_deref(), Some("Pro"));
+    assert_eq!(report.providers[0].account_id.as_deref(), Some("org-1"));
+    assert_eq!(
+        fs::read_to_string(home.path.join(".local/share/devin/credentials.toml"))
+            .expect("credentials should remain readable"),
+        credentials
+    );
+}
+
+#[tokio::test]
 async fn copilot_collection_accepts_comment_lines_and_quota_snapshots() {
     let home = TestHome::new();
     fs::create_dir_all(home.path.join(".copilot")).expect("Copilot directory should exist");
