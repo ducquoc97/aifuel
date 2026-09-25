@@ -2,7 +2,7 @@
 
 **The fuel gauge for your AI coding subscriptions.**
 
-You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity... so which one runs out first? `aifuel` reads each provider's own usage endpoint and shows the **quota you have left** - in one dashboard, ranked by whichever weekly / monthly window **resets soonest**, with a live countdown to every refill.
+You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity, Devin CLI... so which one runs out first? `aifuel` reads each provider's own usage endpoint and shows the **quota you have left** - in one dashboard, ranked by whichever weekly / monthly window **resets soonest**, with a live countdown to every refill.
 
 One native binary. Runs on **Windows, Linux, and macOS** in your browser, terminal, or an MCP host.
 
@@ -68,7 +68,7 @@ AI Fuel does not silently fall back to a different model.
 
 The pinned provider catalog preserves all 69 provider IDs as explicit
 capability states. The live Rust monitoring adapters currently cover Claude,
-Codex, Copilot, Gemini, and Antigravity; catalog-only entries remain clearly
+Codex, Copilot, Gemini, Antigravity, and Devin; catalog-only entries remain clearly
 unsupported until an evidence-backed adapter is added.
 
 ## Install as a global `aifuel` command

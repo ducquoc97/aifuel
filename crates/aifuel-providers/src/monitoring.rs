@@ -15,6 +15,7 @@ pub struct CollectionConfig {
     pub codex_usage_url: String,
     pub copilot_user_url: String,
     pub copilot_token_url: String,
+    pub devin_api_server_url: String,
     pub gemini_api_url: String,
 }
 
@@ -25,6 +26,7 @@ impl Default for CollectionConfig {
             codex_usage_url: "https://chatgpt.com/backend-api/codex/usage".to_owned(),
             copilot_user_url: "https://api.github.com/copilot_internal/user".to_owned(),
             copilot_token_url: "https://api.github.com/copilot_internal/v2/token".to_owned(),
+            devin_api_server_url: "https://server.codeium.com".to_owned(),
             gemini_api_url: "https://cloudcode-pa.googleapis.com/v1internal:".to_owned(),
         }
     }
@@ -37,6 +39,10 @@ impl CollectionConfig {
         replace_from_env(&mut config.codex_usage_url, "AIFUEL_CODEX_USAGE_URL");
         replace_from_env(&mut config.copilot_user_url, "AIFUEL_COPILOT_USER_URL");
         replace_from_env(&mut config.copilot_token_url, "AIFUEL_COPILOT_TOKEN_URL");
+        replace_from_env(
+            &mut config.devin_api_server_url,
+            "AIFUEL_DEVIN_API_SERVER_URL",
+        );
         replace_from_env(&mut config.gemini_api_url, "AIFUEL_GEMINI_API_URL");
         config
     }
