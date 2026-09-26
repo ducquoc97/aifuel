@@ -1,9 +1,11 @@
 [package]
 name = "aifuel-core"
+description = "Stable domain types shared by aifuel services and provider adapters"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde.workspace = true

@@ -1,13 +1,15 @@
 [package]
 name = "aifuel-mcp"
+description = "MCP servers for aifuel: read-only status, agent execution, and gateway"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
-aifuel-app = { path = "../aifuel-app" }
-aifuel-core = { path = "../aifuel-core" }
+aifuel-app = { path = "../aifuel-app", version = "0.1" }
+aifuel-core = { path = "../aifuel-core", version = "0.1" }
 futures-util.workspace = true
 process-wrap.workspace = true
 reqwest.workspace = true
