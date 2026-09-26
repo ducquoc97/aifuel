@@ -60,16 +60,18 @@ pub enum ProviderKey {
     Copilot,
     Gemini,
     Antigravity,
+    Devin,
 }
 
 impl ProviderKey {
     /// The keys in the stable catalog order used by the current application.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Claude,
         Self::Codex,
         Self::Copilot,
         Self::Gemini,
         Self::Antigravity,
+        Self::Devin,
     ];
 
     /// The stable serialized key for this provider.
@@ -104,6 +106,10 @@ impl ProviderKey {
                 key: "antigravity",
                 name: "Antigravity CLI",
             },
+            Self::Devin => ProviderMetadata {
+                key: "devin",
+                name: "Devin CLI",
+            },
         }
     }
 }
@@ -129,6 +135,7 @@ impl FromStr for ProviderKey {
             "copilot" => Ok(Self::Copilot),
             "gemini" => Ok(Self::Gemini),
             "antigravity" => Ok(Self::Antigravity),
+            "devin" => Ok(Self::Devin),
             _ => Err(InvalidProviderKey(value.to_owned())),
         }
     }
@@ -365,7 +372,7 @@ mod tests {
 
     #[test]
     fn provider_keys_have_stable_identity_and_names() {
-        assert_eq!(ProviderKey::ALL.len(), 5);
+        assert_eq!(ProviderKey::ALL.len(), 6);
         assert_eq!(ProviderKey::Claude.as_str(), "claude");
         assert_eq!(ProviderKey::Copilot.display_name(), "GitHub Copilot");
         assert_eq!(

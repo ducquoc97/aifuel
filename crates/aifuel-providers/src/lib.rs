@@ -13,6 +13,7 @@ mod claude;
 mod code_assist;
 mod codex;
 mod copilot;
+mod devin;
 mod discovery;
 mod gemini;
 mod model_catalog;

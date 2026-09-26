@@ -13,6 +13,7 @@ pub(crate) type ProviderCollector = for<'a> fn(&'a ProviderMonitoring) -> Monito
 /// The provider-owned source markers used by a Catalog Provider definition.
 enum CredentialSources {
     File(&'static str),
+    Files(&'static [&'static str]),
     Directories(&'static [&'static str]),
 }
 
@@ -27,6 +28,16 @@ impl CatalogProvider {
         Self {
             descriptor: ProviderDescriptor::for_key(key),
             sources: CredentialSources::File(source),
+        }
+    }
+
+    pub const fn files_source(
+        key: aifuel_core::ProviderKey,
+        sources: &'static [&'static str],
+    ) -> Self {
+        Self {
+            descriptor: ProviderDescriptor::for_key(key),
+            sources: CredentialSources::Files(sources),
         }
     }
 
@@ -49,6 +60,12 @@ impl CatalogProviderDefinition for CatalogProvider {
     fn discover(&self, context: &DiscoveryContext) -> Result<DiscoveryState, DiscoveryError> {
         match self.sources {
             CredentialSources::File(source) => context.inspect_source(source, SourceKind::File),
+            CredentialSources::Files(sources) => context.inspect_any(
+                sources
+                    .iter()
+                    .copied()
+                    .map(|source| (source, SourceKind::File)),
+            ),
             CredentialSources::Directories(sources) => context.inspect_any(
                 sources
                     .iter()
@@ -176,13 +193,14 @@ impl<'a> ProviderRegistry<'a> {
     }
 }
 
-/// The explicit catalog of the five current Catalog Provider identities.
+/// The explicit catalog of the six current Catalog Provider identities.
 pub static CATALOG_PROVIDERS: &[&dyn CatalogProviderDefinition] = &[
     &crate::claude::DEFINITION,
     &crate::codex::DEFINITION,
     &crate::copilot::DEFINITION,
     &crate::gemini::DEFINITION,
     &crate::antigravity::DEFINITION,
+    &crate::devin::DEFINITION,
 ];
 
 static MONITORING_ADAPTERS: &[MonitoringAdapter] = &[
@@ -205,6 +223,10 @@ static MONITORING_ADAPTERS: &[MonitoringAdapter] = &[
     MonitoringAdapter {
         provider: ProviderKey::Antigravity,
         collect: crate::antigravity::collect,
+    },
+    MonitoringAdapter {
+        provider: ProviderKey::Devin,
+        collect: crate::devin::collect,
     },
 ];
 
@@ -277,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_is_explicit_and_keeps_the_five_provider_identities() {
+    fn catalog_is_explicit_and_keeps_the_six_provider_identities() {
         let keys: Vec<_> = CATALOG_PROVIDERS
             .iter()
             .map(|provider| provider.descriptor().key)
@@ -291,6 +313,7 @@ mod tests {
                 ProviderKey::Copilot,
                 ProviderKey::Gemini,
                 ProviderKey::Antigravity,
+                ProviderKey::Devin,
             ]
         );
     }
@@ -324,6 +347,22 @@ mod tests {
             let selection = default_registry().discover_and_initialize(&home.context());
 
             assert_eq!(keys(&selection), vec![ProviderKey::Antigravity]);
+        }
+    }
+
+    #[test]
+    fn devin_accepts_any_platform_credential_file() {
+        for marker in [
+            ".local/share/devin/credentials.toml",
+            "Library/Application Support/devin/credentials.toml",
+            "AppData/Roaming/devin/credentials.toml",
+        ] {
+            let home = TestHome::new();
+            home.write_file(marker, b"present but unparsed");
+
+            let selection = default_registry().discover_and_initialize(&home.context());
+
+            assert_eq!(keys(&selection), vec![ProviderKey::Devin]);
         }
     }
 
