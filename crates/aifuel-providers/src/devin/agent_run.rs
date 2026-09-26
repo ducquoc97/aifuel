@@ -12,24 +12,27 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     &["--print", "--model", "--permission-mode"],
     build_args,
     parse_output,
-    // `devin -p --permission-mode auto` was live-verified as a read-only
+    // `devin --print --permission-mode auto` was live-verified as a read-only
     // boundary: a prompt asking to create a file produced "warning: rejected a
     // tool call that requires confirmation. Running in non-interactive mode."
     // and created nothing, while read-only tools were auto-approved.
-    ExecutionCapabilities::new(false, false, true, false).with_read_only(),
+    // `accept-edits` does not prove a workspace boundary; keep workspace-write
+    // blocked until native effect tests establish one.
+    ExecutionCapabilities::new(false, false, false, false).with_read_only(),
 )
 // Use the documented flag; `devin --version` exits cleanly (devin 3000.11.3).
 .with_version_probe(&["--version"])
+.with_authentication_probe(&["auth", "status"])
 .with_setup_guidance(AgentSetupGuidance {
     install: "macOS/Linux/WSL: `curl -fsSL https://cli.devin.ai/install.sh | bash`; Windows PowerShell: `irm https://static.devin.ai/cli/setup.ps1 | iex`.",
     login: "Run `devin auth login` and complete the browser sign-in prompt.",
-    check: "Run `devin --version` to check the install; `devin auth status` reports the signed-in account and plan.",
+    check: "Run `devin --version` to check the install. AI Fuel separately runs `devin auth status` with a bounded timeout and discards its output.",
     documentation_url: "https://docs.devin.ai/cli",
 });
 
 fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
     let mut args = vec![
-        "-p".to_owned(),
+        "--print".to_owned(),
         request.prompt.clone(),
         "--respect-workspace-trust".to_owned(),
         "false".to_owned(),
@@ -52,7 +55,7 @@ fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
                 "devin cannot provide verified JSON output".to_owned(),
             ));
         }
-        OutputFormat::Jsonl => unreachable!("JSONL was rejected during preflight"),
+        OutputFormat::Jsonl => unreachable!("JSONL is rejected during request validation"),
     }
     Ok(args)
 }

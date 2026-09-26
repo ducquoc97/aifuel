@@ -128,7 +128,7 @@ mod tests {
                 ProviderKey::Devin,
                 "macOS/Linux/WSL: `curl -fsSL https://cli.devin.ai/install.sh | bash`; Windows PowerShell: `irm https://static.devin.ai/cli/setup.ps1 | iex`.",
                 "Run `devin auth login` and complete the browser sign-in prompt.",
-                "Run `devin --version` to check the install; `devin auth status` reports the signed-in account and plan.",
+                "Run `devin --version` to check the install. AI Fuel separately runs `devin auth status` with a bounded timeout and discards its output.",
                 "https://docs.devin.ai/cli",
             ),
         ];

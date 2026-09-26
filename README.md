@@ -209,7 +209,7 @@ support for resources and prompts remains host-specific. The existing
 `aifuel mcp` read-only status server remains separate.
 
 Agent MCP Registration is available for Codex CLI, Claude Code, GitHub Copilot CLI,
-and Antigravity CLI. The Antigravity registration uses the global
+Gemini CLI, Antigravity CLI, and Devin CLI. The Antigravity registration uses the global
 `~/.gemini/config/mcp_config.json` file. Use `aifuel mcp setup --agent
 <host-id>` to apply or remove a managed Gateway entry without replacing other
 host configuration.
@@ -223,6 +223,7 @@ host configuration.
 | GitHub Copilot    | **live**      | `api.github.com/copilot_internal/user` or `api.github.com/copilot_internal/v2/token` (token from `~/.copilot/config.json`); non-live responses are surfaced as errors |
 | Gemini CLI        | **live**      | `:loadCodeAssist` → `:retrieveUserQuota` for real per-model bars (needs working OAuth and any required project); non-live responses are surfaced as errors |
 | Antigravity CLI   | **live**      | Code Assist quota via its live OAuth token sources; non-live responses are surfaced as errors |
+| Devin CLI         | **live**      | `POST {api_server_url}/exa.seat_management_pb.SeatManagementService/GetUserStatus` (key from `credentials.toml`); non-live responses are surfaced as errors |
 
 **Source legend:** `live` = pulled from the provider API. Any provider that cannot return live usage is shown as an error.
 

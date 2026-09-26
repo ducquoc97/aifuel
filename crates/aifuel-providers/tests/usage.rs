@@ -259,6 +259,36 @@ async fn devin_collection_reads_toml_credentials_and_quota_windows() {
 }
 
 #[tokio::test]
+async fn devin_collection_falls_back_to_configured_api_server_url() {
+    let home = TestHome::new();
+    fs::remove_file(home.path.join(".gemini/oauth_creds.json"))
+        .expect("Gemini fixture credentials should be removable");
+    let (endpoint, server) = start_fixed_server(
+        r#"{"userStatus":{"planStatus":{"planInfo":{"planName":"Pro"},"dailyQuotaRemainingPercent":88,"dailyQuotaResetAtUnix":"1790409600"}}}"#,
+    );
+    fs::create_dir_all(home.path.join(".local/share/devin")).expect("Devin directory should exist");
+    // No api_server_url in credentials: the configured default must be used.
+    fs::write(
+        home.path.join(".local/share/devin/credentials.toml"),
+        "windsurf_api_key = \"test-devin-key\"\n",
+    )
+    .expect("Devin credentials should exist");
+    let config = CollectionConfig {
+        devin_api_server_url: endpoint,
+        ..CollectionConfig::default()
+    };
+    let monitoring =
+        ProviderMonitoring::new(&home.path, config).expect("provider monitoring should initialize");
+    let report = monitoring.collect_status().await;
+    server.join().expect("fixture server should finish");
+
+    assert_eq!(report.providers.len(), 1);
+    assert_eq!(report.providers[0].key, ProviderKey::Devin);
+    assert_eq!(report.providers[0].status, ProviderStatus::Ok);
+    assert_eq!(report.providers[0].windows[0].remaining_percent, Some(88.0));
+}
+
+#[tokio::test]
 async fn copilot_collection_accepts_comment_lines_and_quota_snapshots() {
     let home = TestHome::new();
     fs::create_dir_all(home.path.join(".copilot")).expect("Copilot directory should exist");

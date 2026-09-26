@@ -2,7 +2,7 @@ use super::{CatalogProvider, MonitoringFuture, ProviderMonitoring};
 use crate::usage_helpers::{number, response_json, timestamp, value_string};
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow};
 use std::fs;
-use toml_edit::DocumentMut;
+use toml_edit::Document;
 
 mod agent_run;
 pub(crate) use agent_run::ADAPTER as AGENT_RUN_ADAPTER;
@@ -15,14 +15,11 @@ const CREDENTIAL_PATHS: &[&str] = &[
     "AppData/Roaming/devin/credentials.toml",
 ];
 
-pub static DEFINITION: CatalogProvider = CatalogProvider::files_source(
-    ProviderKey::Devin,
-    &[
-        ".local/share/devin/credentials.toml",
-        "Library/Application Support/devin/credentials.toml",
-        "AppData/Roaming/devin/credentials.toml",
-    ],
-);
+// Version reported to the Devin seat-management API in request metadata.
+const DEVIN_CLI_VERSION: &str = "3000.11.3";
+
+pub static DEFINITION: CatalogProvider =
+    CatalogProvider::files_source(ProviderKey::Devin, CREDENTIAL_PATHS);
 
 pub(crate) fn collect(service: &ProviderMonitoring) -> MonitoringFuture<'_> {
     Box::pin(collect_live(service))
@@ -40,7 +37,7 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
         Ok(raw) => raw,
         Err(error) => return ProviderUsage::error(ProviderKey::Devin, error.to_string()),
     };
-    let credentials = match raw.parse::<DocumentMut>() {
+    let credentials = match raw.parse::<Document<String>>() {
         Ok(document) => document,
         Err(error) => {
             return ProviderUsage::error(
@@ -75,9 +72,9 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
             "metadata": {
                 "apiKey": api_key,
                 "ideName": "devin",
-                "ideVersion": "3000.11.3",
+                "ideVersion": DEVIN_CLI_VERSION,
                 "extensionName": "devin",
-                "extensionVersion": "3000.11.3",
+                "extensionVersion": DEVIN_CLI_VERSION,
                 "locale": "en",
             }
         }))
@@ -123,7 +120,9 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
         .and_then(|status| status.get("overageBalanceMicros"))
         .and_then(number)
     {
-        let mut window = QuotaWindow::new("Overage credits", "monthly", None, None, None);
+        // A running dollar balance, not a periodic quota window; `limit`
+        // carries the remaining amount and no percentage is fabricated.
+        let mut window = QuotaWindow::new("Overage credits", "balance", None, None, None);
         window.limit = Some(micros / 1_000_000.0);
         windows.push(window);
     }
@@ -141,11 +140,6 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
     result.account_id = plan_info
         .and_then(|info| info.get("devinInfo"))
         .and_then(|info| info.get("orgId"))
-        .and_then(value_string)
-        .or_else(|| {
-            data.get("userStatus")
-                .and_then(|status| status.get("teamId"))
-                .and_then(value_string)
-        });
+        .and_then(value_string);
     result
 }

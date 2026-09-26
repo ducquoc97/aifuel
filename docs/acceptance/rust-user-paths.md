@@ -467,7 +467,8 @@ that historical record remains unchanged to preserve the evidence timeline.
   the `mcpServers` document when the config is absent, removal of only
   the gateway entry, and fail-closed errors for malformed JSON or a
   non-object `mcpServers`.
-- macOS and Windows credential paths and the `--permission-mode
-  accept-edits` workspace-write mapping have not passed live acceptance;
-  resume is declared unsupported because `devin -p` does not report a
-  provider session id on stdout.
+- macOS and Windows credential paths have not passed live acceptance.
+  Workspace-write is declared unsupported because `--permission-mode
+  accept-edits` has not passed a live workspace boundary check; resume is
+  declared unsupported because `devin -p` does not report a provider
+  session id on stdout.
