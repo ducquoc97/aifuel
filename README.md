@@ -1,8 +1,12 @@
 # ⛽ aifuel
 
-**The fuel gauge for your AI coding subscriptions.**
+**The fuel gauge for your AI coding subscriptions - and one interface for spending them.**
 
-You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity, Devin... so which one runs out first? `aifuel` reads each provider's own usage endpoint and shows the **quota you have left** - in one dashboard, ranked by whichever window **resets soonest**, with a live countdown to every refill.
+You're paying for Claude Code, Codex, Copilot, Gemini, Antigravity, Devin... so `aifuel` answers the two questions that matter: *which limit runs out first?* and *which subscription should take this prompt?*
+
+- **Know what's left.** `aifuel` reads each provider's own usage endpoint and shows the **quota you have left** - in one dashboard, ranked by whichever window **resets soonest**, with a live countdown to every refill.
+- **Spend it deliberately.** `aifuel run` sends a prompt through any installed provider CLI - one uniform, non-interactive interface with explicit model and permission selection, resumable sessions, local approvals, and `text|json|jsonl` output for scripts.
+- **Wire it into your agents.** Three MCP servers expose quota status, programmatic run management, and a gateway that fronts your external MCP servers - so every host gets the same tools from one config.
 
 One native binary. Runs on **Windows, Linux, and macOS** in your browser, terminal, or an MCP host.
 
@@ -10,14 +14,6 @@ One native binary. Runs on **Windows, Linux, and macOS** in your browser, termin
 ![Native binary](https://img.shields.io/badge/runtime-native%20binary-3ddc97)
 
 ![aifuel dashboard](docs/aifuel.png)
-
-## What it does
-
-- 🔋 Shows **remaining quota**, not spend - and ranks providers by which limit resets soonest.
-- 📦 Single Cargo-built binary; no Python, Node.js, or runtime to install.
-- 🖥️ Auto-refreshing web dashboard, colored terminal summary, or normalized JSON.
-- ▶️ `aifuel run` sends one explicit prompt through an installed provider CLI, with sessions, profiles, and local permission approvals.
-- 🔌 Three MCP modes: a read-only status server, a run-management server, and a gateway that exposes your external MCP servers to each agent.
 
 ## Install
 
