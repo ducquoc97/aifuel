@@ -160,22 +160,21 @@ impl RunManager {
             output,
             error,
             diagnostics,
+            account_id,
         ) = match result {
             Ok(result) => {
                 if let Some(session_id) = result.session_id.as_ref() {
+                    let persisted_session = PersistedSession {
+                        provider: result.provider_id,
+                        model: result.requested_model.clone(),
+                        effort: result.requested_effort.clone(),
+                        working_directory: result.working_directory.clone(),
+                    };
                     self.inner
                         .sessions
                         .lock()
                         .expect("run sessions mutex")
-                        .insert(
-                            session_id.clone(),
-                            SessionRecord {
-                                provider: result.provider_id,
-                                model: result.requested_model.clone(),
-                                effort: result.requested_effort.clone(),
-                                working_directory: result.working_directory.clone(),
-                            },
-                        );
+                        .insert(session_id.clone(), persisted_session.clone().into());
                     if let Some(store) = self
                         .inner
                         .session_store
@@ -183,15 +182,7 @@ impl RunManager {
                         .expect("session store mutex")
                         .as_mut()
                     {
-                        let _ = store.insert(
-                            session_id.clone(),
-                            PersistedSession {
-                                provider: result.provider_id,
-                                model: result.requested_model.clone(),
-                                effort: result.requested_effort.clone(),
-                                working_directory: result.working_directory.clone(),
-                            },
-                        );
+                        let _ = store.insert(session_id.clone(), persisted_session.clone());
                     }
                     if let Some(store) = self
                         .inner
@@ -200,15 +191,7 @@ impl RunManager {
                         .expect("run store mutex")
                         .as_ref()
                     {
-                        let _ = store.upsert_session(
-                            session_id,
-                            &PersistedSession {
-                                provider: result.provider_id,
-                                model: result.requested_model.clone(),
-                                effort: result.requested_effort.clone(),
-                                working_directory: result.working_directory.clone(),
-                            },
-                        );
+                        let _ = store.upsert_session(session_id, &persisted_session);
                     }
                 }
                 let state = if record.cancellation.is_cancelled()
@@ -233,6 +216,7 @@ impl RunManager {
                     Some(result.output),
                     result.error,
                     result.diagnostics,
+                    result.account_id,
                 )
             }
             Err(error) => {
@@ -251,6 +235,7 @@ impl RunManager {
                     None,
                     None,
                     Some(error.to_string()),
+                    None,
                     None,
                 )
             }
@@ -342,33 +327,6 @@ impl RunManager {
                 diagnostics_bytes,
             };
         }
-        if let Some(store) = self
-            .inner
-            .run_store
-            .lock()
-            .expect("run store mutex")
-            .as_ref()
-        {
-            let completed = {
-                let metadata = record.metadata.lock().expect("run metadata mutex");
-                crate::run_store::CompletedRun {
-                    state: metadata.state,
-                    status: metadata.result.status,
-                    completed_at: metadata.completed_at.unwrap_or_else(now),
-                    effective_model: metadata.result.effective_model.clone(),
-                    effective_effort: metadata.result.effective_effort.clone(),
-                    session_id: metadata.result.session_id.clone(),
-                    local_session_id: metadata.result.local_session_id.clone(),
-                    exit_code: metadata.result.exit_code,
-                    content_available: metadata.content_persisted,
-                    output_bytes: metadata.result.output_bytes,
-                    diagnostics_bytes: metadata.result.diagnostics_bytes,
-                    output_truncated: metadata.result.output_truncated,
-                    diagnostics_truncated: metadata.result.diagnostics_truncated,
-                }
-            };
-            let _ = store.record_completed(&record.run_id, completed);
-        }
         record
             .output_capture
             .lock()
@@ -390,6 +348,36 @@ impl RunManager {
             _ => RunEventKind::Failed,
         };
         self.push_event(record, terminal_kind, None);
+        // The terminal event row lands before the terminal state so a history
+        // reader never sees a completed run whose stream lacks its last event.
+        if let Some(store) = self
+            .inner
+            .run_store
+            .lock()
+            .expect("run store mutex")
+            .as_ref()
+        {
+            let completed = {
+                let metadata = record.metadata.lock().expect("run metadata mutex");
+                crate::run_store::CompletedRun {
+                    state: metadata.state,
+                    status: metadata.result.status,
+                    completed_at: metadata.completed_at.unwrap_or_else(now),
+                    effective_model: metadata.result.effective_model.clone(),
+                    effective_effort: metadata.result.effective_effort.clone(),
+                    session_id: metadata.result.session_id.clone(),
+                    local_session_id: metadata.result.local_session_id.clone(),
+                    exit_code: metadata.result.exit_code,
+                    content_available: metadata.content_persisted,
+                    account_id: account_id.clone(),
+                    output_bytes: metadata.result.output_bytes,
+                    diagnostics_bytes: metadata.result.diagnostics_bytes,
+                    output_truncated: metadata.result.output_truncated,
+                    diagnostics_truncated: metadata.result.diagnostics_truncated,
+                }
+            };
+            let _ = store.record_completed(&record.run_id, completed);
+        }
         let _ = record
             .workspace_lock
             .lock()

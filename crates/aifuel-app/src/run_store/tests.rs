@@ -1,4 +1,3 @@
-use super::helpers::now;
 use super::*;
 use aifuel_core::{
     ProviderKey, RUN_MANAGEMENT_SCHEMA_VERSION, RunEvent, RunEventKind, RunState, RunStatus,
@@ -41,6 +40,7 @@ fn completed_run() -> CompletedRun {
         local_session_id: Some("local-session".to_owned()),
         exit_code: Some(0),
         content_available: false,
+        account_id: Some("acct-1".to_owned()),
         output_bytes: 12,
         diagnostics_bytes: 0,
         output_truncated: false,
@@ -77,6 +77,22 @@ fn terminal_run_metadata_roundtrips_without_content() {
     assert_eq!(run.provider, ProviderKey::Claude);
     assert_eq!(run.state, RunState::Succeeded);
     assert_eq!(run.session_id.as_deref(), Some("native-session"));
+
+    let reported_account: Option<String> = store
+        .connection
+        .lock()
+        .expect("run store mutex")
+        .query_row(
+            "SELECT account_id FROM runs WHERE run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("reported account reads");
+    assert_eq!(
+        reported_account.as_deref(),
+        Some("acct-1"),
+        "reported account context persists"
+    );
 
     let result = run.result();
     assert_eq!(result.status, Some(RunStatus::Succeeded));
@@ -280,6 +296,49 @@ fn legacy_session_file_imports_into_the_database() {
 }
 
 #[test]
+fn live_foreign_owner_terminal_rows_stay_hidden() {
+    let path = store_path("foreign-owner");
+    let store = RunStore::open(&path).expect("store opens");
+
+    // A terminal row whose owner process is still running is another
+    // connection's record: the run id alone must not authorize this owner.
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("probe process spawns");
+    store
+        .connection
+        .lock()
+        .expect("run store mutex")
+        .execute(
+            "INSERT INTO runs (run_id, owner_pid, provider, state, created_at)
+            VALUES ('foreign', ?1, 'claude', 'succeeded', 0)",
+            params![child.id() as i64],
+        )
+        .expect("foreign row inserts");
+
+    assert!(
+        store.stored_run("foreign").expect("run reads").is_none(),
+        "a live foreign owner's run must not resolve"
+    );
+    assert!(
+        store
+            .stored_events("foreign", 0, 4096)
+            .expect("events read")
+            .is_none(),
+        "a live foreign owner's event stream must not resolve"
+    );
+
+    child.kill().expect("probe process stops");
+    child.wait().expect("probe process is reaped");
+    assert!(
+        store.stored_run("foreign").expect("run reads").is_some(),
+        "the row becomes orphaned history once the owner exits"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn exited_owners_reconcile_to_failed_on_next_open() {
     let path = store_path("reconcile");
     let store = RunStore::open(&path).expect("store opens");
@@ -312,6 +371,16 @@ fn exited_owners_reconcile_to_failed_on_next_open() {
         .expect("run reads")
         .expect("reconciled run is terminal and visible");
     assert_eq!(run.state, RunState::Failed);
+    assert_eq!(run.status, Some(RunStatus::Failed));
+    let page = reopened
+        .stored_events("orphaned", 0, 4096)
+        .expect("events read")
+        .expect("reconciled stream is readable");
+    assert_eq!(
+        page.events.last().map(|event| event.kind),
+        Some(RunEventKind::Failed),
+        "reconciled streams end with a terminal event"
+    );
     let reason: Option<String> = reopened
         .connection
         .lock()

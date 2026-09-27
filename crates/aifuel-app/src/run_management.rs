@@ -194,6 +194,17 @@ struct SessionRecord {
     working_directory: PathBuf,
 }
 
+impl From<PersistedSession> for SessionRecord {
+    fn from(session: PersistedSession) -> Self {
+        Self {
+            provider: session.provider,
+            model: session.model,
+            effort: session.effort,
+            working_directory: session.working_directory,
+        }
+    }
+}
+
 struct RunRecord {
     run_id: String,
     provider: aifuel_core::ProviderKey,
@@ -276,6 +287,8 @@ mod observation;
 mod records;
 mod sessions;
 mod workers;
+
+pub(crate) use helpers::{event_size, now};
 
 #[cfg(test)]
 mod tests;

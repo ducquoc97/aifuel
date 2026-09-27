@@ -12,6 +12,7 @@
 //! reconciled to `failed` with `owner_exited` when another owner opens the
 //! database.
 
+use crate::run_management::{event_size, now};
 use crate::session_store::{PersistedSession, SessionStore};
 use aifuel_core::{RunEvent, RunEventKind, RunState, RunStatus};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -19,8 +20,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use helpers::{invalid_text, now, pid_alive};
-use schema::{SCHEMA, SCHEMA_VERSION, TERMINAL_STATES};
+use helpers::{invalid_text, pid_alive};
+use schema::{SCHEMA, SCHEMA_VERSION, TERMINAL_STATES, ensure_column};
 
 pub use error::RunStoreError;
 pub(crate) use records::{CompletedRun, StartedRun, StoredEventPage, StoredRun};
@@ -54,6 +55,7 @@ impl RunStore {
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
         connection.execute_batch(SCHEMA)?;
+        ensure_column(&connection, "runs", "account_id", "account_id TEXT")?;
         connection.execute(
             "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?1)",
             params![SCHEMA_VERSION.to_string()],
@@ -86,11 +88,12 @@ impl RunStore {
                     working_directory, requested_model, requested_effort,
                     external_tools, output_format, access, timeout_seconds,
                     account, resume
-                ) VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 run.run_id,
                 self.owner_pid,
                 run.provider.as_str(),
+                RunState::Starting.as_str(),
                 run.created_at,
                 run.working_directory,
                 run.requested_model,
@@ -119,7 +122,7 @@ impl RunStore {
                     session_id = ?7, local_session_id = ?8, exit_code = ?9,
                     content_available = ?10, output_bytes = ?11,
                     diagnostics_bytes = ?12, output_truncated = ?13,
-                    diagnostics_truncated = ?14
+                    diagnostics_truncated = ?14, account_id = ?15
                 WHERE run_id = ?1",
             params![
                 run_id,
@@ -136,6 +139,7 @@ impl RunStore {
                 run.diagnostics_bytes as i64,
                 run.output_truncated,
                 run.diagnostics_truncated,
+                run.account_id,
             ],
         )?;
         Ok(())
@@ -202,13 +206,7 @@ impl RunStore {
                 |row| {
                     let provider: String = row.get(0)?;
                     Ok(PersistedSession {
-                        provider: provider.parse().map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                0,
-                                "provider".to_owned(),
-                                rusqlite::types::Type::Text,
-                            )
-                        })?,
+                        provider: provider.parse().map_err(|_| invalid_text(0))?,
                         model: row.get(1)?,
                         effort: row.get(2)?,
                         working_directory: Path::new(&row.get::<_, String>(3)?).to_path_buf(),
@@ -234,7 +232,10 @@ impl RunStore {
     }
 
     /// Return one terminal run's persisted metadata. Non-terminal rows belong
-    /// to live owners and are never served across connections.
+    /// to live owners and are never served across connections. Terminal rows
+    /// owned by a process that is still running also stay hidden: a run ID is
+    /// authorized only for its owning connection, and orphaned history opens
+    /// up only once the owner has exited.
     pub(crate) fn stored_run(&self, run_id: &str) -> Result<Option<StoredRun>, RunStoreError> {
         let connection = self.connection.lock().expect("run store mutex");
         let run = connection
@@ -245,7 +246,7 @@ impl RunStore {
                         external_tools, session_id, local_session_id, exit_code,
                         created_at, completed_at,
                         content_available, output_bytes, diagnostics_bytes,
-                        output_truncated, diagnostics_truncated
+                        output_truncated, diagnostics_truncated, owner_pid
                     FROM runs WHERE run_id = ?1 AND state IN ({TERMINAL_STATES})"
                 ),
                 params![run_id],
@@ -282,11 +283,12 @@ impl RunStore {
                         diagnostics_bytes: row.get::<_, i64>(16)?.max(0) as usize,
                         output_truncated: row.get::<_, i64>(17)? != 0,
                         diagnostics_truncated: row.get::<_, i64>(18)? != 0,
+                        owner_pid: row.get(19)?,
                     })
                 },
             )
             .optional()?;
-        Ok(run)
+        Ok(run.filter(|run| self.owner_visible(run.owner_pid)))
     }
 
     /// Read one page of events for a terminal run. `after` is the decoded
@@ -299,14 +301,16 @@ impl RunStore {
         page_bytes: usize,
     ) -> Result<Option<StoredEventPage>, RunStoreError> {
         let connection = self.connection.lock().expect("run store mutex");
-        let terminal: Option<i64> = connection
+        let owner_pid: Option<i64> = connection
             .query_row(
-                &format!("SELECT 1 FROM runs WHERE run_id = ?1 AND state IN ({TERMINAL_STATES})"),
+                &format!(
+                    "SELECT owner_pid FROM runs WHERE run_id = ?1 AND state IN ({TERMINAL_STATES})"
+                ),
                 params![run_id],
                 |row| row.get(0),
             )
             .optional()?;
-        if terminal.is_none() {
+        if !owner_pid.is_some_and(|owner| self.owner_visible(owner)) {
             return Ok(None);
         }
         let latest_sequence: i64 = connection.query_row(
@@ -324,20 +328,21 @@ impl RunStore {
         let mut has_more = false;
         while let Some(row) = rows.next()? {
             let data: Option<String> = row.get(3)?;
-            let event_bytes = data.as_ref().map_or(0, String::len).saturating_add(96);
-            if !events.is_empty() && used.saturating_add(event_bytes) > page_bytes {
-                has_more = true;
-                break;
-            }
             let kind: String = row.get(1)?;
-            events.push(RunEvent {
+            let event = RunEvent {
                 schema_version: aifuel_core::RUN_MANAGEMENT_SCHEMA_VERSION,
                 run_id: run_id.to_owned(),
                 sequence: row.get::<_, i64>(0)?.max(0) as u64,
                 created_at: row.get(2)?,
                 kind: RunEventKind::parse(&kind).ok_or_else(|| invalid_text(1))?,
                 data,
-            });
+            };
+            let event_bytes = event_size(&event);
+            if !events.is_empty() && used.saturating_add(event_bytes) > page_bytes {
+                has_more = true;
+                break;
+            }
+            events.push(event);
             used = used.saturating_add(event_bytes);
         }
         Ok(Some(StoredEventPage {
@@ -347,9 +352,18 @@ impl RunStore {
         }))
     }
 
-    /// Mark rows left non-terminal by exited owner processes as failed. An
-    /// owner id is its process id; pid reuse can leave a stale row non-terminal
-    /// until the recycled pid exits, which is harmless.
+    /// A persisted row is visible to this owner only when it was written by
+    /// this owner process or by a process that has since exited. Terminal
+    /// rows owned by another live process stay hidden, preserving the
+    /// connection-scoped run contract.
+    fn owner_visible(&self, owner_pid: i64) -> bool {
+        owner_pid == i64::from(self.owner_pid) || (owner_pid > 0 && !pid_alive(owner_pid as u32))
+    }
+
+    /// Mark rows left non-terminal by exited owner processes as failed and
+    /// append the terminal event their streams never received. An owner id is
+    /// its process id; pid reuse can leave a stale row non-terminal until the
+    /// recycled pid exits, which is harmless.
     fn reconcile_orphaned_runs(&self) -> Result<(), RunStoreError> {
         let connection = self.connection.lock().expect("run store mutex");
         let owners: Vec<i64> = {
@@ -365,14 +379,24 @@ impl RunStore {
             if owner <= 0 || pid_alive(owner as u32) {
                 continue;
             }
-            connection.execute(
-                &format!(
-                    "UPDATE runs SET state = 'failed', completed_at = ?1,
-                        closed_reason = 'owner_exited'
-                    WHERE owner_pid = ?2 AND state NOT IN ({TERMINAL_STATES})"
-                ),
-                params![now(), owner],
-            )?;
+            let orphaned: Vec<String> = connection
+                .prepare(&format!(
+                    "UPDATE runs SET state = 'failed', status = 'failed',
+                        completed_at = ?1, closed_reason = 'owner_exited'
+                    WHERE owner_pid = ?2 AND state NOT IN ({TERMINAL_STATES})
+                    RETURNING run_id"
+                ))?
+                .query_map(params![now(), owner], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            for run_id in orphaned {
+                connection.execute(
+                    "INSERT OR IGNORE INTO events (run_id, seq, kind, created_at, data)
+                    VALUES (?1, COALESCE((
+                        SELECT MAX(seq) FROM events WHERE run_id = ?1
+                    ), 0) + 1, 'failed', ?2, NULL)",
+                    params![run_id, now()],
+                )?;
+            }
         }
         Ok(())
     }

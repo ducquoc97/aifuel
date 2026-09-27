@@ -91,7 +91,7 @@ pub(super) fn map_validation_error(error: AgentRunError) -> RunManagementError {
     }
 }
 
-pub(super) fn event_size(event: &RunEvent) -> usize {
+pub(crate) fn event_size(event: &RunEvent) -> usize {
     event
         .data
         .as_ref()
@@ -155,7 +155,7 @@ pub(super) fn utf8_prefix_len(value: &str, limit: usize) -> usize {
     end
 }
 
-pub(super) fn now() -> f64 {
+pub(crate) fn now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

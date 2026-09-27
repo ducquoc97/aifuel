@@ -1,17 +1,8 @@
-//! Platform helpers: timestamp conversion, column-type errors, and owner
-//! process liveness used by stale-run reconciliation.
-
-use std::time::{SystemTime, UNIX_EPOCH};
+//! Platform helpers: column-type errors and owner process liveness used by
+//! stale-run reconciliation and history visibility checks.
 
 pub(super) fn invalid_text(column: usize) -> rusqlite::Error {
     rusqlite::Error::InvalidColumnType(column, "text".to_owned(), rusqlite::types::Type::Text)
-}
-
-pub(super) fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
 }
 
 #[cfg(unix)]
@@ -23,7 +14,7 @@ pub(super) fn pid_alive(pid: u32) -> bool {
         return true;
     }
     // EPERM means the process exists but belongs to another user.
-    std::io::Error::last_os_error().raw_os_error() == Some(1)
+    std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
 }
 
 #[cfg(windows)]

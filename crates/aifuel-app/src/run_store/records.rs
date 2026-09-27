@@ -37,6 +37,8 @@ pub(crate) struct CompletedRun {
     /// store. Owner-held memory content does not count: after the owner
     /// exits, only persisted payloads remain available.
     pub content_available: bool,
+    /// The account context reported by the provider, when it reports one.
+    pub account_id: Option<String>,
     pub output_bytes: usize,
     pub diagnostics_bytes: usize,
     pub output_truncated: bool,
@@ -46,6 +48,10 @@ pub(crate) struct CompletedRun {
 /// One persisted terminal run row.
 pub(crate) struct StoredRun {
     pub run_id: String,
+    /// Process id of the owner that wrote the row. Used to decide whether the
+    /// row is orphaned history (owner exited) or another live owner's record,
+    /// which stays hidden from this connection.
+    pub owner_pid: i64,
     pub provider: ProviderKey,
     pub state: RunState,
     pub status: Option<RunStatus>,

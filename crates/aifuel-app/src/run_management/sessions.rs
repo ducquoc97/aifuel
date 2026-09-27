@@ -70,12 +70,7 @@ impl RunManager {
                     .expect("session store mutex")
                     .as_ref()
                     .and_then(|store| store.get(session_id))
-                    .map(|session| SessionRecord {
-                        provider: session.provider,
-                        model: session.model,
-                        effort: session.effort,
-                        working_directory: session.working_directory,
-                    })
+                    .map(SessionRecord::from)
             })
             .or_else(|| {
                 self.inner
@@ -84,12 +79,7 @@ impl RunManager {
                     .expect("run store mutex")
                     .as_ref()
                     .and_then(|store| store.session(session_id).ok().flatten())
-                    .map(|session| SessionRecord {
-                        provider: session.provider,
-                        model: session.model,
-                        effort: session.effort,
-                        working_directory: session.working_directory,
-                    })
+                    .map(SessionRecord::from)
             })
     }
 }

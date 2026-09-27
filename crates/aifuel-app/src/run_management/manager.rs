@@ -361,6 +361,29 @@ impl RunManager {
                     .lock()
                     .expect("run records mutex")
                     .remove(&run_id);
+                // Close the persisted row now; otherwise it would sit
+                // non-terminal until this owner's process exits.
+                if let Some(store) = &run_store {
+                    let _ = store.record_completed(
+                        &run_id,
+                        crate::run_store::CompletedRun {
+                            state: RunState::Failed,
+                            status: Some(RunStatus::Failed),
+                            completed_at: now(),
+                            effective_model: None,
+                            effective_effort: None,
+                            session_id: None,
+                            local_session_id: None,
+                            exit_code: None,
+                            content_available: false,
+                            account_id: None,
+                            output_bytes: 0,
+                            diagnostics_bytes: 0,
+                            output_truncated: false,
+                            diagnostics_truncated: false,
+                        },
+                    );
+                }
                 RunManagementError::new(
                     RunManagementErrorCode::Internal,
                     format!("could not start Agent Run worker: {error}"),

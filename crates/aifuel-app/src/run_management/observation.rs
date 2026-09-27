@@ -26,12 +26,7 @@ impl RunManager {
         let Ok(record) = self.record(run_id) else {
             return self.read_stored_events(run_id, cursor, page_bytes);
         };
-        let page_bytes = page_bytes.unwrap_or(DEFAULT_EVENT_PAGE_BYTES);
-        if page_bytes == 0 || page_bytes > MAX_EVENT_PAGE_BYTES {
-            return Err(RunManagementError::invalid_request(format!(
-                "event page must be between 1 and {MAX_EVENT_PAGE_BYTES} bytes"
-            )));
-        }
+        let page_bytes = checked_page_bytes(page_bytes)?;
         let cursor_sequence = cursor
             .map(|cursor| decode_cursor(run_id, cursor))
             .transpose()?;
@@ -137,12 +132,7 @@ impl RunManager {
         cursor: Option<&str>,
         page_bytes: Option<usize>,
     ) -> Result<RunEvents, RunManagementError> {
-        let page_bytes = page_bytes.unwrap_or(DEFAULT_EVENT_PAGE_BYTES);
-        if page_bytes == 0 || page_bytes > MAX_EVENT_PAGE_BYTES {
-            return Err(RunManagementError::invalid_request(format!(
-                "event page must be between 1 and {MAX_EVENT_PAGE_BYTES} bytes"
-            )));
-        }
+        let page_bytes = checked_page_bytes(page_bytes)?;
         let store = self
             .inner
             .run_store
@@ -150,9 +140,6 @@ impl RunManager {
             .expect("run store mutex")
             .clone()
             .ok_or_else(|| RunManagementError::run_not_found(run_id))?;
-        if self.stored_run(run_id)?.is_none() {
-            return Err(RunManagementError::run_not_found(run_id));
-        }
         let cursor_sequence = cursor
             .map(|cursor| decode_cursor(run_id, cursor))
             .transpose()?;
@@ -185,6 +172,16 @@ impl RunManager {
             terminal: true,
         })
     }
+}
+
+fn checked_page_bytes(page_bytes: Option<usize>) -> Result<usize, RunManagementError> {
+    let page_bytes = page_bytes.unwrap_or(DEFAULT_EVENT_PAGE_BYTES);
+    if page_bytes == 0 || page_bytes > MAX_EVENT_PAGE_BYTES {
+        return Err(RunManagementError::invalid_request(format!(
+            "event page must be between 1 and {MAX_EVENT_PAGE_BYTES} bytes"
+        )));
+    }
+    Ok(page_bytes)
 }
 
 impl RunManager {
