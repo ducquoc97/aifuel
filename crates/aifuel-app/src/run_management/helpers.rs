@@ -91,35 +91,51 @@ pub(super) fn map_validation_error(error: AgentRunError) -> RunManagementError {
     }
 }
 
+/// Estimated per-event metadata overhead for byte-budget accounting, shared
+/// by the in-memory buffer and the persisted event reader.
+pub(crate) const EVENT_METADATA_BYTES: usize = 96;
+
 pub(crate) fn event_size(event: &RunEvent) -> usize {
     event
         .data
         .as_ref()
         .map_or(0, String::len)
-        .saturating_add(96)
+        .saturating_add(EVENT_METADATA_BYTES)
 }
 
-pub(super) fn encode_cursor(run_id: &str, sequence: u64) -> String {
+pub(super) fn encode_cursor(run_id: &str, owner_tag: u64, sequence: u64) -> String {
     let owner = run_id
         .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    format!("{owner}.{sequence:x}")
+    format!("{owner}.{owner_tag:x}.{sequence:x}")
 }
 
-pub(super) fn decode_cursor(run_id: &str, cursor: &str) -> Result<u64, RunManagementError> {
-    let (owner, sequence) = cursor
-        .split_once('.')
-        .ok_or_else(|| RunManagementError::invalid_cursor("event cursor is malformed"))?;
+pub(super) fn decode_cursor(
+    run_id: &str,
+    owner_tag: u64,
+    cursor: &str,
+) -> Result<u64, RunManagementError> {
+    let invalid =
+        || RunManagementError::invalid_cursor("event cursor is malformed or foreign to this owner");
+    let mut parts = cursor.splitn(3, '.');
+    let (Some(owner), Some(tag), Some(sequence)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Err(invalid());
+    };
     let expected = run_id
         .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    if owner != expected || sequence.is_empty() {
+    if owner != expected
+        || tag != format!("{owner_tag:x}")
+        || sequence.is_empty()
+        || parts.next().is_some()
+    {
         return Err(RunManagementError::invalid_cursor(
-            "event cursor belongs to another run or is malformed",
+            "event cursor belongs to another run or owner",
         ));
     }
     u64::from_str_radix(sequence, 16)

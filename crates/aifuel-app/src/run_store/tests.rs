@@ -1,16 +1,9 @@
 use super::*;
+use crate::test_support::store_path;
 use aifuel_core::{
     ProviderKey, RUN_MANAGEMENT_SCHEMA_VERSION, RunEvent, RunEventKind, RunState, RunStatus,
 };
 use std::path::PathBuf;
-
-fn store_path(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "aifuel-run-store-{label}-{}-{}.db",
-        std::process::id(),
-        now().to_bits()
-    ))
-}
 
 fn started_run(run_id: &str) -> StartedRun {
     StartedRun {
@@ -24,7 +17,7 @@ fn started_run(run_id: &str) -> StartedRun {
         output_format: Some("text".to_owned()),
         access: Some("read-only".to_owned()),
         timeout_seconds: Some(30),
-        account: None,
+        requested_account: None,
         resume: None,
     }
 }
@@ -39,8 +32,9 @@ fn completed_run() -> CompletedRun {
         session_id: Some("native-session".to_owned()),
         local_session_id: Some("local-session".to_owned()),
         exit_code: Some(0),
+        closed_reason: None,
+        reported_account: Some("acct-1".to_owned()),
         content_available: false,
-        account_id: Some("acct-1".to_owned()),
         output_bytes: 12,
         diagnostics_bytes: 0,
         output_truncated: false,
@@ -78,24 +72,13 @@ fn terminal_run_metadata_roundtrips_without_content() {
     assert_eq!(run.state, RunState::Succeeded);
     assert_eq!(run.session_id.as_deref(), Some("native-session"));
 
-    let reported_account: Option<String> = store
-        .connection
-        .lock()
-        .expect("run store mutex")
-        .query_row(
-            "SELECT account_id FROM runs WHERE run_id = 'run-1'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("reported account reads");
-    assert_eq!(
-        reported_account.as_deref(),
-        Some("acct-1"),
-        "reported account context persists"
-    );
-
     let result = run.result();
     assert_eq!(result.status, Some(RunStatus::Succeeded));
+    assert_eq!(
+        result.account_id.as_deref(),
+        Some("acct-1"),
+        "reported account context survives the round trip"
+    );
     assert_eq!(result.exit_code, Some(0));
     assert_eq!(result.output_bytes, 12);
     assert_eq!(result.output, None);
@@ -243,14 +226,29 @@ fn session_keys_are_scoped_by_provider() {
         effort: Some("high".to_owned()),
         working_directory: PathBuf::from("/repo-b"),
     };
-    // Identical native session ids under different providers must coexist.
-    store.upsert_session("same-id", &claude).expect("upsert");
+    // Identical native session ids under different providers must coexist,
+    // and a provider-scoped lookup must return that provider's row even when
+    // another provider's association is newer.
     store.upsert_session("same-id", &codex).expect("upsert");
+    store.upsert_session("same-id", &claude).expect("upsert");
     let found = store
-        .session("same-id")
+        .session("same-id", Some(ProviderKey::Codex))
         .expect("session reads")
         .expect("session exists");
     assert_eq!(found.provider, ProviderKey::Codex);
+    assert_eq!(found.model.as_deref(), Some("codex-model"));
+    let found = store
+        .session("same-id", Some(ProviderKey::Claude))
+        .expect("session reads")
+        .expect("session exists");
+    assert_eq!(found.provider, ProviderKey::Claude);
+    assert_eq!(found.model.as_deref(), Some("claude-model"));
+    // The unscoped read still resolves to the most recent association.
+    let found = store
+        .session("same-id", None)
+        .expect("session reads")
+        .expect("session exists");
+    assert_eq!(found.provider, ProviderKey::Claude);
     let _ = std::fs::remove_file(path);
 }
 
@@ -283,7 +281,7 @@ fn legacy_session_file_imports_into_the_database() {
         1
     );
     let session = store
-        .session("legacy-session")
+        .session("legacy-session", Some(ProviderKey::Codex))
         .expect("session reads")
         .expect("imported session exists");
     assert_eq!(session.provider, ProviderKey::Codex);
@@ -301,7 +299,7 @@ fn live_foreign_owner_terminal_rows_stay_hidden() {
     let store = RunStore::open(&path).expect("store opens");
 
     // A terminal row whose owner process is still running is another
-    // connection's record: the run id alone must not authorize this owner.
+    // owner's record: the run id alone must not authorize this owner.
     let mut child = std::process::Command::new("sleep")
         .arg("30")
         .spawn()
@@ -335,6 +333,97 @@ fn live_foreign_owner_terminal_rows_stay_hidden() {
         store.stored_run("foreign").expect("run reads").is_some(),
         "the row becomes orphaned history once the owner exits"
     );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn persisted_payloads_stop_at_the_event_budget() {
+    let path = store_path("payload-budget");
+    let store = RunStore::open(&path).expect("store opens");
+    store
+        .record_started(started_run("run-1"))
+        .expect("run starts");
+    let full = "x".repeat(aifuel_core::MAX_EVENT_BYTES_PER_RUN);
+    store
+        .append_event(&event("run-1", 1, RunEventKind::Output, Some(&full)), true)
+        .expect("event appends");
+    store
+        .append_event(
+            &event("run-1", 2, RunEventKind::Output, Some("overflow")),
+            true,
+        )
+        .expect("event appends");
+    store
+        .record_completed("run-1", completed_run())
+        .expect("run completes");
+
+    let page = store
+        .stored_events("run-1", 0, usize::MAX)
+        .expect("events read")
+        .expect("terminal events are visible");
+    assert_eq!(page.events.len(), 2, "metadata rows keep landing");
+    assert_eq!(page.events[0].data.as_deref(), Some(full.as_str()));
+    assert_eq!(
+        page.events[1].data, None,
+        "payloads past the per-run budget persist as metadata-only rows"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn reconcile_does_not_duplicate_a_terminal_event() {
+    let path = store_path("reconcile-dedup");
+    let store = RunStore::open(&path).expect("store opens");
+
+    // An owner that persisted its terminal event but died before the run row
+    // closed must not gain a second terminal event on reconciliation.
+    let dead_pid = {
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("probe process spawns");
+        let pid = child.id();
+        child.wait().expect("probe process exits");
+        pid
+    };
+    {
+        let connection = store.connection.lock().expect("run store mutex");
+        connection
+            .execute(
+                "INSERT INTO runs (run_id, owner_pid, provider, state, created_at)
+                VALUES ('half-closed', ?1, 'claude', 'running', 0)",
+                params![dead_pid as i64],
+            )
+            .expect("orphan row inserts");
+        connection
+            .execute(
+                "INSERT INTO events (run_id, seq, kind, created_at)
+                VALUES ('half-closed', 7, 'completed', 0)",
+                [],
+            )
+            .expect("terminal event inserts");
+    }
+    drop(store);
+
+    let reopened = RunStore::open(&path).expect("store reopens");
+    let page = reopened
+        .stored_events("half-closed", 0, 4096)
+        .expect("events read")
+        .expect("reconciled stream is readable");
+    let terminal = page
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                RunEventKind::Completed
+                    | RunEventKind::Failed
+                    | RunEventKind::Cancelled
+                    | RunEventKind::TimedOut
+            )
+        })
+        .count();
+    assert_eq!(terminal, 1, "the stream keeps its single terminal event");
+    assert_eq!(page.events[0].sequence, 7);
     let _ = std::fs::remove_file(path);
 }
 

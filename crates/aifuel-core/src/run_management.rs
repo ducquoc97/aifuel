@@ -360,6 +360,12 @@ pub struct ManagedRunResult {
     pub local_session_id: Option<String>,
     pub session_id: Option<String>,
     pub status: Option<RunStatus>,
+    /// Stable failure category (for example `provider_failed`,
+    /// `agent_unavailable`, `owner_exited`) when the run did not succeed.
+    /// Unlike `error`, this is metadata and never contains content.
+    pub closed_reason: Option<String>,
+    /// The account context the provider reported, when it reports one.
+    pub account_id: Option<String>,
     pub exit_code: Option<i32>,
     pub output: Option<String>,
     pub error: Option<String>,

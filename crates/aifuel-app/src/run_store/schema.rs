@@ -39,8 +39,8 @@ CREATE TABLE IF NOT EXISTS runs (
     output_format TEXT,
     access TEXT,
     timeout_seconds INTEGER,
-    account TEXT,
-    account_id TEXT,
+    requested_account TEXT,
+    reported_account TEXT,
     resume TEXT,
     session_id TEXT,
     local_session_id TEXT,
@@ -66,23 +66,6 @@ CREATE TABLE IF NOT EXISTS events (
 
 pub(super) const TERMINAL_STATES: &str = "'succeeded', 'failed', 'timed_out', 'cancelled'";
 
-/// Additive column for databases created before the column entered the
-/// schema. `CREATE TABLE IF NOT EXISTS` leaves existing files unchanged, so
-/// columns added to the schema after a database was created need an explicit
-/// `ALTER TABLE`.
-pub(super) fn ensure_column(
-    connection: &rusqlite::Connection,
-    table: &str,
-    column: &str,
-    ddl: &str,
-) -> Result<(), rusqlite::Error> {
-    let exists = connection.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
-        rusqlite::params![table, column],
-        |row| row.get::<_, i64>(0),
-    )? != 0;
-    if !exists {
-        connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {ddl}"))?;
-    }
-    Ok(())
-}
+/// Event kinds that close a stream, used to keep reconciliation from
+/// appending a second terminal event.
+pub(super) const TERMINAL_EVENT_KINDS: &str = "'completed', 'failed', 'timed_out', 'cancelled'";

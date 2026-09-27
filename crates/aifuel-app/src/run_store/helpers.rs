@@ -19,13 +19,15 @@ pub(super) fn pid_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 pub(super) fn pid_alive(pid: u32) -> bool {
-    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError};
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
     };
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
-        return false;
+        // ACCESS_DENIED means the process exists but is protected or owned by
+        // another user; only a missing process counts as dead.
+        return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
     }
     let mut code = 0u32;
     let queried = unsafe { GetExitCodeProcess(handle, &mut code) };

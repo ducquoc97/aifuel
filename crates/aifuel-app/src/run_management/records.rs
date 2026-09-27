@@ -1,4 +1,4 @@
-use super::helpers::{event_size, now, truncate_string, utf8_prefix_len};
+use super::helpers::{EVENT_METADATA_BYTES, event_size, now, truncate_string, utf8_prefix_len};
 use super::*;
 
 impl RunRecord {
@@ -17,6 +17,7 @@ impl RunRecord {
             requested_model: request.model.clone(),
             requested_effort: request.effort.clone(),
             external_tools: request.external_tools.clone(),
+            resume: request.resume.clone(),
             created_at: now(),
             deadline,
             metadata: Mutex::new(RunMetadata {
@@ -83,6 +84,8 @@ impl RunRecord {
             local_session_id: result.local_session_id.clone(),
             session_id: result.session_id.clone(),
             status: result.status,
+            closed_reason: result.closed_reason.clone(),
+            account_id: result.account_id.clone(),
             exit_code: result.exit_code,
             output: result.output.clone().or(partial_output),
             error: result.error.clone(),
@@ -129,7 +132,7 @@ impl RunRecord {
             capture.truncated = true;
         }
 
-        let event_limit = MAX_EVENT_BYTES_PER_RUN.saturating_sub(96);
+        let event_limit = MAX_EVENT_BYTES_PER_RUN.saturating_sub(EVENT_METADATA_BYTES);
         let mut start = 0;
         while start < delta.len() {
             let end_limit = start.saturating_add(event_limit).min(delta.len());
@@ -153,8 +156,9 @@ impl RunRecord {
         events.push(&self.run_id, kind, data);
         if let Some(store) = &self.run_store
             && let Some(event) = events.events.back().cloned()
+            && let Err(error) = store.append_event(&event, self.retain_content)
         {
-            let _ = store.append_event(&event, self.retain_content);
+            crate::run_store::warn_store_write(&error);
         }
     }
 }
@@ -168,6 +172,8 @@ impl ResultMetadata {
             local_session_id: None,
             session_id: None,
             exit_code: None,
+            closed_reason: None,
+            account_id: None,
             output: None,
             error: None,
             diagnostics: None,
@@ -181,7 +187,10 @@ impl ResultMetadata {
 
 impl EventBuffer {
     fn push(&mut self, run_id: &str, kind: RunEventKind, data: Option<String>) {
-        let (data, _) = truncate_string(data, MAX_EVENT_BYTES_PER_RUN.saturating_sub(96));
+        let (data, _) = truncate_string(
+            data,
+            MAX_EVENT_BYTES_PER_RUN.saturating_sub(EVENT_METADATA_BYTES),
+        );
         let event = RunEvent {
             schema_version: RUN_MANAGEMENT_SCHEMA_VERSION,
             run_id: run_id.to_owned(),

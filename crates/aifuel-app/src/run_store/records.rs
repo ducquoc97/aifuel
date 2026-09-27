@@ -19,7 +19,9 @@ pub(crate) struct StartedRun {
     pub output_format: Option<String>,
     pub access: Option<String>,
     pub timeout_seconds: Option<u64>,
-    pub account: Option<String>,
+    /// The account context the request asked for, as opposed to the account
+    /// the provider reported at completion.
+    pub requested_account: Option<String>,
     pub resume: Option<String>,
 }
 
@@ -33,12 +35,15 @@ pub(crate) struct CompletedRun {
     pub session_id: Option<String>,
     pub local_session_id: Option<String>,
     pub exit_code: Option<i32>,
+    /// Stable failure category such as `provider_failed`, `agent_unavailable`,
+    /// `invalid_request`, or `owner_exited`, when the run did not succeed.
+    pub closed_reason: Option<String>,
+    /// The account context reported by the provider, when it reports one.
+    pub reported_account: Option<String>,
     /// Whether the run's content payloads were persisted to the content
     /// store. Owner-held memory content does not count: after the owner
     /// exits, only persisted payloads remain available.
     pub content_available: bool,
-    /// The account context reported by the provider, when it reports one.
-    pub account_id: Option<String>,
     pub output_bytes: usize,
     pub diagnostics_bytes: usize,
     pub output_truncated: bool,
@@ -63,6 +68,9 @@ pub(crate) struct StoredRun {
     pub session_id: Option<String>,
     pub local_session_id: Option<String>,
     pub exit_code: Option<i32>,
+    pub closed_reason: Option<String>,
+    /// Account context the provider reported at completion.
+    pub reported_account: Option<String>,
     pub created_at: f64,
     pub completed_at: Option<f64>,
     pub content_available: bool,
@@ -106,6 +114,8 @@ impl StoredRun {
             local_session_id: self.local_session_id.clone(),
             session_id: self.session_id.clone(),
             status: self.status,
+            closed_reason: self.closed_reason.clone(),
+            account_id: self.reported_account.clone(),
             exit_code: self.exit_code,
             output: None,
             error: None,

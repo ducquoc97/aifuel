@@ -40,7 +40,19 @@ pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
     let manager = aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
         .with_execution_policy(&config.policy)
         .with_session_store(session_store_path()?)?;
-    let manager = match aifuel_app::RunStore::open(run_store_path()?) {
+    let db_path = run_store_path()?;
+    // WAL sidecar files carry the same history and inherit directory
+    // permissions, so the application directory itself is owner-only.
+    #[cfg(unix)]
+    if let Some(directory) = db_path.parent() {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) = std::fs::create_dir_all(directory).and_then(|()| {
+            std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))
+        }) {
+            eprintln!("aifuel: could not restrict the run history directory: {error}");
+        }
+    }
+    let manager = match aifuel_app::RunStore::open(db_path) {
         Ok(store) => {
             if let Err(error) = store.import_sessions(session_store_path()?) {
                 eprintln!("aifuel: could not import legacy session store: {error}");

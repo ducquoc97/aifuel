@@ -178,6 +178,9 @@ struct ManagerInner {
     session_store: Mutex<Option<SessionStore>>,
     content_store: Mutex<Option<ContentStore>>,
     run_store: Mutex<Option<RunStore>>,
+    /// Per-owner discriminator bound into event cursors so a cursor minted by
+    /// one owner cannot be replayed by another connection.
+    cursor_tag: u64,
     next_id: AtomicU64,
     shutdown: AtomicBool,
     #[cfg(any(unix, windows))]
@@ -212,6 +215,9 @@ struct RunRecord {
     requested_model: Option<String>,
     requested_effort: Option<String>,
     external_tools: Option<Vec<String>>,
+    /// Native session this run resumes, when the request carried one. Lets the
+    /// manager enforce the one-active-run-per-session rule.
+    resume: Option<String>,
     created_at: f64,
     deadline: Option<Instant>,
     metadata: Mutex<RunMetadata>,
@@ -251,6 +257,8 @@ struct ResultMetadata {
     local_session_id: Option<String>,
     session_id: Option<String>,
     exit_code: Option<i32>,
+    closed_reason: Option<String>,
+    account_id: Option<String>,
     output: Option<String>,
     error: Option<String>,
     diagnostics: Option<String>,

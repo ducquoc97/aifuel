@@ -26,6 +26,11 @@ impl RunManager {
             session_store: Mutex::new(None),
             content_store: Mutex::new(None),
             run_store: Mutex::new(None),
+            cursor_tag: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos() as u64
+                ^ u64::from(std::process::id()),
             next_id: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
             #[cfg(any(unix, windows))]
@@ -288,6 +293,24 @@ impl RunManager {
                 "owner Agent Run record limit has been reached",
             ));
         }
+        // A native session may not be resumed while another run of this owner
+        // still holds it, including read-only runs.
+        if let Some(session_id) = request.resume.as_deref()
+            && records.values().any(|record| {
+                record.resume.as_deref() == Some(session_id)
+                    && !record
+                        .metadata
+                        .lock()
+                        .expect("run metadata mutex")
+                        .state
+                        .is_terminal()
+            })
+        {
+            return Err(RunManagementError::new(
+                RunManagementErrorCode::SessionUnavailable,
+                "an active Agent Run already holds this native session",
+            ));
+        }
 
         let run_id = self.next_run_id();
         let provider = request.provider;
@@ -317,8 +340,8 @@ impl RunManager {
         records.insert(run_id.clone(), Arc::clone(&record));
         drop(records);
 
-        if let Some(store) = &run_store {
-            let _ = store.record_started(crate::run_store::StartedRun {
+        if let Some(store) = &run_store
+            && let Err(error) = store.record_started(crate::run_store::StartedRun {
                 run_id: run_id.clone(),
                 provider,
                 created_at: record.created_at,
@@ -332,9 +355,11 @@ impl RunManager {
                 output_format: Some(request.output.as_str().to_owned()),
                 access: Some(request.access.as_str().to_owned()),
                 timeout_seconds: request.timeout.map(|timeout| timeout.as_secs()),
-                account: request.account.clone(),
+                requested_account: request.account.clone(),
                 resume: request.resume.clone(),
-            });
+            })
+        {
+            crate::run_store::warn_store_write(&error);
         }
         self.push_event(&record, RunEventKind::Started, None);
         let worker_inner = Arc::downgrade(&self.inner);
@@ -361,28 +386,30 @@ impl RunManager {
                     .lock()
                     .expect("run records mutex")
                     .remove(&run_id);
-                // Close the persisted row now; otherwise it would sit
-                // non-terminal until this owner's process exits.
+                // Emit the terminal event before closing the persisted row so
+                // its stream ends like every other terminal run's.
+                record.push_event(RunEventKind::Failed, None);
                 if let Some(store) = &run_store {
-                    let _ = store.record_completed(
-                        &run_id,
-                        crate::run_store::CompletedRun {
-                            state: RunState::Failed,
-                            status: Some(RunStatus::Failed),
-                            completed_at: now(),
-                            effective_model: None,
-                            effective_effort: None,
-                            session_id: None,
-                            local_session_id: None,
-                            exit_code: None,
-                            content_available: false,
-                            account_id: None,
-                            output_bytes: 0,
-                            diagnostics_bytes: 0,
-                            output_truncated: false,
-                            diagnostics_truncated: false,
-                        },
-                    );
+                    let closed = crate::run_store::CompletedRun {
+                        state: RunState::Failed,
+                        status: Some(RunStatus::Failed),
+                        completed_at: now(),
+                        effective_model: None,
+                        effective_effort: None,
+                        session_id: None,
+                        local_session_id: None,
+                        exit_code: None,
+                        closed_reason: Some("spawn_failed".to_owned()),
+                        reported_account: None,
+                        content_available: false,
+                        output_bytes: 0,
+                        diagnostics_bytes: 0,
+                        output_truncated: false,
+                        diagnostics_truncated: false,
+                    };
+                    if let Err(error) = store.record_completed(&run_id, closed) {
+                        crate::run_store::warn_store_write(&error);
+                    }
                 }
                 RunManagementError::new(
                     RunManagementErrorCode::Internal,

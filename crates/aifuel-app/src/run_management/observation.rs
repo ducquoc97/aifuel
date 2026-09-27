@@ -28,7 +28,7 @@ impl RunManager {
         };
         let page_bytes = checked_page_bytes(page_bytes)?;
         let cursor_sequence = cursor
-            .map(|cursor| decode_cursor(run_id, cursor))
+            .map(|cursor| decode_cursor(run_id, self.inner.cursor_tag, cursor))
             .transpose()?;
         let metadata = record.metadata.lock().expect("run metadata mutex");
         let terminal = metadata.state.is_terminal();
@@ -64,7 +64,7 @@ impl RunManager {
                 .events
                 .iter()
                 .any(|event| event.sequence > last.sequence)
-                .then(|| encode_cursor(run_id, last.sequence))
+                .then(|| encode_cursor(run_id, self.inner.cursor_tag, last.sequence))
         });
         Ok(RunEvents {
             events: selected,
@@ -141,7 +141,7 @@ impl RunManager {
             .clone()
             .ok_or_else(|| RunManagementError::run_not_found(run_id))?;
         let cursor_sequence = cursor
-            .map(|cursor| decode_cursor(run_id, cursor))
+            .map(|cursor| decode_cursor(run_id, self.inner.cursor_tag, cursor))
             .transpose()?;
         let after = cursor_sequence.unwrap_or(0);
         let page = store
@@ -164,7 +164,7 @@ impl RunManager {
             .events
             .last()
             .filter(|_| page.has_more)
-            .map(|last| encode_cursor(run_id, last.sequence));
+            .map(|last| encode_cursor(run_id, self.inner.cursor_tag, last.sequence));
         Ok(RunEvents {
             events: page.events,
             next_cursor,

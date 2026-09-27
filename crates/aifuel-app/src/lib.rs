@@ -20,6 +20,8 @@ mod run_management;
 mod run_store;
 pub mod selection;
 mod session_store;
+#[cfg(test)]
+mod test_support;
 mod workspace_lock;
 pub use agent_mcp_setup::{
     AgentMcpSetupAction, AgentMcpSetupError, AgentMcpSetupFacade, AgentMcpSetupOptions,
