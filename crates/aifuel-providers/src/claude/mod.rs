@@ -1,5 +1,8 @@
 use super::{CatalogProvider, MonitoringFuture, ProviderMonitoring};
-use crate::usage_helpers::{deep_find, percent, read_json, response_json, timestamp, value_string};
+use crate::usage_helpers::{
+    credentials_expired, deep_find, percent, read_json, response_json, timestamp, value_string,
+    with_reauth_hint,
+};
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow};
 use serde_json::Value;
 
@@ -21,6 +24,15 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
         Ok(value) => value,
         Err(error) => return ProviderUsage::error(ProviderKey::Claude, error),
     };
+    // Claude Code renews OAuth tokens only from interactive sessions, and the
+    // rotating refresh grant cannot be replayed safely here, so an expired
+    // token is reported as a re-authentication instruction.
+    if credentials_expired(&credentials) {
+        return ProviderUsage::error(
+            ProviderKey::Claude,
+            "Claude session expired - run `claude` interactively to re-authenticate",
+        );
+    }
     let Some(token) =
         deep_find(&credentials, &["accessToken", "access_token"]).and_then(Value::as_str)
     else {
@@ -41,7 +53,9 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
     };
     let data = match response_json(response).await {
         Ok(data) => data,
-        Err(error) => return ProviderUsage::error(ProviderKey::Claude, error),
+        Err(error) => {
+            return ProviderUsage::error(ProviderKey::Claude, with_reauth_hint(&error, "claude"));
+        }
     };
     let mut windows = Vec::new();
     let claims = [

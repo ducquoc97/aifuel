@@ -1,5 +1,5 @@
 use super::{CatalogProvider, MonitoringFuture, ProviderMonitoring};
-use crate::usage_helpers::{number, response_json, timestamp, value_string};
+use crate::usage_helpers::{number, response_json, timestamp, value_string, with_reauth_hint};
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow};
 use std::fs;
 use toml_edit::Document;
@@ -86,7 +86,12 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
     };
     let data = match response_json(response).await {
         Ok(data) => data,
-        Err(error) => return ProviderUsage::error(ProviderKey::Devin, error),
+        Err(error) => {
+            return ProviderUsage::error(
+                ProviderKey::Devin,
+                with_reauth_hint(&error, "devin login"),
+            );
+        }
     };
     let plan_status = data
         .get("userStatus")

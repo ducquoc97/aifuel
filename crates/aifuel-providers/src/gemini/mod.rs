@@ -10,6 +10,14 @@ pub(crate) use registration::ADAPTER as MCP_REGISTRATION_ADAPTER;
 pub static DEFINITION: CatalogProvider =
     CatalogProvider::file_source(ProviderKey::Gemini, ".gemini/oauth_creds.json");
 
+// The Gemini CLI's public installed-app OAuth client (published in the
+// Apache-2.0 gemini-cli source), used only to renew stored tokens in memory.
+const RECOVERY: crate::code_assist::CredentialRecovery = crate::code_assist::CredentialRecovery {
+    client_id: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+    client_secret: "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",
+    reauth: "gemini",
+};
+
 pub(crate) fn collect(service: &ProviderMonitoring) -> MonitoringFuture<'_> {
     Box::pin(collect_live(service))
 }
@@ -22,6 +30,7 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
         project_from_environment(),
         "gemini-cli/usage-monitor",
         Some("daily"),
+        &RECOVERY,
     )
     .await
 }

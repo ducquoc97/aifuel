@@ -2,8 +2,11 @@
 //!
 //! Discovery inspects provider-owned source metadata without reading its
 //! contents. Monitoring adapters read credentials only for an explicit
-//! collection and never refresh or write user state. Agent Runs use separate
-//! provider execution capabilities and require an explicit provider selection.
+//! collection and never write user state. A non-rotating refresh grant may be
+//! exchanged in memory (Google), or the provider CLI may renew its own
+//! credentials (Codex app-server); rotating refresh grants are never consumed.
+//! Agent Runs use separate provider execution capabilities and require an
+//! explicit provider selection.
 
 mod agent_execution;
 mod agent_run_registry;

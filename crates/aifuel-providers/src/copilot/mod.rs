@@ -1,5 +1,7 @@
 use super::{CatalogProvider, MonitoringFuture, ProviderMonitoring};
-use crate::usage_helpers::{next_month_first, number, response_json, timestamp, value_string};
+use crate::usage_helpers::{
+    next_month_first, number, response_json, timestamp, value_string, with_reauth_hint,
+};
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow};
 use serde_json::Value;
 use std::fs;
@@ -67,10 +69,9 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
         }
     }
     let Some(data) = data else {
-        return ProviderUsage::error(
-            ProviderKey::Copilot,
-            last_error.unwrap_or_else(|| "Copilot live usage endpoint unreachable".to_owned()),
-        );
+        let detail =
+            last_error.unwrap_or_else(|| "Copilot live usage endpoint unreachable".to_owned());
+        return ProviderUsage::error(ProviderKey::Copilot, with_reauth_hint(&detail, "copilot"));
     };
     let reset_at = data
         .get("quota_reset_date_utc")

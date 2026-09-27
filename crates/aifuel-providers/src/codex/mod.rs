@@ -4,8 +4,8 @@ pub(crate) mod model_catalog;
 
 use super::{CatalogProvider, MonitoringFuture, ProviderMonitoring};
 use crate::usage_helpers::{
-    deep_find, number, percent_value, period_for_seconds, read_json, response_json, timestamp,
-    unix_timestamp, value_string,
+    deep_find, is_auth_error, number, percent_value, period_for_seconds, read_json, response_json,
+    timestamp, unix_timestamp, value_string, with_reauth_hint,
 };
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow, ResetCredit, ResetCredits};
 use serde_json::Value;
@@ -29,6 +29,25 @@ pub(crate) fn collect(service: &ProviderMonitoring) -> MonitoringFuture<'_> {
 }
 
 async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
+    let mut refreshed = false;
+    loop {
+        let usage = collect_once(service).await;
+        if !usage.detail.as_deref().is_some_and(is_auth_error) {
+            return usage;
+        }
+        // The Codex CLI refreshes its own auth.json when the app-server serves
+        // an authenticated request, so aifuel stays a pure credential reader.
+        if refreshed || app_server_rate_limits("codex").await.is_none() {
+            return ProviderUsage::error(
+                ProviderKey::Codex,
+                with_reauth_hint(&usage.detail.unwrap_or_default(), "codex login"),
+            );
+        }
+        refreshed = true;
+    }
+}
+
+async fn collect_once(service: &ProviderMonitoring) -> ProviderUsage {
     let path = service.home_dir.join(".codex/auth.json");
     let credentials = match read_json(&path) {
         Ok(value) => value,
@@ -137,14 +156,23 @@ async fn reset_credits_for_usage(data: &Value) -> Option<ResetCredits> {
     if !reported.credits.is_empty() {
         return Some(reported);
     }
-    app_server_reset_credits().await.or(Some(reported))
-}
-
-async fn app_server_reset_credits() -> Option<ResetCredits> {
-    app_server_reset_credits_from("codex").await
+    app_server_reset_credits_from("codex")
+        .await
+        .or(Some(reported))
 }
 
 async fn app_server_reset_credits_from(program: &str) -> Option<ResetCredits> {
+    app_server_rate_limits(program)
+        .await?
+        .get("result")
+        .and_then(|result| result.get("rateLimitResetCredits"))
+        .and_then(parse_reset_credits_value)
+}
+
+/// Runs one `account/rateLimits/read` request against the Codex app-server and
+/// returns the raw JSON-RPC response. Receiving any reply means the CLI's own
+/// auth handling ran, including a token refresh persisted to auth.json.
+async fn app_server_rate_limits(program: &str) -> Option<Value> {
     let deadline = Instant::now() + APP_SERVER_TIMEOUT;
     let mut child = None;
     for candidate in crate::agent_execution::program_candidates(program) {
@@ -168,17 +196,17 @@ async fn app_server_reset_credits_from(program: &str) -> Option<ResetCredits> {
     let mut stdin = child.stdin.take()?;
     let stdout = child.stdout.take()?;
     let mut stdout = BufReader::new(stdout);
-    let result = app_server_reset_credits_io(&mut stdin, &mut stdout, deadline).await;
+    let result = app_server_rate_limits_io(&mut stdin, &mut stdout, deadline).await;
     let _ = timeout(APP_SERVER_SHUTDOWN_TIMEOUT, child.kill()).await;
     let _ = timeout(APP_SERVER_SHUTDOWN_TIMEOUT, child.wait()).await;
     result
 }
 
-async fn app_server_reset_credits_io(
+async fn app_server_rate_limits_io(
     stdin: &mut ChildStdin,
     stdout: &mut BufReader<ChildStdout>,
     deadline: Instant,
-) -> Option<ResetCredits> {
+) -> Option<Value> {
     send_app_server_message(
         stdin,
         serde_json::json!({
@@ -220,11 +248,7 @@ async fn app_server_reset_credits_io(
         deadline,
     )
     .await?;
-    let response = read_app_server_response(stdout, 1, deadline).await?;
-    let credits = response
-        .get("result")
-        .and_then(|result| result.get("rateLimitResetCredits"))?;
-    parse_reset_credits_value(credits)
+    read_app_server_response(stdout, 1, deadline).await
 }
 
 async fn send_app_server_message(
