@@ -25,6 +25,7 @@ impl RunManager {
             sessions: Mutex::new(HashMap::new()),
             session_store: Mutex::new(None),
             content_store: Mutex::new(None),
+            run_store: Mutex::new(None),
             next_id: AtomicU64::new(1),
             shutdown: AtomicBool::new(false),
             #[cfg(any(unix, windows))]
@@ -84,6 +85,12 @@ impl RunManager {
             .lock()
             .expect("content store mutex") = Some(store);
         Ok(self)
+    }
+
+    /// Attach the shared durable run history store for this owner.
+    pub fn with_run_store(self, store: RunStore) -> Self {
+        *self.inner.run_store.lock().expect("run store mutex") = Some(store);
+        self
     }
 
     #[cfg(any(unix, windows))]
@@ -284,11 +291,25 @@ impl RunManager {
 
         let run_id = self.next_run_id();
         let provider = request.provider;
+        let run_store = self
+            .inner
+            .run_store
+            .lock()
+            .expect("run store mutex")
+            .clone();
+        let retain_content = self
+            .inner
+            .policy
+            .lock()
+            .expect("run manager policy mutex")
+            .retain_content;
         let record = Arc::new(RunRecord::new(
             run_id.clone(),
             &request,
             deadline,
             workspace_lock,
+            run_store.clone(),
+            retain_content,
         ));
         let output_handler: Arc<dyn AgentRunOutputHandler> = Arc::new(ManagedRunOutputHandler {
             record: Arc::downgrade(&record),
@@ -296,6 +317,25 @@ impl RunManager {
         records.insert(run_id.clone(), Arc::clone(&record));
         drop(records);
 
+        if let Some(store) = &run_store {
+            let _ = store.record_started(crate::run_store::StartedRun {
+                run_id: run_id.clone(),
+                provider,
+                created_at: record.created_at,
+                working_directory: request
+                    .working_directory
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
+                requested_model: request.model.clone(),
+                requested_effort: request.effort.clone(),
+                external_tools: request.external_tools.clone(),
+                output_format: Some(request.output.as_str().to_owned()),
+                access: Some(request.access.as_str().to_owned()),
+                timeout_seconds: request.timeout.map(|timeout| timeout.as_secs()),
+                account: request.account.clone(),
+                resume: request.resume.clone(),
+            });
+        }
         self.push_event(&record, RunEventKind::Started, None);
         let worker_inner = Arc::downgrade(&self.inner);
         let worker_record = Arc::clone(&record);

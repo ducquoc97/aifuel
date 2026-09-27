@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 aifuel-core = { path = "../aifuel-core", version = "0.1" }
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2.workspace = true

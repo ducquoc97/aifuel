@@ -55,6 +55,37 @@ impl RunState {
             Self::Succeeded | Self::Failed | Self::TimedOut | Self::Cancelled
         )
     }
+
+    /// The stable serialized spelling for this state.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::WaitingForInput => "waiting_for_input",
+            Self::WaitingForApproval => "waiting_for_approval",
+            Self::Cancelling => "cancelling",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::TimedOut => "timed_out",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parse the serialized spelling written by [`RunState::as_str`].
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "starting" => Self::Starting,
+            "running" => Self::Running,
+            "waiting_for_input" => Self::WaitingForInput,
+            "waiting_for_approval" => Self::WaitingForApproval,
+            "cancelling" => Self::Cancelling,
+            "succeeded" => Self::Succeeded,
+            "failed" => Self::Failed,
+            "timed_out" => Self::TimedOut,
+            "cancelled" => Self::Cancelled,
+            _ => return None,
+        })
+    }
 }
 
 impl From<RunStatus> for RunState {
@@ -251,6 +282,43 @@ pub enum RunEventKind {
     Failed,
     Cancelled,
     TimedOut,
+}
+
+impl RunEventKind {
+    /// The stable serialized spelling for this event kind.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Running => "running",
+            Self::WaitingForInput => "waiting_for_input",
+            Self::WaitingForApproval => "waiting_for_approval",
+            Self::StateChanged => "state_changed",
+            Self::Output => "output",
+            Self::Diagnostic => "diagnostic",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+        }
+    }
+
+    /// Parse the serialized spelling written by [`RunEventKind::as_str`].
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "started" => Self::Started,
+            "running" => Self::Running,
+            "waiting_for_input" => Self::WaitingForInput,
+            "waiting_for_approval" => Self::WaitingForApproval,
+            "state_changed" => Self::StateChanged,
+            "output" => Self::Output,
+            "diagnostic" => Self::Diagnostic,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            "timed_out" => Self::TimedOut,
+            _ => return None,
+        })
+    }
 }
 
 /// One ordered, public event.  The manager never emits prompts or hidden

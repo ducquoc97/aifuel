@@ -17,6 +17,7 @@ mod content_store;
 mod execution;
 mod gateway;
 mod run_management;
+mod run_store;
 pub mod selection;
 mod session_store;
 mod workspace_lock;
@@ -36,6 +37,7 @@ pub use gateway::{
     StreamableHttpServerDefinition, default_cwd,
 };
 pub use run_management::{RunManager, RunManagerPolicy};
+pub use run_store::{RunStore, RunStoreError};
 pub use selection::{
     AccountContext, CatalogEvidenceStore, CatalogFreshness, CatalogLookup, CatalogModel,
     CatalogProvenance, CatalogRefreshResult, CatalogScope, CatalogSnapshot, ContentRetention,

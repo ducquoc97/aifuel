@@ -25,7 +25,7 @@ impl RunManager {
     }
 
     /// Start a new Agent Run against a known same-provider native session.
-    /// Associations are owner-local until persistent session storage is enabled.
+    /// Associations persist in the run history store when one is attached.
     pub fn resume_session(
         &self,
         session_id: &str,
@@ -70,6 +70,20 @@ impl RunManager {
                     .expect("session store mutex")
                     .as_ref()
                     .and_then(|store| store.get(session_id))
+                    .map(|session| SessionRecord {
+                        provider: session.provider,
+                        model: session.model,
+                        effort: session.effort,
+                        working_directory: session.working_directory,
+                    })
+            })
+            .or_else(|| {
+                self.inner
+                    .run_store
+                    .lock()
+                    .expect("run store mutex")
+                    .as_ref()
+                    .and_then(|store| store.session(session_id).ok().flatten())
                     .map(|session| SessionRecord {
                         provider: session.provider,
                         model: session.model,

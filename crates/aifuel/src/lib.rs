@@ -40,6 +40,18 @@ pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
     let manager = aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
         .with_execution_policy(&config.policy)
         .with_session_store(session_store_path()?)?;
+    let manager = match aifuel_app::RunStore::open(run_store_path()?) {
+        Ok(store) => {
+            if let Err(error) = store.import_sessions(session_store_path()?) {
+                eprintln!("aifuel: could not import legacy session store: {error}");
+            }
+            manager.with_run_store(store)
+        }
+        Err(error) => {
+            eprintln!("aifuel: run history store is unavailable: {error}");
+            manager
+        }
+    };
     #[cfg(any(unix, windows))]
     let manager = manager.with_local_approval_channel(approval_owner_directory()?)?;
     if config.policy.retain_content {
@@ -61,6 +73,11 @@ pub fn session_store_path() -> Result<PathBuf, String> {
     Ok(user_config_dir(&home)?
         .join("aifuel")
         .join("agent-sessions.json"))
+}
+
+pub fn run_store_path() -> Result<PathBuf, String> {
+    let home = user_home_dir()?;
+    Ok(user_config_dir(&home)?.join("aifuel").join("aifuel.db"))
 }
 
 pub fn content_store_path() -> Result<PathBuf, String> {

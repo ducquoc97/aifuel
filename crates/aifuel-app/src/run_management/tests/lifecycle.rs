@@ -252,7 +252,14 @@ fn worker_start_does_not_overwrite_pending_owner_input() {
             RunEventKind::WaitingForApproval,
         ),
     ] {
-        let record = Arc::new(RunRecord::new(run_id.to_owned(), &request(), None, None));
+        let record = Arc::new(RunRecord::new(
+            run_id.to_owned(),
+            &request(),
+            None,
+            None,
+            None,
+            false,
+        ));
         record.push_event(RunEventKind::Started, None);
         manager
             .inner

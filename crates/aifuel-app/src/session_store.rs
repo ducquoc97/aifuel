@@ -50,6 +50,10 @@ impl SessionStore {
         self.sessions.get(session_id).cloned()
     }
 
+    pub(crate) fn sessions(&self) -> &BTreeMap<String, PersistedSession> {
+        &self.sessions
+    }
+
     pub(crate) fn insert(
         &mut self,
         session_id: String,

@@ -7,6 +7,8 @@ impl RunRecord {
         request: &RunRequest,
         deadline: Option<Instant>,
         workspace_lock: Option<WorkspaceWriteLock>,
+        run_store: Option<RunStore>,
+        retain_content: bool,
     ) -> Self {
         Self {
             run_id,
@@ -33,6 +35,8 @@ impl RunRecord {
             retained_content_bytes: AtomicUsize::new(0),
             worker: Mutex::new(None),
             workspace_lock: Mutex::new(workspace_lock),
+            run_store,
+            retain_content,
         }
     }
 
@@ -145,10 +149,13 @@ impl RunRecord {
     }
 
     pub(super) fn push_event(&self, kind: RunEventKind, data: Option<String>) {
-        self.events
-            .lock()
-            .expect("run events mutex")
-            .push(&self.run_id, kind, data);
+        let mut events = self.events.lock().expect("run events mutex");
+        events.push(&self.run_id, kind, data);
+        if let Some(store) = &self.run_store
+            && let Some(event) = events.events.back().cloned()
+        {
+            let _ = store.append_event(&event, self.retain_content);
+        }
     }
 }
 

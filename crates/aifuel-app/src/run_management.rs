@@ -7,6 +7,7 @@
 #[cfg(any(unix, windows))]
 use crate::approval_ipc::{LocalApprovalDecision, LocalApprovalServer};
 use crate::content_store::{ContentStore, PersistedContent};
+use crate::run_store::RunStore;
 use crate::selection::ExecutionPolicy;
 use crate::session_store::{PersistedSession, SessionStore};
 use crate::workspace_lock::{WorkspaceLockError, WorkspaceWriteLock};
@@ -176,6 +177,7 @@ struct ManagerInner {
     sessions: Mutex<HashMap<String, SessionRecord>>,
     session_store: Mutex<Option<SessionStore>>,
     content_store: Mutex<Option<ContentStore>>,
+    run_store: Mutex<Option<RunStore>>,
     next_id: AtomicU64,
     shutdown: AtomicBool,
     #[cfg(any(unix, windows))]
@@ -211,6 +213,8 @@ struct RunRecord {
     retained_content_bytes: AtomicUsize,
     worker: Mutex<Option<JoinHandle<()>>>,
     workspace_lock: Mutex<Option<WorkspaceWriteLock>>,
+    run_store: Option<RunStore>,
+    retain_content: bool,
 }
 
 #[derive(Clone, Default)]

@@ -1,0 +1,387 @@
+//! Durable per-user Agent Run history shared across providers.
+//!
+//! One SQLite database holds the allowlisted metadata schema: run and session
+//! identifiers, provider context, selected and reported settings, timestamps,
+//! workspace associations needed for resume, run state, stable outcome, and
+//! content availability. Prompts, answers, diagnostics, and free-form provider
+//! errors are never persisted. Event payloads persist only when the owning
+//! manager enables content retention.
+//!
+//! Runs remain owned by their connection at runtime; the store exposes only
+//! terminal history. Rows for owners that exited without completing are
+//! reconciled to `failed` with `owner_exited` when another owner opens the
+//! database.
+
+use crate::session_store::{PersistedSession, SessionStore};
+use aifuel_core::{RunEvent, RunEventKind, RunState, RunStatus};
+use rusqlite::{Connection, OptionalExtension, params};
+use std::fs;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use helpers::{invalid_text, now, pid_alive};
+use schema::{SCHEMA, SCHEMA_VERSION, TERMINAL_STATES};
+
+pub use error::RunStoreError;
+pub(crate) use records::{CompletedRun, StartedRun, StoredEventPage, StoredRun};
+
+/// A shared handle to the per-user run history database.
+///
+/// Clones share one serialized connection, matching the manager's existing
+/// `Mutex` storage pattern. WAL mode allows concurrent readers while worker
+/// threads append.
+#[derive(Clone)]
+pub struct RunStore {
+    connection: Arc<Mutex<Connection>>,
+    owner_pid: u32,
+}
+
+impl RunStore {
+    /// Open or create the database, apply the schema, and reconcile rows left
+    /// non-terminal by owners that have exited.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, RunStoreError> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let connection = Connection::open(path)?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        connection.pragma_update(None, "busy_timeout", 10_000_i64)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+        connection.execute_batch(SCHEMA)?;
+        connection.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?1)",
+            params![SCHEMA_VERSION.to_string()],
+        )?;
+        let version: String = connection.query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )?;
+        if version != SCHEMA_VERSION.to_string() {
+            return Err(RunStoreError::UnsupportedSchema(version));
+        }
+        let store = Self {
+            connection: Arc::new(Mutex::new(connection)),
+            owner_pid: std::process::id(),
+        };
+        store.reconcile_orphaned_runs()?;
+        Ok(store)
+    }
+
+    /// Insert the accepted-run row before the first event is appended.
+    pub(crate) fn record_started(&self, run: StartedRun) -> Result<(), RunStoreError> {
+        let external_tools = run
+            .external_tools
+            .map(|tools| serde_json::to_string(&tools))
+            .transpose()?;
+        self.connection.lock().expect("run store mutex").execute(
+            "INSERT INTO runs (
+                    run_id, owner_pid, provider, state, created_at,
+                    working_directory, requested_model, requested_effort,
+                    external_tools, output_format, access, timeout_seconds,
+                    account, resume
+                ) VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                run.run_id,
+                self.owner_pid,
+                run.provider.as_str(),
+                run.created_at,
+                run.working_directory,
+                run.requested_model,
+                run.requested_effort,
+                external_tools,
+                run.output_format,
+                run.access,
+                run.timeout_seconds.map(|seconds| seconds as i64),
+                run.account,
+                run.resume,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Write the immutable terminal outcome once.
+    pub(crate) fn record_completed(
+        &self,
+        run_id: &str,
+        run: CompletedRun,
+    ) -> Result<(), RunStoreError> {
+        self.connection.lock().expect("run store mutex").execute(
+            "UPDATE runs SET
+                    state = ?2, status = ?3, completed_at = ?4,
+                    effective_model = ?5, effective_effort = ?6,
+                    session_id = ?7, local_session_id = ?8, exit_code = ?9,
+                    content_available = ?10, output_bytes = ?11,
+                    diagnostics_bytes = ?12, output_truncated = ?13,
+                    diagnostics_truncated = ?14
+                WHERE run_id = ?1",
+            params![
+                run_id,
+                run.state.as_str(),
+                run.status.map(RunStatus::as_str),
+                run.completed_at,
+                run.effective_model,
+                run.effective_effort,
+                run.session_id,
+                run.local_session_id,
+                run.exit_code,
+                run.content_available,
+                run.output_bytes as i64,
+                run.diagnostics_bytes as i64,
+                run.output_truncated,
+                run.diagnostics_truncated,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Append one ordered event. The payload is content and is written only
+    /// when `retain_content` is enabled for the owning manager.
+    pub(crate) fn append_event(
+        &self,
+        event: &RunEvent,
+        retain_content: bool,
+    ) -> Result<(), RunStoreError> {
+        self.connection.lock().expect("run store mutex").execute(
+            "INSERT OR IGNORE INTO events (run_id, seq, kind, created_at, data)
+                VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                event.run_id,
+                event.sequence as i64,
+                event.kind.as_str(),
+                event.created_at,
+                event.data.as_deref().filter(|_| retain_content),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Persist the provider-scoped native session association. Native session
+    /// identifiers are only unique per provider, so the key is composite.
+    pub(crate) fn upsert_session(
+        &self,
+        session_id: &str,
+        session: &PersistedSession,
+    ) -> Result<(), RunStoreError> {
+        self.connection.lock().expect("run store mutex").execute(
+            "INSERT OR REPLACE INTO sessions
+                    (provider, session_id, model, effort, working_directory, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                session.provider.as_str(),
+                session_id,
+                session.model,
+                session.effort,
+                session.working_directory.display().to_string(),
+                now(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Return the stored session association. On the rare cross-provider
+    /// session-id collision the most recent association wins, matching the
+    /// in-memory map's single-key behavior.
+    pub(crate) fn session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<PersistedSession>, RunStoreError> {
+        self.connection
+            .lock()
+            .expect("run store mutex")
+            .query_row(
+                "SELECT provider, model, effort, working_directory FROM sessions
+                WHERE session_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+                params![session_id],
+                |row| {
+                    let provider: String = row.get(0)?;
+                    Ok(PersistedSession {
+                        provider: provider.parse().map_err(|_| {
+                            rusqlite::Error::InvalidColumnType(
+                                0,
+                                "provider".to_owned(),
+                                rusqlite::types::Type::Text,
+                            )
+                        })?,
+                        model: row.get(1)?,
+                        effort: row.get(2)?,
+                        working_directory: Path::new(&row.get::<_, String>(3)?).to_path_buf(),
+                    })
+                },
+            )
+            .optional()
+            .map_err(RunStoreError::from)
+    }
+
+    /// Import legacy `agent-sessions.json` associations. Existing rows are
+    /// refreshed in place; the JSON file remains authoritative until callers
+    /// migrate to the database.
+    pub fn import_sessions(&self, path: impl AsRef<Path>) -> Result<usize, RunStoreError> {
+        let store = SessionStore::load(path.as_ref())
+            .map_err(|error| RunStoreError::Legacy(error.to_string()))?;
+        let mut imported = 0;
+        for (session_id, session) in store.sessions() {
+            self.upsert_session(session_id, session)?;
+            imported += 1;
+        }
+        Ok(imported)
+    }
+
+    /// Return one terminal run's persisted metadata. Non-terminal rows belong
+    /// to live owners and are never served across connections.
+    pub(crate) fn stored_run(&self, run_id: &str) -> Result<Option<StoredRun>, RunStoreError> {
+        let connection = self.connection.lock().expect("run store mutex");
+        let run = connection
+            .query_row(
+                &format!(
+                    "SELECT run_id, provider, state, status, requested_model,
+                        requested_effort, effective_model, effective_effort,
+                        external_tools, session_id, local_session_id, exit_code,
+                        created_at, completed_at,
+                        content_available, output_bytes, diagnostics_bytes,
+                        output_truncated, diagnostics_truncated
+                    FROM runs WHERE run_id = ?1 AND state IN ({TERMINAL_STATES})"
+                ),
+                params![run_id],
+                |row| {
+                    let provider: String = row.get(1)?;
+                    let state: String = row.get(2)?;
+                    let status: Option<String> = row.get(3)?;
+                    let external_tools: Option<String> = row.get(8)?;
+                    Ok(StoredRun {
+                        run_id: row.get(0)?,
+                        provider: provider.parse().map_err(|_| invalid_text(1))?,
+                        state: RunState::parse(&state).ok_or_else(|| invalid_text(2))?,
+                        status: status
+                            .as_deref()
+                            .map(|status| RunStatus::parse(status).ok_or_else(|| invalid_text(3)))
+                            .transpose()?,
+                        requested_model: row.get(4)?,
+                        requested_effort: row.get(5)?,
+                        effective_model: row.get(6)?,
+                        effective_effort: row.get(7)?,
+                        external_tools: external_tools
+                            .map(|tools| {
+                                serde_json::from_str::<Vec<String>>(&tools)
+                                    .map_err(|_| invalid_text(8))
+                            })
+                            .transpose()?,
+                        session_id: row.get(9)?,
+                        local_session_id: row.get(10)?,
+                        exit_code: row.get(11)?,
+                        created_at: row.get(12)?,
+                        completed_at: row.get(13)?,
+                        content_available: row.get::<_, i64>(14)? != 0,
+                        output_bytes: row.get::<_, i64>(15)?.max(0) as usize,
+                        diagnostics_bytes: row.get::<_, i64>(16)?.max(0) as usize,
+                        output_truncated: row.get::<_, i64>(17)? != 0,
+                        diagnostics_truncated: row.get::<_, i64>(18)? != 0,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(run)
+    }
+
+    /// Read one page of events for a terminal run. `after` is the decoded
+    /// cursor sequence; every page returns at least one event when available,
+    /// matching the in-memory reader.
+    pub(crate) fn stored_events(
+        &self,
+        run_id: &str,
+        after: u64,
+        page_bytes: usize,
+    ) -> Result<Option<StoredEventPage>, RunStoreError> {
+        let connection = self.connection.lock().expect("run store mutex");
+        let terminal: Option<i64> = connection
+            .query_row(
+                &format!("SELECT 1 FROM runs WHERE run_id = ?1 AND state IN ({TERMINAL_STATES})"),
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if terminal.is_none() {
+            return Ok(None);
+        }
+        let latest_sequence: i64 = connection.query_row(
+            "SELECT COALESCE(MAX(seq), 0) FROM events WHERE run_id = ?1",
+            params![run_id],
+            |row| row.get(0),
+        )?;
+        let mut statement = connection.prepare(
+            "SELECT seq, kind, created_at, data FROM events
+            WHERE run_id = ?1 AND seq > ?2 ORDER BY seq",
+        )?;
+        let mut rows = statement.query(params![run_id, after as i64])?;
+        let mut events = Vec::new();
+        let mut used = 0usize;
+        let mut has_more = false;
+        while let Some(row) = rows.next()? {
+            let data: Option<String> = row.get(3)?;
+            let event_bytes = data.as_ref().map_or(0, String::len).saturating_add(96);
+            if !events.is_empty() && used.saturating_add(event_bytes) > page_bytes {
+                has_more = true;
+                break;
+            }
+            let kind: String = row.get(1)?;
+            events.push(RunEvent {
+                schema_version: aifuel_core::RUN_MANAGEMENT_SCHEMA_VERSION,
+                run_id: run_id.to_owned(),
+                sequence: row.get::<_, i64>(0)?.max(0) as u64,
+                created_at: row.get(2)?,
+                kind: RunEventKind::parse(&kind).ok_or_else(|| invalid_text(1))?,
+                data,
+            });
+            used = used.saturating_add(event_bytes);
+        }
+        Ok(Some(StoredEventPage {
+            events,
+            latest_sequence: latest_sequence.max(0) as u64,
+            has_more,
+        }))
+    }
+
+    /// Mark rows left non-terminal by exited owner processes as failed. An
+    /// owner id is its process id; pid reuse can leave a stale row non-terminal
+    /// until the recycled pid exits, which is harmless.
+    fn reconcile_orphaned_runs(&self) -> Result<(), RunStoreError> {
+        let connection = self.connection.lock().expect("run store mutex");
+        let owners: Vec<i64> = {
+            let mut statement = connection.prepare(&format!(
+                "SELECT DISTINCT owner_pid FROM runs
+                WHERE owner_pid != ?1 AND state NOT IN ({TERMINAL_STATES})"
+            ))?;
+            statement
+                .query_map(params![self.owner_pid], |row| row.get(0))?
+                .collect::<Result<_, _>>()?
+        };
+        for owner in owners {
+            if owner <= 0 || pid_alive(owner as u32) {
+                continue;
+            }
+            connection.execute(
+                &format!(
+                    "UPDATE runs SET state = 'failed', completed_at = ?1,
+                        closed_reason = 'owner_exited'
+                    WHERE owner_pid = ?2 AND state NOT IN ({TERMINAL_STATES})"
+                ),
+                params![now(), owner],
+            )?;
+        }
+        Ok(())
+    }
+}
+
+mod error;
+mod helpers;
+mod records;
+mod schema;
+
+#[cfg(test)]
+mod tests;

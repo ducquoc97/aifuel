@@ -193,6 +193,23 @@ impl RunManager {
                             },
                         );
                     }
+                    if let Some(store) = self
+                        .inner
+                        .run_store
+                        .lock()
+                        .expect("run store mutex")
+                        .as_ref()
+                    {
+                        let _ = store.upsert_session(
+                            session_id,
+                            &PersistedSession {
+                                provider: result.provider_id,
+                                model: result.requested_model.clone(),
+                                effort: result.requested_effort.clone(),
+                                working_directory: result.working_directory.clone(),
+                            },
+                        );
+                    }
                 }
                 let state = if record.cancellation.is_cancelled()
                     && result.status == RunStatus::Succeeded
@@ -324,6 +341,33 @@ impl RunManager {
                 output_bytes,
                 diagnostics_bytes,
             };
+        }
+        if let Some(store) = self
+            .inner
+            .run_store
+            .lock()
+            .expect("run store mutex")
+            .as_ref()
+        {
+            let completed = {
+                let metadata = record.metadata.lock().expect("run metadata mutex");
+                crate::run_store::CompletedRun {
+                    state: metadata.state,
+                    status: metadata.result.status,
+                    completed_at: metadata.completed_at.unwrap_or_else(now),
+                    effective_model: metadata.result.effective_model.clone(),
+                    effective_effort: metadata.result.effective_effort.clone(),
+                    session_id: metadata.result.session_id.clone(),
+                    local_session_id: metadata.result.local_session_id.clone(),
+                    exit_code: metadata.result.exit_code,
+                    content_available: metadata.content_persisted,
+                    output_bytes: metadata.result.output_bytes,
+                    diagnostics_bytes: metadata.result.diagnostics_bytes,
+                    output_truncated: metadata.result.output_truncated,
+                    diagnostics_truncated: metadata.result.diagnostics_truncated,
+                }
+            };
+            let _ = store.record_completed(&record.run_id, completed);
         }
         record
             .output_capture

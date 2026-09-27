@@ -17,7 +17,14 @@ fn pending_approval_record(
 ) -> Arc<RunRecord> {
     let mut request = request();
     request.access = access;
-    let record = Arc::new(RunRecord::new(run_id.to_owned(), &request, None, None));
+    let record = Arc::new(RunRecord::new(
+        run_id.to_owned(),
+        &request,
+        None,
+        None,
+        None,
+        false,
+    ));
     record.metadata.lock().expect("run metadata mutex").state = RunState::WaitingForApproval;
     *record.pending_input.lock().expect("pending input mutex") = Some(PendingRunInput {
         input_id: "pending-approval".to_owned(),
@@ -56,7 +63,14 @@ fn insert_interaction_record(
 ) -> Arc<RunRecord> {
     let mut request = request();
     request.access = access;
-    let record = Arc::new(RunRecord::new(run_id.to_owned(), &request, deadline, None));
+    let record = Arc::new(RunRecord::new(
+        run_id.to_owned(),
+        &request,
+        deadline,
+        None,
+        None,
+        false,
+    ));
     manager
         .inner
         .records
