@@ -12,6 +12,14 @@ pub static DEFINITION: CatalogProvider = CatalogProvider::directory_sources(
     &[".gemini/antigravity", ".gemini/antigravity-cli"],
 );
 
+// The Antigravity client's public installed-app OAuth client (bundled with
+// the IDE), used only to renew stored tokens in memory.
+const RECOVERY: crate::code_assist::CredentialRecovery = crate::code_assist::CredentialRecovery {
+    client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+    client_secret: "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",
+    reauth: "antigravity",
+};
+
 pub(crate) fn collect(service: &ProviderMonitoring) -> MonitoringFuture<'_> {
     Box::pin(collect_live(service))
 }
@@ -33,6 +41,7 @@ async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
         project,
         "antigravity/usage-monitor",
         None,
+        &RECOVERY,
     )
     .await
 }

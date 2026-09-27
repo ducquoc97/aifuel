@@ -90,6 +90,35 @@ pub(crate) fn rank_windows(mut windows: Vec<QuotaWindow>) -> Vec<QuotaWindow> {
     windows
 }
 
+/// True when a collection failure means the stored credential was rejected,
+/// which is the only failure a credential refresh can repair. A 403 is left
+/// alone because it reports a permission problem fresh credentials will not
+/// fix, so a re-authentication hint would mislead.
+pub(crate) fn is_auth_error(detail: &str) -> bool {
+    detail.contains("HTTP 401")
+}
+
+/// Error text guiding the user to re-authenticate the provider's own CLI when
+/// stored credentials cannot be renewed from local material.
+pub(crate) fn with_reauth_hint(detail: &str, command: &str) -> String {
+    if is_auth_error(detail) {
+        format!("{detail} - re-authenticate with `{command}`")
+    } else {
+        detail.to_owned()
+    }
+}
+
+/// True when the credential document records an expiry that has passed, so a
+/// request can be refreshed before spending a doomed API call.
+pub(crate) fn credentials_expired(credentials: &Value) -> bool {
+    deep_find(
+        credentials,
+        &["expiresAt", "expires_at", "expiry_date", "expired"],
+    )
+    .and_then(timestamp)
+    .is_some_and(|expiry| expiry <= unix_timestamp())
+}
+
 pub(crate) fn read_json(path: &Path) -> Result<Value, String> {
     let content = fs::read_to_string(path)
         .map_err(|error| format!("could not read provider credentials: {error}"))?;
@@ -199,4 +228,47 @@ pub(crate) fn unix_timestamp() -> f64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credentials_expired_reads_millisecond_expiry_fields() {
+        let expired = serde_json::json!({"claudeAiOauth": {"expiresAt": 1_600_000_000_000_i64}});
+        assert!(credentials_expired(&expired));
+
+        let fresh = serde_json::json!({"expiry_date": 9_999_999_999_999_i64});
+        assert!(!credentials_expired(&fresh));
+    }
+
+    #[test]
+    fn credentials_without_expiry_are_not_treated_as_expired() {
+        // A missing expiry must not disable a token that may still be valid.
+        let credentials = serde_json::json!({"access_token": "tok"});
+        assert!(!credentials_expired(&credentials));
+    }
+
+    #[test]
+    fn only_rejected_credential_errors_trigger_a_refresh_attempt() {
+        assert!(is_auth_error("loadCodeAssist HTTP 401"));
+        // A 403 is a permission denial, not an expired credential; hinting a
+        // re-authentication would send users down the wrong path.
+        assert!(!is_auth_error("HTTP 403"));
+        assert!(!is_auth_error("HTTP 500"));
+        assert!(!is_auth_error("connection refused"));
+    }
+
+    #[test]
+    fn reauth_hint_is_appended_only_for_auth_failures() {
+        assert_eq!(
+            with_reauth_hint("HTTP 401", "codex login"),
+            "HTTP 401 - re-authenticate with `codex login`"
+        );
+        assert_eq!(
+            with_reauth_hint("invalid JSON response", "codex login"),
+            "invalid JSON response"
+        );
+    }
 }
