@@ -1,7 +1,7 @@
 use super::ProviderMonitoring;
 use super::usage_helpers::{
     credentials_expired, deep_find, is_auth_error, json_metadata, post_json, project_id,
-    quota_windows, rank_windows, read_json, response_json, value_string, with_reauth_hint,
+    quota_windows, rank_windows, read_json, response_json, value_string,
 };
 use aifuel_core::{ProviderKey, ProviderUsage, QuotaWindow};
 use serde_json::Value;
@@ -38,25 +38,35 @@ pub(crate) async fn collect(
     else {
         return ProviderUsage::error(provider, "No access token in provider credentials");
     };
-    let mut tried_refresh = false;
-    if credentials_expired(&credentials) {
-        tried_refresh = true;
-        if let Some(fresh) = google_access_token(service, &credentials, recovery).await {
-            token = fresh;
-        }
+    let expired = credentials_expired(&credentials);
+    let mut renewed = false;
+    if expired && let Some(fresh) = google_access_token(service, &credentials, recovery).await {
+        token = fresh;
+        renewed = true;
     }
     let (mut plan, mut windows, mut detail) =
         collect_quota(service, &token, project.as_deref(), user_agent, period).await;
     if let Some(detail_text) = &detail
         && is_auth_error(detail_text)
-        && !tried_refresh
+        && !renewed
         && let Some(fresh) = google_access_token(service, &credentials, recovery).await
     {
+        renewed = true;
         (plan, windows, detail) =
             collect_quota(service, &fresh, project.as_deref(), user_agent, period).await;
     }
     if let Some(detail) = detail {
-        let mut result = ProviderUsage::error(provider, with_reauth_hint(&detail, recovery.reauth));
+        // The call ran on a known-dead credential, or the credential was
+        // rejected outright; either way re-authentication is the fix.
+        let guided = is_auth_error(&detail) || (expired && !renewed);
+        let mut result = ProviderUsage::error(
+            provider,
+            if guided {
+                format!("{detail} - re-authenticate with `{}`", recovery.reauth)
+            } else {
+                detail
+            },
+        );
         result.plan = plan;
         return result;
     }
@@ -95,6 +105,7 @@ async fn google_access_token(
         .map(ToOwned::to_owned)
 }
 
+// Hand-rolled because the workspace builds reqwest without the `form` feature.
 fn form_encode(value: &str) -> String {
     value
         .bytes()

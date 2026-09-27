@@ -109,14 +109,14 @@ pub(crate) fn with_reauth_hint(detail: &str, command: &str) -> String {
 }
 
 /// True when the credential document records an expiry that has passed, so a
-/// request can be refreshed before spending a doomed API call.
+/// request can be refreshed before spending a doomed API call. Each key is
+/// searched independently so a non-timestamp match on one name cannot shadow
+/// a parseable expiry under another.
 pub(crate) fn credentials_expired(credentials: &Value) -> bool {
-    deep_find(
-        credentials,
-        &["expiresAt", "expires_at", "expiry_date", "expired"],
-    )
-    .and_then(timestamp)
-    .is_some_and(|expiry| expiry <= unix_timestamp())
+    ["expiresAt", "expires_at", "expiry_date", "expired"]
+        .iter()
+        .filter_map(|key| deep_find(credentials, &[*key]).and_then(timestamp))
+        .any(|expiry| expiry <= unix_timestamp())
 }
 
 pub(crate) fn read_json(path: &Path) -> Result<Value, String> {

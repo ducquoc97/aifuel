@@ -29,22 +29,22 @@ pub(crate) fn collect(service: &ProviderMonitoring) -> MonitoringFuture<'_> {
 }
 
 async fn collect_live(service: &ProviderMonitoring) -> ProviderUsage {
-    for attempt in 0..2 {
+    let mut refreshed = false;
+    loop {
         let usage = collect_once(service).await;
-        let Some(detail) = usage.detail.clone() else {
-            return usage;
-        };
-        if !is_auth_error(&detail) {
+        if !usage.detail.as_deref().is_some_and(is_auth_error) {
             return usage;
         }
         // The Codex CLI refreshes its own auth.json when the app-server serves
         // an authenticated request, so aifuel stays a pure credential reader.
-        if attempt == 0 && app_server_rate_limits("codex").await.is_some() {
-            continue;
+        if refreshed || app_server_rate_limits("codex").await.is_none() {
+            return ProviderUsage::error(
+                ProviderKey::Codex,
+                with_reauth_hint(&usage.detail.unwrap_or_default(), "codex login"),
+            );
         }
-        return ProviderUsage::error(ProviderKey::Codex, with_reauth_hint(&detail, "codex login"));
+        refreshed = true;
     }
-    unreachable!("the retry loop is bounded to two attempts")
 }
 
 async fn collect_once(service: &ProviderMonitoring) -> ProviderUsage {
@@ -156,23 +156,22 @@ async fn reset_credits_for_usage(data: &Value) -> Option<ResetCredits> {
     if !reported.credits.is_empty() {
         return Some(reported);
     }
-    app_server_reset_credits().await.or(Some(reported))
-}
-
-async fn app_server_reset_credits() -> Option<ResetCredits> {
-    app_server_reset_credits_from("codex").await
+    app_server_reset_credits_from("codex")
+        .await
+        .or(Some(reported))
 }
 
 async fn app_server_reset_credits_from(program: &str) -> Option<ResetCredits> {
     app_server_rate_limits(program)
         .await?
-        .get("rateLimitResetCredits")
+        .get("result")
+        .and_then(|result| result.get("rateLimitResetCredits"))
         .and_then(parse_reset_credits_value)
 }
 
 /// Runs one `account/rateLimits/read` request against the Codex app-server and
-/// returns its raw result. Completing the exchange means the CLI's own auth
-/// handling ran, including any needed token refresh persisted to auth.json.
+/// returns the raw JSON-RPC response. Receiving any reply means the CLI's own
+/// auth handling ran, including a token refresh persisted to auth.json.
 async fn app_server_rate_limits(program: &str) -> Option<Value> {
     let deadline = Instant::now() + APP_SERVER_TIMEOUT;
     let mut child = None;
@@ -249,9 +248,7 @@ async fn app_server_rate_limits_io(
         deadline,
     )
     .await?;
-    let response = read_app_server_response(stdout, 1, deadline).await?;
-    let result = response.get("result")?;
-    (!result.is_null()).then(|| result.clone())
+    read_app_server_response(stdout, 1, deadline).await
 }
 
 async fn send_app_server_message(
