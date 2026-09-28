@@ -109,8 +109,16 @@ impl From<&'static [&'static dyn AgentExecutionAdapter]> for AgentExecutionAdapt
     }
 }
 
+/// One compiled adapter plus its lazily probed integration evidence. The
+/// probe spawns native commands, so it runs once per adapter on first use
+/// rather than on every listing or run.
+pub(super) struct AdapterSlot {
+    pub handle: AdapterHandle,
+    pub info: std::sync::OnceLock<aifuel_core::AgentIntegrationInfo>,
+}
+
 #[derive(Clone)]
-enum AdapterHandle {
+pub(super) enum AdapterHandle {
     Owned(Arc<dyn AgentExecutionAdapter>),
     Static(&'static dyn AgentExecutionAdapter),
 }
@@ -169,7 +177,7 @@ struct OwnerToken {
 }
 
 struct ManagerInner {
-    adapters: Vec<AdapterHandle>,
+    adapters: Vec<AdapterSlot>,
     records: Mutex<HashMap<String, Arc<RunRecord>>>,
     completed_order: Mutex<VecDeque<String>>,
     policy: Mutex<RunManagerPolicy>,
@@ -218,6 +226,10 @@ struct RunRecord {
     /// Native session this run resumes, when the request carried one. Lets the
     /// manager enforce the one-active-run-per-session rule.
     resume: Option<String>,
+    /// Probed native integration version stamped at run start.
+    integration_version: Option<String>,
+    /// Host platform stamped at run start.
+    platform: String,
     created_at: f64,
     deadline: Option<Instant>,
     metadata: Mutex<RunMetadata>,
@@ -296,7 +308,7 @@ mod records;
 mod sessions;
 mod workers;
 
-pub(crate) use helpers::{event_size, now};
+pub(crate) use helpers::{event_size, host_platform, now};
 
 #[cfg(test)]
 mod tests;

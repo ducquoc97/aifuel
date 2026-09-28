@@ -24,6 +24,7 @@ fn pending_approval_record(
         None,
         None,
         false,
+        None,
     ));
     record.metadata.lock().expect("run metadata mutex").state = RunState::WaitingForApproval;
     *record.pending_input.lock().expect("pending input mutex") = Some(PendingRunInput {
@@ -70,6 +71,7 @@ fn insert_interaction_record(
         None,
         None,
         false,
+        None,
     ));
     manager
         .inner

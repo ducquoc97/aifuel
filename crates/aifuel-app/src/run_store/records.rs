@@ -23,6 +23,11 @@ pub(crate) struct StartedRun {
     /// the provider reported at completion.
     pub requested_account: Option<String>,
     pub resume: Option<String>,
+    /// Native integration version probed at run start, when the adapter's
+    /// version probe reported one.
+    pub integration_version: Option<String>,
+    /// Host platform label the run started under.
+    pub platform: String,
 }
 
 /// The terminal metadata written once when a run completes.
@@ -71,6 +76,10 @@ pub(crate) struct StoredRun {
     pub closed_reason: Option<String>,
     /// Account context the provider reported at completion.
     pub reported_account: Option<String>,
+    /// Native integration version the run started under.
+    pub integration_version: Option<String>,
+    /// Host platform label the run started under.
+    pub platform: Option<String>,
     pub created_at: f64,
     pub completed_at: Option<f64>,
     pub content_available: bool,
@@ -94,6 +103,8 @@ impl StoredRun {
             external_tools: self.external_tools.clone(),
             created_at: self.created_at,
             completed_at: self.completed_at,
+            integration_version: self.integration_version.clone(),
+            platform: self.platform.clone(),
             content_available: self.content_available,
             pending_input: None,
         }

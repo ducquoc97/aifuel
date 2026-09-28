@@ -208,6 +208,12 @@ pub struct ManagedRun {
     pub external_tools: Option<Vec<String>>,
     pub created_at: f64,
     pub completed_at: Option<f64>,
+    /// Version of the native integration binary that this run started under,
+    /// when the adapter's probe reported one.
+    pub integration_version: Option<String>,
+    /// Host platform label this run started under, matching the catalog's
+    /// platform evidence (for example `linux`, `wsl`, `macos`).
+    pub platform: Option<String>,
     pub content_available: bool,
     pub pending_input: Option<PendingRunInput>,
 }

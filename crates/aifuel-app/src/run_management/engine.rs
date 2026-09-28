@@ -34,17 +34,17 @@ impl RunManager {
     pub(super) fn resolve_request_with_adapter(
         &self,
         request: &RunRequest,
-    ) -> Result<(RunRequest, AdapterHandle), RunManagementError> {
+    ) -> Result<(RunRequest, &AdapterSlot), RunManagementError> {
         if request.prompt.trim().is_empty() {
             return Err(RunManagementError::invalid_request(
                 "prompt must not be empty",
             ));
         }
-        let adapter = self
+        let slot = self
             .inner
             .adapters
             .iter()
-            .find(|adapter| adapter.provider() == request.provider)
+            .find(|slot| slot.handle.provider() == request.provider)
             .ok_or_else(|| {
                 RunManagementError::new(
                     RunManagementErrorCode::AgentUnavailable,
@@ -96,8 +96,10 @@ impl RunManager {
             self.validate_root(&canonical)?;
             resolved.working_directory = Some(canonical);
         }
-        adapter.validate(&resolved).map_err(map_validation_error)?;
-        Ok((resolved, adapter.clone()))
+        slot.handle
+            .validate(&resolved)
+            .map_err(map_validation_error)?;
+        Ok((resolved, slot))
     }
 
     fn validate_root(&self, directory: &Path) -> Result<(), RunManagementError> {

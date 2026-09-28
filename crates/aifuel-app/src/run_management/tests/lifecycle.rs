@@ -259,6 +259,7 @@ fn worker_start_does_not_overwrite_pending_owner_input() {
             None,
             None,
             false,
+            None,
         ));
         record.push_event(RunEventKind::Started, None);
         manager

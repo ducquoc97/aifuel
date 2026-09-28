@@ -1,4 +1,6 @@
-use super::helpers::{EVENT_METADATA_BYTES, event_size, now, truncate_string, utf8_prefix_len};
+use super::helpers::{
+    EVENT_METADATA_BYTES, event_size, host_platform, now, truncate_string, utf8_prefix_len,
+};
 use super::*;
 
 impl RunRecord {
@@ -9,6 +11,7 @@ impl RunRecord {
         workspace_lock: Option<WorkspaceWriteLock>,
         run_store: Option<RunStore>,
         retain_content: bool,
+        integration_version: Option<String>,
     ) -> Self {
         Self {
             run_id,
@@ -18,6 +21,8 @@ impl RunRecord {
             requested_effort: request.effort.clone(),
             external_tools: request.external_tools.clone(),
             resume: request.resume.clone(),
+            integration_version,
+            platform: host_platform(),
             created_at: now(),
             deadline,
             metadata: Mutex::new(RunMetadata {
@@ -53,6 +58,8 @@ impl RunRecord {
             external_tools: self.external_tools.clone(),
             created_at: self.created_at,
             completed_at: metadata.completed_at,
+            integration_version: self.integration_version.clone(),
+            platform: Some(self.platform.clone()),
             content_available: metadata.content_available,
             pending_input: self
                 .pending_input

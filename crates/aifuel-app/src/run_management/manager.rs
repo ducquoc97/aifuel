@@ -7,13 +7,20 @@ impl RunManager {
     /// static provider registry.
     pub fn new(adapters: impl Into<AgentExecutionAdapters>) -> Self {
         let adapters = match adapters.into() {
-            AgentExecutionAdapters::Owned(adapters) => {
-                adapters.into_iter().map(AdapterHandle::Owned).collect()
-            }
+            AgentExecutionAdapters::Owned(adapters) => adapters
+                .into_iter()
+                .map(|handle| AdapterSlot {
+                    handle: AdapterHandle::Owned(handle),
+                    info: std::sync::OnceLock::new(),
+                })
+                .collect(),
             AgentExecutionAdapters::Static(adapters) => adapters
                 .iter()
                 .copied()
-                .map(AdapterHandle::Static)
+                .map(|handle| AdapterSlot {
+                    handle: AdapterHandle::Static(handle),
+                    info: std::sync::OnceLock::new(),
+                })
                 .collect(),
         };
         let inner = Arc::new(ManagerInner {
@@ -200,7 +207,7 @@ impl RunManager {
         self.inner
             .adapters
             .iter()
-            .map(AdapterHandle::provider)
+            .map(|slot| slot.handle.provider())
             .collect()
     }
 
@@ -213,8 +220,10 @@ impl RunManager {
         self.inner
             .adapters
             .iter()
-            .filter(|adapter| provider_filter.is_none_or(|provider| adapter.provider() == provider))
-            .map(|adapter| adapter.agent_info())
+            .filter(|slot| {
+                provider_filter.is_none_or(|provider| slot.handle.provider() == provider)
+            })
+            .map(|slot| slot.handle.agent_info())
             .collect()
     }
 
@@ -243,7 +252,17 @@ impl RunManager {
                 "run manager is shutting down",
             ));
         }
-        let (request, adapter) = self.resolve_request_with_adapter(&request)?;
+        let (request, slot) = self.resolve_request_with_adapter(&request)?;
+        let adapter = slot.handle.clone();
+        // Probe the integration evidence once per adapter; the probe spawns
+        // native commands so it must not run on every run acceptance.
+        let integration_version = slot
+            .info
+            .get_or_init(|| slot.handle.agent_info())
+            .native_version
+            .version
+            .clone();
+        let platform = host_platform();
         let deadline = request
             .timeout
             .map(|timeout| {
@@ -333,6 +352,7 @@ impl RunManager {
             workspace_lock,
             run_store.clone(),
             retain_content,
+            integration_version.clone(),
         ));
         let output_handler: Arc<dyn AgentRunOutputHandler> = Arc::new(ManagedRunOutputHandler {
             record: Arc::downgrade(&record),
@@ -357,6 +377,8 @@ impl RunManager {
                 timeout_seconds: request.timeout.map(|timeout| timeout.as_secs()),
                 requested_account: request.account.clone(),
                 resume: request.resume.clone(),
+                integration_version: integration_version.clone(),
+                platform: platform.clone(),
             })
         {
             crate::run_store::warn_store_write(&error);

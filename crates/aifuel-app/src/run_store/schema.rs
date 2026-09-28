@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS runs (
     created_at REAL NOT NULL,
     completed_at REAL,
     working_directory TEXT,
+    integration_version TEXT,
+    platform TEXT,
     requested_model TEXT,
     requested_effort TEXT,
     effective_model TEXT,

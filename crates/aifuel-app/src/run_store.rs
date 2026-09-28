@@ -91,10 +91,11 @@ impl RunStore {
         self.connection.lock().expect("run store mutex").execute(
             "INSERT INTO runs (
                     run_id, owner_pid, provider, state, created_at,
-                    working_directory, requested_model, requested_effort,
+                    working_directory, integration_version, platform,
+                    requested_model, requested_effort,
                     external_tools, output_format, access, timeout_seconds,
                     requested_account, resume
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 run.run_id,
                 self.owner_pid,
@@ -102,6 +103,8 @@ impl RunStore {
                 RunState::Starting.as_str(),
                 run.created_at,
                 run.working_directory,
+                run.integration_version,
+                run.platform,
                 run.requested_model,
                 run.requested_effort,
                 external_tools,
@@ -284,7 +287,8 @@ impl RunStore {
                         created_at, completed_at,
                         content_available, output_bytes, diagnostics_bytes,
                         output_truncated, diagnostics_truncated, owner_pid,
-                        closed_reason, reported_account
+                        closed_reason, reported_account, integration_version,
+                        platform
                     FROM runs WHERE run_id = ?1 AND state IN ({TERMINAL_STATES})"
                 ),
                 params![run_id],
@@ -324,6 +328,8 @@ impl RunStore {
                         owner_pid: row.get(19)?,
                         closed_reason: row.get(20)?,
                         reported_account: row.get(21)?,
+                        integration_version: row.get(22)?,
+                        platform: row.get(23)?,
                     })
                 },
             )

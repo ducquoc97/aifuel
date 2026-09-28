@@ -1,5 +1,20 @@
 use super::*;
 
+/// Host platform label, matching the catalog's platform evidence so persisted
+/// run rows and model catalogs describe the same environments.
+pub(crate) fn host_platform() -> String {
+    let os = std::env::consts::OS;
+    let wsl_environment =
+        std::env::var_os("WSL_INTEROP").is_some() || std::env::var_os("WSL_DISTRO_NAME").is_some();
+    let proc_version = std::fs::read_to_string("/proc/version").unwrap_or_default();
+    if os == "linux" && (wsl_environment || proc_version.to_ascii_lowercase().contains("microsoft"))
+    {
+        "wsl".to_owned()
+    } else {
+        os.to_owned()
+    }
+}
+
 pub(super) fn ordinary_input_response(
     pending: &PendingRunInput,
     response: serde_json::Value,

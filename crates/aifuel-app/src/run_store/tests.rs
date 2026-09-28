@@ -19,6 +19,8 @@ fn started_run(run_id: &str) -> StartedRun {
         timeout_seconds: Some(30),
         requested_account: None,
         resume: None,
+        integration_version: Some("1.2.3".to_owned()),
+        platform: "linux".to_owned(),
     }
 }
 
@@ -87,6 +89,12 @@ fn terminal_run_metadata_roundtrips_without_content() {
 
     let managed = run.managed_run();
     assert_eq!(managed.state, RunState::Succeeded);
+    assert_eq!(
+        managed.integration_version.as_deref(),
+        Some("1.2.3"),
+        "the integration version that produced the run survives the round trip"
+    );
+    assert_eq!(managed.platform.as_deref(), Some("linux"));
     assert_eq!(managed.pending_input, None);
     let _ = std::fs::remove_file(path);
 }

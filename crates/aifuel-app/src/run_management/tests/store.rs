@@ -20,6 +20,11 @@ fn terminal_runs_remain_readable_after_the_owner_drops() {
         let run = manager.start_run(request()).expect("run starts");
         run_id = run.run_id.clone();
         assert_eq!(
+            run.platform.as_deref(),
+            Some(crate::run_management::host_platform().as_str()),
+            "the host platform is stamped when the run is accepted"
+        );
+        assert_eq!(
             wait_for_terminal(&manager, &run_id).state,
             RunState::Succeeded
         );
