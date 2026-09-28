@@ -19,6 +19,9 @@ struct OversizedOutputAdapter {
 
 struct InputAdapter;
 
+/// Fails the run immediately with an `InvalidRequest` provider error.
+struct FailingAdapter;
+
 impl AgentExecutionAdapter for ProbeAdapter {
     fn provider(&self) -> ProviderKey {
         self.provider
@@ -116,6 +119,20 @@ impl AgentExecutionAdapter for OversizedOutputAdapter {
     ) -> Result<RunResult, AgentRunError> {
         output_handler.on_output(&"x".repeat(self.bytes));
         Err(AgentRunError::Timeout("test deadline".to_owned()))
+    }
+}
+
+impl AgentExecutionAdapter for FailingAdapter {
+    fn provider(&self) -> ProviderKey {
+        ProviderKey::Claude
+    }
+
+    fn execute(
+        &self,
+        _request: &RunRequest,
+        _cancellation: &RunCancellationToken,
+    ) -> Result<RunResult, AgentRunError> {
+        Err(AgentRunError::InvalidRequest("probe rejection".to_owned()))
     }
 }
 
@@ -224,3 +241,5 @@ mod input_response;
 mod lifecycle;
 
 mod runs;
+
+mod store;

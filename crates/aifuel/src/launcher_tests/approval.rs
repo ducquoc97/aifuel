@@ -25,6 +25,8 @@ fn managed_cli_run_prints_the_local_approval_command() {
         external_tools: None,
         created_at: 0.0,
         completed_at: None,
+        integration_version: None,
+        platform: None,
         content_available: false,
         pending_input: Some(pending.clone()),
     };

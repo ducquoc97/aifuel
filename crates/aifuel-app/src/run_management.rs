@@ -7,6 +7,7 @@
 #[cfg(any(unix, windows))]
 use crate::approval_ipc::{LocalApprovalDecision, LocalApprovalServer};
 use crate::content_store::{ContentStore, PersistedContent};
+use crate::run_store::RunStore;
 use crate::selection::ExecutionPolicy;
 use crate::session_store::{PersistedSession, SessionStore};
 use crate::workspace_lock::{WorkspaceLockError, WorkspaceWriteLock};
@@ -108,8 +109,16 @@ impl From<&'static [&'static dyn AgentExecutionAdapter]> for AgentExecutionAdapt
     }
 }
 
+/// One compiled adapter plus its lazily probed integration evidence. The
+/// probe spawns native commands, so it runs once per adapter on first use
+/// rather than on every listing or run.
+pub(super) struct AdapterSlot {
+    pub handle: AdapterHandle,
+    pub info: std::sync::OnceLock<aifuel_core::AgentIntegrationInfo>,
+}
+
 #[derive(Clone)]
-enum AdapterHandle {
+pub(super) enum AdapterHandle {
     Owned(Arc<dyn AgentExecutionAdapter>),
     Static(&'static dyn AgentExecutionAdapter),
 }
@@ -168,7 +177,7 @@ struct OwnerToken {
 }
 
 struct ManagerInner {
-    adapters: Vec<AdapterHandle>,
+    adapters: Vec<AdapterSlot>,
     records: Mutex<HashMap<String, Arc<RunRecord>>>,
     completed_order: Mutex<VecDeque<String>>,
     policy: Mutex<RunManagerPolicy>,
@@ -176,6 +185,10 @@ struct ManagerInner {
     sessions: Mutex<HashMap<String, SessionRecord>>,
     session_store: Mutex<Option<SessionStore>>,
     content_store: Mutex<Option<ContentStore>>,
+    run_store: Mutex<Option<RunStore>>,
+    /// Per-owner discriminator bound into event cursors so a cursor minted by
+    /// one owner cannot be replayed by another connection.
+    cursor_tag: u64,
     next_id: AtomicU64,
     shutdown: AtomicBool,
     #[cfg(any(unix, windows))]
@@ -192,6 +205,17 @@ struct SessionRecord {
     working_directory: PathBuf,
 }
 
+impl From<PersistedSession> for SessionRecord {
+    fn from(session: PersistedSession) -> Self {
+        Self {
+            provider: session.provider,
+            model: session.model,
+            effort: session.effort,
+            working_directory: session.working_directory,
+        }
+    }
+}
+
 struct RunRecord {
     run_id: String,
     provider: aifuel_core::ProviderKey,
@@ -199,6 +223,13 @@ struct RunRecord {
     requested_model: Option<String>,
     requested_effort: Option<String>,
     external_tools: Option<Vec<String>>,
+    /// Native session this run resumes, when the request carried one. Lets the
+    /// manager enforce the one-active-run-per-session rule.
+    resume: Option<String>,
+    /// Probed native integration version stamped at run start.
+    integration_version: Option<String>,
+    /// Host platform stamped at run start.
+    platform: String,
     created_at: f64,
     deadline: Option<Instant>,
     metadata: Mutex<RunMetadata>,
@@ -211,6 +242,8 @@ struct RunRecord {
     retained_content_bytes: AtomicUsize,
     worker: Mutex<Option<JoinHandle<()>>>,
     workspace_lock: Mutex<Option<WorkspaceWriteLock>>,
+    run_store: Option<RunStore>,
+    retain_content: bool,
 }
 
 #[derive(Clone, Default)]
@@ -236,6 +269,8 @@ struct ResultMetadata {
     local_session_id: Option<String>,
     session_id: Option<String>,
     exit_code: Option<i32>,
+    closed_reason: Option<String>,
+    account_id: Option<String>,
     output: Option<String>,
     error: Option<String>,
     diagnostics: Option<String>,
@@ -272,6 +307,8 @@ mod observation;
 mod records;
 mod sessions;
 mod workers;
+
+pub(crate) use helpers::{event_size, host_platform, now};
 
 #[cfg(test)]
 mod tests;

@@ -20,6 +20,14 @@ pub enum AccessMode {
 }
 
 impl AccessMode {
+    /// The stable serialized spelling for this access mode.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+        }
+    }
+
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "read-only" => Ok(Self::ReadOnly),
@@ -39,6 +47,15 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
+    /// The stable serialized spelling for this output format.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Json => "json",
+            Self::Jsonl => "jsonl",
+        }
+    }
+
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "text" => Ok(Self::Text),
@@ -65,6 +82,29 @@ pub enum RunStatus {
     Failed,
     Timeout,
     Cancelled,
+}
+
+impl RunStatus {
+    /// The stable serialized spelling for this outcome status.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Timeout => "timeout",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parse the serialized spelling written by [`RunStatus::as_str`].
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "succeeded" => Self::Succeeded,
+            "failed" => Self::Failed,
+            "timeout" => Self::Timeout,
+            "cancelled" => Self::Cancelled,
+            _ => return None,
+        })
+    }
 }
 
 /// One explicit request to run a provider CLI through its execution adapter.

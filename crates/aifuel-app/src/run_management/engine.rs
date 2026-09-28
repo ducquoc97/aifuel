@@ -34,17 +34,17 @@ impl RunManager {
     pub(super) fn resolve_request_with_adapter(
         &self,
         request: &RunRequest,
-    ) -> Result<(RunRequest, AdapterHandle), RunManagementError> {
+    ) -> Result<(RunRequest, &AdapterSlot), RunManagementError> {
         if request.prompt.trim().is_empty() {
             return Err(RunManagementError::invalid_request(
                 "prompt must not be empty",
             ));
         }
-        let adapter = self
+        let slot = self
             .inner
             .adapters
             .iter()
-            .find(|adapter| adapter.provider() == request.provider)
+            .find(|slot| slot.handle.provider() == request.provider)
             .ok_or_else(|| {
                 RunManagementError::new(
                     RunManagementErrorCode::AgentUnavailable,
@@ -96,8 +96,10 @@ impl RunManager {
             self.validate_root(&canonical)?;
             resolved.working_directory = Some(canonical);
         }
-        adapter.validate(&resolved).map_err(map_validation_error)?;
-        Ok((resolved, adapter.clone()))
+        slot.handle
+            .validate(&resolved)
+            .map_err(map_validation_error)?;
+        Ok((resolved, slot))
     }
 
     fn validate_root(&self, directory: &Path) -> Result<(), RunManagementError> {
@@ -160,22 +162,22 @@ impl RunManager {
             output,
             error,
             diagnostics,
+            account_id,
+            closed_reason,
         ) = match result {
             Ok(result) => {
                 if let Some(session_id) = result.session_id.as_ref() {
+                    let persisted_session = PersistedSession {
+                        provider: result.provider_id,
+                        model: result.requested_model.clone(),
+                        effort: result.requested_effort.clone(),
+                        working_directory: result.working_directory.clone(),
+                    };
                     self.inner
                         .sessions
                         .lock()
                         .expect("run sessions mutex")
-                        .insert(
-                            session_id.clone(),
-                            SessionRecord {
-                                provider: result.provider_id,
-                                model: result.requested_model.clone(),
-                                effort: result.requested_effort.clone(),
-                                working_directory: result.working_directory.clone(),
-                            },
-                        );
+                        .insert(session_id.clone(), persisted_session.clone().into());
                     if let Some(store) = self
                         .inner
                         .session_store
@@ -183,15 +185,17 @@ impl RunManager {
                         .expect("session store mutex")
                         .as_mut()
                     {
-                        let _ = store.insert(
-                            session_id.clone(),
-                            PersistedSession {
-                                provider: result.provider_id,
-                                model: result.requested_model.clone(),
-                                effort: result.requested_effort.clone(),
-                                working_directory: result.working_directory.clone(),
-                            },
-                        );
+                        let _ = store.insert(session_id.clone(), persisted_session.clone());
+                    }
+                    if let Some(store) = self
+                        .inner
+                        .run_store
+                        .lock()
+                        .expect("run store mutex")
+                        .as_ref()
+                        && let Err(error) = store.upsert_session(session_id, &persisted_session)
+                    {
+                        crate::run_store::warn_store_write(&error);
                     }
                 }
                 let state = if record.cancellation.is_cancelled()
@@ -216,6 +220,8 @@ impl RunManager {
                     Some(result.output),
                     result.error,
                     result.diagnostics,
+                    result.account_id,
+                    (result.status == RunStatus::Failed).then(|| "provider_failed".to_owned()),
                 )
             }
             Err(error) => {
@@ -223,6 +229,11 @@ impl RunManager {
                     AgentRunError::Cancelled => (RunStatus::Cancelled, RunState::Cancelled),
                     AgentRunError::Timeout(_) => (RunStatus::Timeout, RunState::TimedOut),
                     _ => (RunStatus::Failed, RunState::Failed),
+                };
+                let closed_reason = match error {
+                    AgentRunError::Cancelled | AgentRunError::Timeout(_) => None,
+                    AgentRunError::InvalidRequest(_) => Some("invalid_request".to_owned()),
+                    _ => Some("agent_unavailable".to_owned()),
                 };
                 (
                     status,
@@ -235,6 +246,8 @@ impl RunManager {
                     None,
                     Some(error.to_string()),
                     None,
+                    None,
+                    closed_reason,
                 )
             }
         };
@@ -261,28 +274,31 @@ impl RunManager {
             .map_or(0, String::len)
             .saturating_add(error.as_ref().map_or(0, String::len))
             .saturating_add(diagnostics.as_ref().map_or(0, String::len));
-        let previous = self
-            .inner
-            .retained_content_bytes
-            .fetch_add(content_bytes, Ordering::AcqRel);
-        let retain_content = previous.saturating_add(content_bytes) <= MAX_OWNER_CONTENT_BYTES;
-        if !retain_content {
-            self.inner
-                .retained_content_bytes
-                .fetch_sub(content_bytes, Ordering::AcqRel);
-        } else {
-            record
-                .retained_content_bytes
-                .store(content_bytes, Ordering::Release);
-        }
         let event_output = (!captured_output.streamed)
             .then(|| output.clone())
             .flatten();
         let event_diagnostics = diagnostics.clone();
+        let retain_content;
         {
             let mut metadata = record.metadata.lock().expect("run metadata mutex");
+            // The terminal guard runs before byte accounting so a repeated
+            // completion does not inflate the owner's retained-content total.
             if metadata.state.is_terminal() {
                 return;
+            }
+            let previous = self
+                .inner
+                .retained_content_bytes
+                .fetch_add(content_bytes, Ordering::AcqRel);
+            retain_content = previous.saturating_add(content_bytes) <= MAX_OWNER_CONTENT_BYTES;
+            if !retain_content {
+                self.inner
+                    .retained_content_bytes
+                    .fetch_sub(content_bytes, Ordering::AcqRel);
+            } else {
+                record
+                    .retained_content_bytes
+                    .store(content_bytes, Ordering::Release);
             }
             metadata.state = state;
             metadata.completed_at = Some(now());
@@ -316,6 +332,8 @@ impl RunManager {
                 local_session_id,
                 session_id,
                 exit_code,
+                closed_reason,
+                account_id,
                 output: if retain_content { output } else { None },
                 error: if retain_content { error } else { None },
                 diagnostics: if retain_content { diagnostics } else { None },
@@ -346,6 +364,39 @@ impl RunManager {
             _ => RunEventKind::Failed,
         };
         self.push_event(record, terminal_kind, None);
+        // The terminal event row lands before the terminal state so a history
+        // reader never sees a completed run whose stream lacks its last event.
+        if let Some(store) = self
+            .inner
+            .run_store
+            .lock()
+            .expect("run store mutex")
+            .as_ref()
+        {
+            let completed = {
+                let metadata = record.metadata.lock().expect("run metadata mutex");
+                crate::run_store::CompletedRun {
+                    state: metadata.state,
+                    status: metadata.result.status,
+                    completed_at: metadata.completed_at.unwrap_or_else(now),
+                    effective_model: metadata.result.effective_model.clone(),
+                    effective_effort: metadata.result.effective_effort.clone(),
+                    session_id: metadata.result.session_id.clone(),
+                    local_session_id: metadata.result.local_session_id.clone(),
+                    exit_code: metadata.result.exit_code,
+                    closed_reason: metadata.result.closed_reason.clone(),
+                    reported_account: metadata.result.account_id.clone(),
+                    content_available: metadata.content_persisted,
+                    output_bytes: metadata.result.output_bytes,
+                    diagnostics_bytes: metadata.result.diagnostics_bytes,
+                    output_truncated: metadata.result.output_truncated,
+                    diagnostics_truncated: metadata.result.diagnostics_truncated,
+                }
+            };
+            if let Err(error) = store.record_completed(&record.run_id, completed) {
+                crate::run_store::warn_store_write(&error);
+            }
+        }
         let _ = record
             .workspace_lock
             .lock()
