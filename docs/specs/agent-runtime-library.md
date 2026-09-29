@@ -133,8 +133,16 @@ type SessionStatus =
 ### Subscribe and replay
 
 - `session.subscribe { lastSeenSeq }` returns a `SessionSnapshot` plus all events with `seq > lastSeenSeq`, in order. A UI reload, dashboard reconnect, or bridge restart reattaches without losing in-flight Agent Runs.
-- `SessionSnapshot` is the materialized read model: status, `ModelSelection`, cwd, pending Approval Requests, Checkpoints, `headSeq`, and a bounded `tail` of transcript items. `tail` is capped; older content is paginated by `seq`. Oversized replay payloads are a known client performance hazard, so the bound is normative, not decorative.
+- Replay is bounded on two axes: event count and payload bytes. When `lastSeenSeq` lags `headSeq` beyond either bound, the runtime skips replay and returns a fresh `SessionSnapshot` instead. This is the same fallback T3 Code uses (`afterSequence` bounded by `THREAD_RESUME_MAX_EVENTS` and `ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES`); the constants ship in the contract after one measurement pass on real sessions.
+- `SessionSnapshot` is the materialized read model: status, `ModelSelection`, cwd, pending Approval Requests, Checkpoints, `headSeq`, and a bounded `tail` of transcript items paginated by `seq`.
+- Host Applications persist `lastSeenSeq` per session across consumer restarts, so resubscription is a fast replay rather than a cold snapshot.
 - Multiple consumers may subscribe to one session (dashboard plus MCP host). The event log serializes order. When two consumers answer one Approval Request, the first wins and the second receives `already_resolved`; the `approval.resolved` event's `answeredBy` keeps every consumer's UI honest.
+
+### Host restart and resume
+
+- On graceful shutdown the runtime marks in-flight Agent Runs `interrupted` and persists each session's provider resume cursor where the adapter supports it.
+- On startup it reconciles persisted sessions, mirroring T3 Code's `reconcileProviderSessions`: where the adapter declares `resume`, the runtime attempts provider-side continuation and emits `session.status` (`working` on success, `interrupted` on failure). Sessions on adapters without `resume` stay `interrupted` permanently; continuing work means a new session.
+- Interruption is recorded as a fact in the Session Event Log and continuation is attempted, never assumed.
 
 ## Approvals
 
@@ -215,7 +223,7 @@ trait AgentAdapter {
 
 | Reference | Borrow | Avoid |
 | --- | --- | --- |
-| pingdotgg/t3code | Normalized `ProviderRuntimeEvent`-style union; per-turn Checkpoints via hidden git refs; command receipts | Full event sourcing (decider/projector machinery); Electron-coupled packaging |
+| pingdotgg/t3code | Normalized `ProviderRuntimeEvent`-style union; per-turn Checkpoints via hidden git refs; command receipts; replay-to-snapshot fallback bounds; restart reconciliation via provider resume cursors | Full event sourcing (decider/projector machinery); Electron-coupled packaging |
 | codex `app-server` | stdio JSON-RPC as the embeddable host surface | Treating it as multi-protocol: it speaks Codex's own schema, not this contract |
 | sst/opencode | `serve` HTTP surface as a provider integration point | Its auth storage model as a concurrency guarantee |
 | Zed / ACP agents | One protocol adapter covering several vendors | Per-vendor ACP forks |
@@ -229,6 +237,5 @@ trait AgentAdapter {
 
 ## Open questions
 
-- Whether Agent Sessions survive host process restarts by resuming provider-side session ids, or become `interrupted` and require a new session - `resume` capability semantics need one decision per adapter.
-- `tail` bounds and snapshot pagination constants need one measurement pass against real sessions.
+- Replay and `tail` bounds: the event-count and byte-budget constants need one measurement pass against real sessions.
 - Whether the stdio bridge is one-runtime-per-process (simple, matches codex app-server) or multiplexes several host connections over one pipe.
