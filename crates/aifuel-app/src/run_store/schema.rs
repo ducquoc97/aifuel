@@ -6,7 +6,7 @@
 //! only for `events.data`, which stays `NULL` unless the owning manager
 //! enables content retention.
 
-pub(super) const SCHEMA_VERSION: u32 = 3;
+pub(super) const SCHEMA_VERSION: u32 = 4;
 
 /// The `meta` table is created before any versioned migration so the schema
 /// version can be read even on a database that predates the migration.
@@ -72,6 +72,28 @@ CREATE TABLE IF NOT EXISTS events (
     data TEXT,
     PRIMARY KEY (run_id, seq)
 );
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    integration TEXT NOT NULL,
+    model TEXT,
+    effort TEXT,
+    cwd TEXT NOT NULL,
+    status TEXT NOT NULL,
+    resume_cursor TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_events (
+    session_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    run_id TEXT,
+    created_at REAL NOT NULL,
+    schema_version INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS session_events_run ON session_events(session_id, run_id, seq);
 ";
 
 /// Schema version 1 stored only the provider key on runs and used it as the
@@ -106,6 +128,15 @@ UPDATE meta SET value = '2' WHERE key = 'schema_version';
 pub(super) const MIGRATION_V2: &str = "
 ALTER TABLE runs ADD COLUMN usage TEXT;
 UPDATE meta SET value = '3' WHERE key = 'schema_version';
+";
+
+/// Schema version 3 predates the Session Event Log: `session_events` holds
+/// the durable per-session contract event sequence and `agent_sessions` the
+/// persisted session read-model projection. Both are pure additions, so the
+/// version stamp is all the migration needs; the schema batch that follows
+/// creates the tables.
+pub(super) const MIGRATION_V3: &str = "
+UPDATE meta SET value = '4' WHERE key = 'schema_version';
 ";
 
 pub(super) const TERMINAL_STATES: &str = "'succeeded', 'failed', 'timed_out', 'cancelled'";

@@ -22,12 +22,13 @@ use std::sync::{Arc, Mutex};
 
 use helpers::{invalid_text, pid_alive};
 use schema::{
-    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, SCHEMA, SCHEMA_VERSION, TERMINAL_EVENT_KINDS,
-    TERMINAL_STATES,
+    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, SCHEMA, SCHEMA_VERSION,
+    TERMINAL_EVENT_KINDS, TERMINAL_STATES,
 };
 
 pub use error::RunStoreError;
 pub(crate) use records::{CompletedRun, StartedRun, StoredEventPage, StoredRun};
+pub use records::{ReplayPage, StoredAgentSession};
 
 /// History writes are best-effort: an active run must not fail because its
 /// metadata could not be persisted, but a silent drop hides a degraded
@@ -82,8 +83,13 @@ impl RunStore {
             "1" => {
                 connection.execute_batch(MIGRATION_V1)?;
                 connection.execute_batch(MIGRATION_V2)?;
+                connection.execute_batch(MIGRATION_V3)?;
             }
-            "2" => connection.execute_batch(MIGRATION_V2)?,
+            "2" => {
+                connection.execute_batch(MIGRATION_V2)?;
+                connection.execute_batch(MIGRATION_V3)?;
+            }
+            "3" => connection.execute_batch(MIGRATION_V3)?,
             version if version == SCHEMA_VERSION.to_string() => {}
             version => return Err(RunStoreError::UnsupportedSchema(version.to_owned())),
         }
@@ -495,6 +501,7 @@ mod error;
 mod helpers;
 mod records;
 mod schema;
+mod session_log;
 
 #[cfg(test)]
 mod tests;

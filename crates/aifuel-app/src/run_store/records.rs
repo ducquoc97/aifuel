@@ -2,9 +2,11 @@
 //! projections rebuilt from persisted rows.
 
 use aifuel_core::{
-    IntegrationId, ManagedRun, ManagedRunResult, ProviderId, RUN_MANAGEMENT_SCHEMA_VERSION,
-    RunEvent, RunState, RunStatus, TokenUsage,
+    AgentEvent, Effort, IntegrationId, ManagedRun, ManagedRunResult, ProviderId,
+    RUN_MANAGEMENT_SCHEMA_VERSION, RunEvent, RunState, RunStatus, Seq, SessionId, SessionStatus,
+    TokenUsage,
 };
+use std::path::PathBuf;
 
 /// Metadata recorded when an Agent Run is accepted. The prompt is
 /// intentionally absent; prompts are content and are never persisted.
@@ -159,4 +161,32 @@ pub(crate) struct StoredEventPage {
     pub events: Vec<RunEvent>,
     pub latest_sequence: u64,
     pub has_more: bool,
+}
+
+/// One persisted Agent Session row: the read-model projection the Session
+/// Event Log maintains beside the raw `session_events` sequence.
+pub struct StoredAgentSession {
+    pub session_id: SessionId,
+    /// The Provider Integration the session is bound to.
+    pub integration: IntegrationId,
+    /// The session's current model selection. `None` means no selection has
+    /// been recorded yet; it does not claim a provider default.
+    pub model: Option<String>,
+    pub effort: Option<Effort>,
+    pub cwd: PathBuf,
+    pub status: SessionStatus,
+    /// The provider resume cursor persisted where the adapter supports
+    /// resume, read back by the startup reconcile.
+    pub resume_cursor: Option<String>,
+}
+
+/// One bounded page from a session's event log plus the log's head.
+pub struct ReplayPage {
+    pub events: Vec<AgentEvent>,
+    /// The newest sequence the Session Event Log assigned for the session.
+    pub head_seq: Seq,
+    /// Events past `after_seq` remained beyond the page bounds. Per the
+    /// contract's replay-to-snapshot fallback, the subscribe path answers a
+    /// truncated replay with a fresh `SessionSnapshot` instead.
+    pub truncated: bool,
 }
