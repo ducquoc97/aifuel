@@ -23,14 +23,6 @@ impl RunManager {
             .ok_or_else(|| RunManagementError::run_not_found(run_id))
     }
 
-    pub(super) fn resolve_request(
-        &self,
-        request: &RunRequest,
-    ) -> Result<RunRequest, RunManagementError> {
-        self.resolve_request_with_adapter(request)
-            .map(|(request, _)| request)
-    }
-
     pub(super) fn resolve_request_with_adapter(
         &self,
         request: &RunRequest,
@@ -40,21 +32,25 @@ impl RunManager {
                 "prompt must not be empty",
             ));
         }
+        // Resolve the caller's selection to one canonical integration: an
+        // exact IntegrationId match wins; a bare provider id resolves only
+        // when exactly one registered integration uses it.
+        let integration = aifuel_core::resolve_integration(
+            &request.integration,
+            self.inner
+                .adapters
+                .iter()
+                .map(|slot| (slot.handle.integration(), slot.handle.provider())),
+        )
+        .map_err(map_validation_error)?;
         let slot = self
             .inner
             .adapters
             .iter()
-            .find(|slot| slot.handle.provider() == request.provider)
-            .ok_or_else(|| {
-                RunManagementError::new(
-                    RunManagementErrorCode::AgentUnavailable,
-                    format!(
-                        "provider {} has no registered Agent Integration",
-                        request.provider
-                    ),
-                )
-            })?;
+            .find(|slot| slot.handle.integration() == integration)
+            .expect("a resolved selection always names a registered integration");
         let mut resolved = request.clone();
+        resolved.integration = integration;
         if resolved.access == aifuel_core::AccessMode::ReadOnly
             && let Some(tools) = &resolved.external_tools
         {
@@ -164,11 +160,13 @@ impl RunManager {
             diagnostics,
             account_id,
             closed_reason,
+            usage,
         ) = match result {
             Ok(result) => {
                 if let Some(session_id) = result.session_id.as_ref() {
                     let persisted_session = PersistedSession {
-                        provider: result.provider_id,
+                        integration: result.integration_id.clone(),
+                        provider: result.provider_id.clone(),
                         model: result.requested_model.clone(),
                         effort: result.requested_effort.clone(),
                         working_directory: result.working_directory.clone(),
@@ -222,6 +220,7 @@ impl RunManager {
                     result.diagnostics,
                     result.account_id,
                     (result.status == RunStatus::Failed).then(|| "provider_failed".to_owned()),
+                    result.usage,
                 )
             }
             Err(error) => {
@@ -248,6 +247,7 @@ impl RunManager {
                     None,
                     None,
                     closed_reason,
+                    None,
                 )
             }
         };
@@ -337,6 +337,7 @@ impl RunManager {
                 output: if retain_content { output } else { None },
                 error: if retain_content { error } else { None },
                 diagnostics: if retain_content { diagnostics } else { None },
+                usage,
                 output_truncated,
                 diagnostics_truncated,
                 output_bytes,
@@ -386,6 +387,7 @@ impl RunManager {
                     exit_code: metadata.result.exit_code,
                     closed_reason: metadata.result.closed_reason.clone(),
                     reported_account: metadata.result.account_id.clone(),
+                    usage: metadata.result.usage.clone(),
                     content_available: metadata.content_persisted,
                     output_bytes: metadata.result.output_bytes,
                     diagnostics_bytes: metadata.result.diagnostics_bytes,

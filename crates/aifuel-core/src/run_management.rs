@@ -5,7 +5,8 @@
 //! MCP endpoint serialize exactly the same contract.
 
 use crate::{
-    AccessMode, AgentInputQuestion, AgentInteractionKind, OutputFormat, ProviderKey, RunStatus,
+    AccessMode, AgentInputQuestion, AgentInteractionKind, IntegrationId, OutputFormat, ProviderId,
+    RunStatus,
 };
 use serde::Serialize;
 use std::error::Error;
@@ -202,7 +203,10 @@ pub struct ManagedRun {
     pub schema_version: u32,
     pub run_id: String,
     pub state: RunState,
-    pub provider: ProviderKey,
+    /// The configured integration this run is routed through.
+    pub integration: IntegrationId,
+    /// The upstream provider the selected integration executes against.
+    pub provider: ProviderId,
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
     pub external_tools: Option<Vec<String>>,
@@ -248,7 +252,10 @@ pub struct PendingRunInput {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ResolvedRun {
     pub schema_version: u32,
-    pub provider: ProviderKey,
+    /// The configured integration this request resolved to.
+    pub integration: IntegrationId,
+    /// The upstream provider the selected integration executes against.
+    pub provider: ProviderId,
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
     pub external_tools: Option<Vec<String>>,
@@ -268,7 +275,10 @@ pub struct ResolvedRun {
 pub struct StoredSessionSelection {
     pub schema_version: u32,
     pub session_id: String,
-    pub provider: ProviderKey,
+    /// The configured integration the session's original run used.
+    pub integration: IntegrationId,
+    /// The upstream provider that integration executes against.
+    pub provider: ProviderId,
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
 }
@@ -358,7 +368,10 @@ pub struct ManagedRunResult {
     pub schema_version: u32,
     pub run_id: String,
     pub state: RunState,
-    pub provider: ProviderKey,
+    /// The configured integration this run was routed through.
+    pub integration: IntegrationId,
+    /// The upstream provider the selected integration executed against.
+    pub provider: ProviderId,
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
     pub effective_model: Option<String>,
@@ -376,6 +389,9 @@ pub struct ManagedRunResult {
     pub output: Option<String>,
     pub error: Option<String>,
     pub diagnostics: Option<String>,
+    /// Token accounting reported by the provider, when the wire protocol
+    /// returns it. Unrelated to output truncation or content retention.
+    pub usage: Option<crate::TokenUsage>,
     pub content_available: bool,
     pub output_truncated: bool,
     pub diagnostics_truncated: bool,

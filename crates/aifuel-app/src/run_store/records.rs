@@ -2,15 +2,18 @@
 //! projections rebuilt from persisted rows.
 
 use aifuel_core::{
-    ManagedRun, ManagedRunResult, ProviderKey, RUN_MANAGEMENT_SCHEMA_VERSION, RunEvent, RunState,
-    RunStatus,
+    IntegrationId, ManagedRun, ManagedRunResult, ProviderId, RUN_MANAGEMENT_SCHEMA_VERSION,
+    RunEvent, RunState, RunStatus, TokenUsage,
 };
 
 /// Metadata recorded when an Agent Run is accepted. The prompt is
 /// intentionally absent; prompts are content and are never persisted.
 pub(crate) struct StartedRun {
     pub run_id: String,
-    pub provider: ProviderKey,
+    /// The upstream provider the selected integration executes against.
+    pub provider: ProviderId,
+    /// The configured integration the run was routed through.
+    pub integration: IntegrationId,
     pub created_at: f64,
     pub working_directory: Option<String>,
     pub requested_model: Option<String>,
@@ -45,6 +48,9 @@ pub(crate) struct CompletedRun {
     pub closed_reason: Option<String>,
     /// The account context reported by the provider, when it reports one.
     pub reported_account: Option<String>,
+    /// Token accounting the provider reported, when the wire protocol
+    /// returned it.
+    pub usage: Option<TokenUsage>,
     /// Whether the run's content payloads were persisted to the content
     /// store. Owner-held memory content does not count: after the owner
     /// exits, only persisted payloads remain available.
@@ -62,7 +68,10 @@ pub(crate) struct StoredRun {
     /// row is orphaned history (owner exited) or another live owner's record,
     /// which stays hidden from this connection.
     pub owner_pid: i64,
-    pub provider: ProviderKey,
+    /// The upstream provider the selected integration executed against.
+    pub provider: ProviderId,
+    /// The configured integration the run was routed through.
+    pub integration: IntegrationId,
     pub state: RunState,
     pub status: Option<RunStatus>,
     pub requested_model: Option<String>,
@@ -76,6 +85,8 @@ pub(crate) struct StoredRun {
     pub closed_reason: Option<String>,
     /// Account context the provider reported at completion.
     pub reported_account: Option<String>,
+    /// Token accounting the provider reported at completion.
+    pub usage: Option<TokenUsage>,
     /// Native integration version the run started under.
     pub integration_version: Option<String>,
     /// Host platform label the run started under.
@@ -97,7 +108,8 @@ impl StoredRun {
             schema_version: RUN_MANAGEMENT_SCHEMA_VERSION,
             run_id: self.run_id.clone(),
             state: self.state,
-            provider: self.provider,
+            integration: self.integration.clone(),
+            provider: self.provider.clone(),
             requested_model: self.requested_model.clone(),
             requested_effort: self.requested_effort.clone(),
             external_tools: self.external_tools.clone(),
@@ -117,7 +129,8 @@ impl StoredRun {
             schema_version: RUN_MANAGEMENT_SCHEMA_VERSION,
             run_id: self.run_id.clone(),
             state: self.state,
-            provider: self.provider,
+            integration: self.integration.clone(),
+            provider: self.provider.clone(),
             requested_model: self.requested_model.clone(),
             requested_effort: self.requested_effort.clone(),
             effective_model: self.effective_model.clone(),
@@ -131,6 +144,7 @@ impl StoredRun {
             output: None,
             error: None,
             diagnostics: None,
+            usage: self.usage.clone(),
             content_available: self.content_available,
             output_truncated: self.output_truncated,
             diagnostics_truncated: self.diagnostics_truncated,

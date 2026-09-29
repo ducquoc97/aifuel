@@ -23,7 +23,8 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
         .with_streaming()
         .with_read_only()
         .with_ordinary_input()
-        .with_permission_approval(),
+        .with_permission_approval()
+        .with_prompt_completion(),
 )
 // OpenAI's Codex CLI setup guide uses this flag to confirm the installed version.
 .with_version_probe(&["--version"])
@@ -157,7 +158,7 @@ mod tests {
     #[test]
     fn codex_declares_effort_and_exact_tool_support() {
         let request = RunRequest {
-            provider: ProviderKey::Codex,
+            integration: aifuel_core::IntegrationId::from(ProviderKey::Codex),
             model: Some("gpt-5-codex".to_owned()),
             effort: Some("high".to_owned()),
             external_tools: Some(vec!["docs__search".to_owned()]),

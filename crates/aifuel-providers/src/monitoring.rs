@@ -1,5 +1,8 @@
 use crate::usage_helpers::unix_timestamp;
-use aifuel_core::{StatusCollector, StatusReport};
+use aifuel_core::{
+    ApiKeySource, AuthBinding, ExecutionConfig, KeyDelivery, ObservationState, StatusCollector,
+    StatusError, StatusErrorCode, StatusObservation, StatusReport,
+};
 use futures_util::future::join_all;
 use reqwest::Client;
 use std::future::Future;
@@ -17,6 +20,7 @@ pub struct CollectionConfig {
     pub copilot_token_url: String,
     pub devin_api_server_url: String,
     pub gemini_api_url: String,
+    pub openrouter_key_url: String,
 }
 
 impl Default for CollectionConfig {
@@ -28,6 +32,7 @@ impl Default for CollectionConfig {
             copilot_token_url: "https://api.github.com/copilot_internal/v2/token".to_owned(),
             devin_api_server_url: "https://server.codeium.com".to_owned(),
             gemini_api_url: "https://cloudcode-pa.googleapis.com/v1internal:".to_owned(),
+            openrouter_key_url: "https://openrouter.ai/api/v1/key".to_owned(),
         }
     }
 }
@@ -44,6 +49,10 @@ impl CollectionConfig {
             "AIFUEL_DEVIN_API_SERVER_URL",
         );
         replace_from_env(&mut config.gemini_api_url, "AIFUEL_GEMINI_API_URL");
+        replace_from_env(
+            &mut config.openrouter_key_url,
+            "AIFUEL_OPENROUTER_USAGE_URL",
+        );
         config
     }
 }
@@ -63,6 +72,13 @@ pub struct ProviderMonitoring {
     pub(crate) home_dir: PathBuf,
     pub(crate) config: CollectionConfig,
     pub(crate) client: Client,
+    pub(crate) integrations: Vec<crate::IntegrationDescriptor>,
+    pub(crate) credentials: Option<crate::CredentialStore>,
+    /// A registry-construction failure recorded by the caller. Integration
+    /// collection then reports it as a collection error rather than silently
+    /// producing an empty integration section - a malformed registry must
+    /// surface, not narrow.
+    pub(crate) registry_error: Option<String>,
 }
 
 impl ProviderMonitoring {
@@ -75,11 +91,35 @@ impl ProviderMonitoring {
             home_dir: home_dir.into(),
             config,
             client,
+            integrations: Vec::new(),
+            credentials: None,
+            registry_error: None,
         })
     }
 
     pub fn home_dir(&self) -> &Path {
         &self.home_dir
+    }
+
+    /// Attach the runtime Integration set so integrations declaring a
+    /// Monitoring Collection Contract produce typed observations alongside
+    /// the catalog-provider collection.
+    pub fn with_integrations(
+        mut self,
+        integrations: Vec<crate::IntegrationDescriptor>,
+        credentials: crate::CredentialStore,
+    ) -> Self {
+        self.integrations = integrations;
+        self.credentials = Some(credentials);
+        self
+    }
+
+    /// Record that the runtime registry could not be built. The failure is
+    /// reported as a collection error in the next report so status output is
+    /// honest about the missing integration coverage.
+    pub fn with_registry_error(mut self, error: String) -> Self {
+        self.registry_error = Some(error);
+        self
     }
 
     async fn collect_live(&self) -> StatusReport {
@@ -95,9 +135,160 @@ impl ProviderMonitoring {
         )
         .await;
 
-        let mut report = StatusReport::from_usage(unix_timestamp(), providers, discovery_errors);
+        let collected_at = unix_timestamp();
+        let mut report = StatusReport::from_usage(collected_at, providers, discovery_errors);
+        let (observations, errors) = self.collect_integrations(collected_at).await;
+        report.observations.extend(observations);
+        if !errors.is_empty() {
+            report.collection.errors.extend(errors);
+            if report.collection.outcome == Some(aifuel_core::CollectionOutcome::Complete) {
+                report.collection.outcome = Some(aifuel_core::CollectionOutcome::Partial);
+            }
+        }
         report.catalog = crate::catalog::statuses();
         report
+    }
+
+    /// Run the Monitoring Collection Contract of every configured
+    /// integration. An HTTP integration with no contract reports
+    /// `Unsupported` (a CLI integration's monitoring lives on its catalog
+    /// provider, so it is not repeated here). Each observation is recorded
+    /// under the integration's own identity; credential problems are
+    /// Unauthenticated observations, transport and shape problems are
+    /// Unavailable, and the same failure is also reported as a collection
+    /// error so CLI/MCP diagnostics can surface it.
+    async fn collect_integrations(&self, now: f64) -> (Vec<StatusObservation>, Vec<StatusError>) {
+        let mut observations = Vec::new();
+        let mut errors = Vec::new();
+        if let Some(error) = &self.registry_error {
+            errors.push(StatusError {
+                provider_id: None,
+                account_id: None,
+                code: StatusErrorCode::CollectionFailed,
+                message: format!("integration registry did not build: {error}"),
+            });
+        }
+        let Some(credentials) = &self.credentials else {
+            return (observations, errors);
+        };
+        for descriptor in &self.integrations {
+            let integration_id = &descriptor.integration.id;
+            let provider_id = &descriptor.integration.provider;
+            let Some(monitoring) = &descriptor.integration.monitoring else {
+                // A wire integration without a monitoring contract reports
+                // Unsupported honestly rather than vanishing from the report.
+                if let ExecutionConfig::Http { .. } = &descriptor.integration.execution {
+                    observations.push(crate::openrouter::unobserved(
+                        integration_id,
+                        provider_id,
+                        now,
+                        ObservationState::Unsupported,
+                    ));
+                }
+                continue;
+            };
+            if monitoring.collector.as_str() != crate::openrouter::OPENROUTER_KEY_COLLECTOR {
+                errors.push(integration_error(
+                    provider_id,
+                    format!("unknown monitoring collector {}", monitoring.collector),
+                ));
+                observations.push(crate::openrouter::unobserved(
+                    integration_id,
+                    provider_id,
+                    now,
+                    ObservationState::Unsupported,
+                ));
+                continue;
+            }
+            let url = monitoring
+                .endpoint
+                .as_ref()
+                .map(|endpoint| endpoint.base_url.clone())
+                .unwrap_or_else(|| self.config.openrouter_key_url.clone());
+            // A dedicated monitoring credential is a Bearer API key; absent
+            // one, the observation reuses the integration's execution binding.
+            let binding = match &monitoring.credential {
+                Some(credential) => AuthBinding::ApiKey {
+                    source: ApiKeySource::Store {
+                        credential: credential.clone(),
+                    },
+                    delivery: KeyDelivery::Bearer,
+                },
+                None => match &descriptor.integration.execution {
+                    ExecutionConfig::Http { auth, .. } => auth.clone(),
+                    ExecutionConfig::Cli { .. } => AuthBinding::None,
+                },
+            };
+            // Credential resolution is blocking file I/O; spec rule 8 keeps
+            // it off the async worker threads.
+            let store = credentials.clone();
+            let resolve_integration = integration_id.clone();
+            let resolved =
+                tokio::task::spawn_blocking(move || store.resolve(&binding, &resolve_integration))
+                    .await
+                    .map_err(|error| {
+                        integration_error(
+                            provider_id,
+                            format!("credential resolution could not run: {error}"),
+                        )
+                    });
+            let outcome = match resolved {
+                Err(error) => Err((ObservationState::Unavailable, error.message)),
+                Ok(Err(error)) => Err((
+                    ObservationState::Unauthenticated,
+                    format!("the declared credential did not resolve: {error}"),
+                )),
+                Ok(Ok(auth)) => {
+                    match crate::openrouter::collect_key_quota(
+                        &self.client,
+                        &url,
+                        monitoring.endpoint.as_ref(),
+                        &auth,
+                        integration_id,
+                        provider_id,
+                        now,
+                    )
+                    .await
+                    {
+                        Ok(observation) => Ok(observation),
+                        Err(crate::openrouter::KeyQuotaError::Unauthenticated(detail)) => {
+                            Err((ObservationState::Unauthenticated, detail))
+                        }
+                        Err(crate::openrouter::KeyQuotaError::Unavailable(detail)) => {
+                            Err((ObservationState::Unavailable, detail))
+                        }
+                    }
+                }
+            };
+            match outcome {
+                Ok(observation) => observations.push(observation),
+                Err((state, detail)) => {
+                    observations.push(crate::openrouter::unobserved(
+                        integration_id,
+                        provider_id,
+                        now,
+                        state,
+                    ));
+                    // An absent or rejected credential is an Unauthenticated
+                    // observation, not a collection failure - the integration
+                    // may simply be unconfigured. Transport, shape, and
+                    // unknown-collector failures are collection errors.
+                    if state != ObservationState::Unauthenticated {
+                        errors.push(integration_error(provider_id, detail));
+                    }
+                }
+            }
+        }
+        (observations, errors)
+    }
+}
+
+fn integration_error(provider_id: &aifuel_core::ProviderId, message: String) -> StatusError {
+    StatusError {
+        provider_id: Some(provider_id.as_str().to_owned()),
+        account_id: None,
+        code: StatusErrorCode::CollectionFailed,
+        message,
     }
 }
 

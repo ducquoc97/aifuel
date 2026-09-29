@@ -65,6 +65,7 @@ dependencies = [
  "aifuel-app",
  "aifuel-core",
  "chrono",
+ "fs4",
  "futures-util",
  "process-wrap",
  "reqwest",

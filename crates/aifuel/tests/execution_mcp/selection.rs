@@ -45,7 +45,10 @@ fn resolve_run_applies_explicit_profile_and_global_precedence_with_sources() {
     assert_eq!(default["requested_model"], "global-model");
     assert_eq!(default["requested_effort"], "global-effort");
     assert_eq!(default["timeout_seconds"], 90);
-    assert_eq!(default["selection_sources"]["provider"], "global_default");
+    assert_eq!(
+        default["selection_sources"]["integration"],
+        "global_default"
+    );
     assert_eq!(default["selection_sources"]["model"], "global_default");
 
     let profile = structured(&responses[1]);
@@ -54,7 +57,7 @@ fn resolve_run_applies_explicit_profile_and_global_precedence_with_sources() {
     assert_eq!(profile["requested_effort"], "profile-effort");
     assert_eq!(profile["timeout_seconds"], 45);
     assert_eq!(
-        profile["selection_sources"]["provider"],
+        profile["selection_sources"]["integration"],
         json!({"profile":"work"})
     );
     assert_eq!(
@@ -67,7 +70,7 @@ fn resolve_run_applies_explicit_profile_and_global_precedence_with_sources() {
     assert_eq!(explicit["requested_model"], "explicit-model");
     assert_eq!(explicit["requested_effort"], "explicit-effort");
     assert_eq!(explicit["timeout_seconds"], 30);
-    assert_eq!(explicit["selection_sources"]["provider"], "explicit");
+    assert_eq!(explicit["selection_sources"]["integration"], "explicit");
     assert_eq!(explicit["selection_sources"]["model"], "explicit");
     assert_eq!(explicit["selection_sources"]["access"], "explicit");
 }
@@ -87,8 +90,8 @@ fn resolve_run_reports_actionable_missing_provider_and_model() {
     let message = structured(&provider_error[0])["message"]
         .as_str()
         .expect("validation error should explain the missing provider");
-    assert!(message.contains("provider selection is required"));
-    assert!(message.contains("provider or profile"));
+    assert!(message.contains("integration selection is required"));
+    assert!(message.contains("integration id or profile"));
 
     let without_model = TestDirectory::new("execution-no-model");
     write_execution_config(

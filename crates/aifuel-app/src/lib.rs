@@ -38,7 +38,7 @@ pub use gateway::{
     NamedSecretHeader, SelectedMcpServer, ServerLimits, StdioServerDefinition,
     StreamableHttpServerDefinition, default_cwd,
 };
-pub use run_management::{RunManager, RunManagerPolicy};
+pub use run_management::{AgentExecutionAdapters, RunManager, RunManagerPolicy};
 pub use run_store::{RunStore, RunStoreError};
 pub use selection::{
     AccountContext, CatalogEvidenceStore, CatalogFreshness, CatalogLookup, CatalogModel,

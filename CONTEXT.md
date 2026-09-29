@@ -87,3 +87,35 @@ _Avoid_: Provider credential, external server installation
 **MCP Host**:
 A local client identified in AI Fuel's gateway configuration that consumes external server capabilities through the gateway. A host may have a registration adapter without supporting Agent Runs or having an Agent Integration.
 _Avoid_: Agent Integration, external MCP server
+
+**Provider Integration**:
+A configured binding of a provider identity to an execution configuration and credential. It is the unit a user selects for an Agent Run or a monitoring collection. Two integrations may share one upstream provider, so a provider CLI integration and an API-key integration for the same provider can coexist.
+_Avoid_: Catalog Provider, Supported Provider
+
+**Integration Identity**:
+The opaque, stable identifier of a Provider Integration. It names a configured integration without encoding its provider or authentication details for routing.
+_Avoid_: Provider key, provider:mode compound ids parsed for routing
+
+**Managed Credential**:
+An AI Fuel-owned credential, such as an API key or an OAuth token set, stored in AI Fuel's credential store. It is distinct from a Provider Credential Source, which a provider CLI owns.
+_Avoid_: User credential, app password
+
+**Credential Reference**:
+The opaque identity under which a Managed Credential is stored and shared by integrations. It names the credential slot, not the credential material itself.
+_Avoid_: Credential value, stored secret
+
+**Authentication Binding**:
+The association between an execution configuration and the credential it applies to requests: none, an API key, or a managed OAuth credential. A configured endpoint does not imply one.
+_Avoid_: Auth mode baked into a provider
+
+**Wire Api**:
+The HTTP request and response protocol that an Http execution configuration speaks, such as OpenAI chat completions, OpenAI responses, or Anthropic messages.
+_Avoid_: SDK, provider type
+
+**Configured Endpoint Provider**:
+A provider integration whose presence is established by configuration rather than by a provider-owned credential file. It may still carry an Authentication Binding.
+_Avoid_: Free provider, offline provider
+
+**Monitoring Collection Contract**:
+The optional per-integration contract that produces quota and usage observations with metric, unit, scope, and provenance. It is distinct from the execution contract, and an inference protocol does not imply it.
+_Avoid_: Usage API, quota endpoint assumed from inference protocol

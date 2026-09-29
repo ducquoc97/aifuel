@@ -1,5 +1,5 @@
 use super::config::{GlobalSelectionConfig, SelectionSettings};
-use aifuel_core::{AccessMode, ProviderKey};
+use aifuel_core::{AccessMode, IntegrationId};
 use serde::Serialize;
 use std::fmt;
 use std::time::Duration;
@@ -50,7 +50,8 @@ impl SelectionInputs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredSession {
     pub session_id: String,
-    pub provider: ProviderKey,
+    /// The configured integration the session was created through.
+    pub integration: IntegrationId,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub access: Option<AccessMode>,
@@ -59,10 +60,10 @@ pub struct StoredSession {
 }
 
 impl StoredSession {
-    pub fn new(session_id: impl Into<String>, provider: ProviderKey) -> Self {
+    pub fn new(session_id: impl Into<String>, integration: IntegrationId) -> Self {
         Self {
             session_id: session_id.into(),
-            provider,
+            integration,
             model: None,
             effort: None,
             access: None,
@@ -73,7 +74,7 @@ impl StoredSession {
 
     fn settings(&self) -> SelectionSettings {
         SelectionSettings {
-            provider: Some(self.provider),
+            integration: Some(self.integration.clone()),
             model: self.model.clone(),
             effort: self.effort.clone(),
             // Access and deadline are deliberately not inherited on resume.
@@ -99,7 +100,7 @@ pub enum SelectionSource {
 /// callers explain precedence without inspecting the configuration themselves.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SelectionSources {
-    pub provider: SelectionSource,
+    pub integration: SelectionSource,
     pub model: SelectionSource,
     pub effort: SelectionSource,
     pub access: SelectionSource,
@@ -109,7 +110,7 @@ pub struct SelectionSources {
 /// Fully resolved settings used to build an Agent Run request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ResolvedSelection {
-    pub provider: ProviderKey,
+    pub integration: IntegrationId,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub access: AccessMode,
@@ -126,7 +127,7 @@ impl ResolvedSelection {
 
     pub fn settings(&self) -> SelectionSettings {
         SelectionSettings {
-            provider: Some(self.provider),
+            integration: Some(self.integration.clone()),
             model: self.model.clone(),
             effort: self.effort.clone(),
             access: Some(self.access),
@@ -139,12 +140,12 @@ impl ResolvedSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectionError {
     ProfileNotFound(String),
-    MissingProvider {
+    MissingIntegration {
         interactive: bool,
     },
-    ProviderConflict {
-        session_provider: ProviderKey,
-        requested_provider: ProviderKey,
+    IntegrationConflict {
+        session_integration: IntegrationId,
+        requested_integration: IntegrationId,
     },
     InvalidDeadline,
 }
@@ -153,18 +154,18 @@ impl fmt::Display for SelectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ProfileNotFound(name) => write!(f, "selection profile {name:?} was not found"),
-            Self::MissingProvider { interactive } if *interactive => f.write_str(
-                "provider selection is required; choose a provider in the terminal picker",
+            Self::MissingIntegration { interactive } if *interactive => f.write_str(
+                "integration selection is required; choose an integration in the terminal picker",
             ),
-            Self::MissingProvider { .. } => {
-                f.write_str("provider selection is required; pass provider or profile explicitly")
-            }
-            Self::ProviderConflict {
-                session_provider,
-                requested_provider,
+            Self::MissingIntegration { .. } => f.write_str(
+                "integration selection is required; pass an integration id or profile explicitly",
+            ),
+            Self::IntegrationConflict {
+                session_integration,
+                requested_integration,
             } => write!(
                 f,
-                "resume provider conflict: session uses {session_provider}, requested {requested_provider}"
+                "resume integration conflict: session uses {session_integration}, requested {requested_integration}"
             ),
             Self::InvalidDeadline => f.write_str("overall deadline must be at least one second"),
         }
@@ -211,17 +212,21 @@ impl<'a> SelectionResolver<'a> {
         let empty_profile = SelectionSettings::default();
         let profile_settings = profile.unwrap_or(&empty_profile);
         if let Some(session) = session {
-            // Provider identity is not a preference that may be hidden by a
+            // Integration identity is not a preference that may be hidden by a
             // higher-precedence field. Any explicitly supplied or selected
-            // profile provider must agree with the native session provider.
-            for requested_provider in [inputs.explicit.provider, profile_settings.provider]
-                .into_iter()
-                .flatten()
+            // profile integration must agree with the native session
+            // integration.
+            for requested_integration in [
+                inputs.explicit.integration.as_ref(),
+                profile_settings.integration.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
             {
-                if requested_provider != session.provider {
-                    return Err(SelectionError::ProviderConflict {
-                        session_provider: session.provider,
-                        requested_provider,
+                if *requested_integration != session.integration {
+                    return Err(SelectionError::IntegrationConflict {
+                        session_integration: session.integration.clone(),
+                        requested_integration: requested_integration.clone(),
                     });
                 }
             }
@@ -232,16 +237,19 @@ impl<'a> SelectionResolver<'a> {
         if let Some(deadline_override) = inputs.deadline_override {
             merged.overall_deadline_seconds = deadline_override;
         }
-        let provider = merged.provider.ok_or(SelectionError::MissingProvider {
-            interactive: inputs.interactive,
-        })?;
+        let integration = merged
+            .integration
+            .clone()
+            .ok_or(SelectionError::MissingIntegration {
+                interactive: inputs.interactive,
+            })?;
 
         if let Some(session) = session
-            && provider != session.provider
+            && integration != session.integration
         {
-            return Err(SelectionError::ProviderConflict {
-                session_provider: session.provider,
-                requested_provider: provider,
+            return Err(SelectionError::IntegrationConflict {
+                session_integration: session.integration.clone(),
+                requested_integration: integration,
             });
         }
 
@@ -253,10 +261,10 @@ impl<'a> SelectionResolver<'a> {
 
         let access = merged.access.unwrap_or(AccessMode::ReadOnly);
         let sources = SelectionSources {
-            provider: source_for(
-                inputs.explicit.provider.is_some(),
-                profile_settings.provider.is_some(),
-                base.provider.is_some(),
+            integration: source_for(
+                inputs.explicit.integration.is_some(),
+                profile_settings.integration.is_some(),
+                base.integration.is_some(),
                 inputs.profile.as_deref(),
                 base_is_session,
             ),
@@ -293,7 +301,7 @@ impl<'a> SelectionResolver<'a> {
         };
 
         Ok(ResolvedSelection {
-            provider,
+            integration,
             model: merged.model,
             effort: merged.effort,
             access,

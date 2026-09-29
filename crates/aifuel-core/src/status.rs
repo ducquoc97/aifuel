@@ -115,6 +115,11 @@ pub struct StatusObservation {
     pub remaining_percent: Option<f64>,
     pub resets_at: Option<f64>,
     pub state: ObservationState,
+    /// The configured integration this observation was collected through,
+    /// when it came from a Provider Integration rather than a catalog
+    /// provider's own collector.
+    #[serde(default)]
+    pub integration_id: Option<crate::IntegrationId>,
     pub observed_at: Option<f64>,
     pub collected_at: f64,
     pub freshness: FreshnessState,
@@ -169,7 +174,12 @@ pub enum ModelState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObservationState {
-    Known,
+    /// Values were observed.
+    Observed,
+    /// The integration has no monitoring contract.
+    Unsupported,
+    /// The declared credential is absent or was rejected by the endpoint.
+    Unauthenticated,
     Unavailable,
 }
 
@@ -354,10 +364,11 @@ impl StatusReport {
                         remaining_percent: window.remaining_percent,
                         resets_at: window.resets_at,
                         state: if provider.status == ProviderStatus::Ok {
-                            ObservationState::Known
+                            ObservationState::Observed
                         } else {
                             ObservationState::Unavailable
                         },
+                        integration_id: None,
                         observed_at: Some(generated_at),
                         collected_at: generated_at,
                         freshness: FreshnessState::Fresh,

@@ -7,7 +7,8 @@ use super::process::{
 use aifuel_core::{
     AccessMode, AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter,
     AgentIntegrationInfo, AgentRunError, AgentRunOutputHandler, AgentSetupGuidance, ExecutionMode,
-    OutputFormat, RunCancellationToken, RunRequest, RunResult, RunStatus,
+    IntegrationId, OutputFormat, ProviderId, RunCancellationToken, RunRequest, RunResult,
+    RunStatus,
 };
 use std::future::Future;
 use std::io;
@@ -254,8 +255,15 @@ impl CliExecutionAdapter {
 }
 
 impl AgentExecutionAdapter for CliExecutionAdapter {
-    fn provider(&self) -> aifuel_core::ProviderKey {
-        self.provider
+    /// The built-in CLI integration's configured identity. Built-in
+    /// integration ids equal the catalog provider ids.
+    fn integration(&self) -> IntegrationId {
+        IntegrationId::from(self.provider)
+    }
+
+    /// The upstream provider this integration executes against.
+    fn provider(&self) -> ProviderId {
+        ProviderId::from(self.provider)
     }
 
     fn setup_guidance(&self) -> Option<AgentSetupGuidance> {
@@ -326,8 +334,10 @@ impl CliExecutionAdapter {
         cancellation: &RunCancellationToken,
         output_handler: Option<&dyn AgentRunOutputHandler>,
     ) -> Result<RunResult, AgentRunError> {
-        if request.provider != self.provider {
-            return Err(AgentRunError::UnsupportedProvider(request.provider));
+        if request.integration != self.integration() {
+            return Err(AgentRunError::UnsupportedIntegration(
+                request.integration.clone(),
+            ));
         }
         if request.prompt.trim().is_empty() {
             return Err(AgentRunError::InvalidRequest(
@@ -460,7 +470,8 @@ impl CliExecutionAdapter {
             run_id,
             local_session_id,
             session_id: parsed.session_id,
-            provider_id: request.provider,
+            provider_id: ProviderId::from(self.provider),
+            integration_id: request.integration.clone(),
             requested_model: request.model.clone(),
             requested_effort: request.effort.clone(),
             effective_model: parsed.effective_model,
@@ -479,6 +490,7 @@ impl CliExecutionAdapter {
             error,
             diagnostics,
             timed_out,
+            usage: None,
             resumed_from: request.resume.clone(),
             working_directory: working_directory.to_path_buf(),
         })

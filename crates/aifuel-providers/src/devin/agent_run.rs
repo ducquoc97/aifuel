@@ -18,7 +18,9 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     // and created nothing, while read-only tools were auto-approved.
     // `accept-edits` does not prove a workspace boundary; keep workspace-write
     // blocked until native effect tests establish one.
-    ExecutionCapabilities::new(false, false, false, false).with_read_only(),
+    ExecutionCapabilities::new(false, false, false, false)
+        .with_read_only()
+        .with_prompt_completion(),
 )
 // Use the documented flag; `devin --version` exits cleanly (devin 3000.11.3).
 .with_version_probe(&["--version"])

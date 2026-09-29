@@ -43,7 +43,7 @@ fn execute_with_manager(
     } else {
         manager.start_run(request.clone())
     }
-    .map_err(|error| map_management_error(error, request.provider))?;
+    .map_err(|error| map_management_error(error, &request.integration))?;
     let run_id = started.run_id;
     let mut announced_approval = None::<String>;
     let mut event_cursor = None;
@@ -63,7 +63,7 @@ fn execute_with_manager(
         )?;
         let run = manager
             .get_run(&run_id)
-            .map_err(|error| map_management_error(error, request.provider))?;
+            .map_err(|error| map_management_error(error, &request.integration))?;
         if run.state.is_terminal() {
             consume_events(
                 manager,
@@ -77,7 +77,7 @@ fn execute_with_manager(
             )?;
             let result = manager
                 .get_result(&run_id)
-                .map_err(|error| map_management_error(error, request.provider));
+                .map_err(|error| map_management_error(error, &request.integration));
             manager.shutdown();
             if request.output == OutputFormat::Text
                 && !output_event_seen
@@ -101,7 +101,7 @@ fn execute_with_manager(
                 Ok(PendingInputAction::Cancelled) => {
                     manager
                         .cancel_run(&run_id)
-                        .map_err(|error| map_management_error(error, request.provider))?;
+                        .map_err(|error| map_management_error(error, &request.integration))?;
                 }
                 Err(error) => {
                     let _ = manager.cancel_run(&run_id);
@@ -275,7 +275,7 @@ fn answer_tool_questions(
             &pending.input_id,
             serde_json::Value::Object(answers),
         )
-        .map_err(|error| map_management_error(error, run.provider))?;
+        .map_err(|error| map_management_error(error, &run.integration))?;
     Ok(PendingInputAction::Answered)
 }
 
@@ -328,16 +328,18 @@ fn answer_mcp_elicitation(
     }
     manager
         .answer_input_value(&run.run_id, &pending.input_id, response)
-        .map_err(|error| map_management_error(error, run.provider))?;
+        .map_err(|error| map_management_error(error, &run.integration))?;
     Ok(PendingInputAction::Answered)
 }
 
 fn map_management_error(
     error: RunManagementError,
-    provider: aifuel_core::ProviderKey,
+    integration: &aifuel_core::IntegrationId,
 ) -> LaunchError {
     match error.code {
-        RunManagementErrorCode::AgentUnavailable => LaunchError::UnsupportedProvider(provider),
+        RunManagementErrorCode::AgentUnavailable => {
+            LaunchError::UnsupportedIntegration(integration.clone())
+        }
         RunManagementErrorCode::ConnectionTimeout | RunManagementErrorCode::DeadlineExceeded => {
             LaunchError::Timeout(error.message)
         }

@@ -1,14 +1,16 @@
 use super::*;
 use crate::test_support::store_path;
 use aifuel_core::{
-    ProviderKey, RUN_MANAGEMENT_SCHEMA_VERSION, RunEvent, RunEventKind, RunState, RunStatus,
+    IntegrationId, ProviderId, RUN_MANAGEMENT_SCHEMA_VERSION, RunEvent, RunEventKind, RunState,
+    RunStatus, TokenUsage,
 };
 use std::path::PathBuf;
 
 fn started_run(run_id: &str) -> StartedRun {
     StartedRun {
         run_id: run_id.to_owned(),
-        provider: ProviderKey::Claude,
+        provider: ProviderId::new("claude"),
+        integration: IntegrationId::new("claude"),
         created_at: now(),
         working_directory: Some("/repo".to_owned()),
         requested_model: Some("model-a".to_owned()),
@@ -36,6 +38,10 @@ fn completed_run() -> CompletedRun {
         exit_code: Some(0),
         closed_reason: None,
         reported_account: Some("acct-1".to_owned()),
+        usage: Some(TokenUsage {
+            input_tokens: Some(120),
+            output_tokens: Some(45),
+        }),
         content_available: false,
         output_bytes: 12,
         diagnostics_bytes: 0,
@@ -70,7 +76,8 @@ fn terminal_run_metadata_roundtrips_without_content() {
         .stored_run("run-1")
         .expect("run reads")
         .expect("terminal run is visible");
-    assert_eq!(run.provider, ProviderKey::Claude);
+    assert_eq!(run.provider, ProviderId::new("claude"));
+    assert_eq!(run.integration, IntegrationId::new("claude"));
     assert_eq!(run.state, RunState::Succeeded);
     assert_eq!(run.session_id.as_deref(), Some("native-session"));
 
@@ -82,6 +89,14 @@ fn terminal_run_metadata_roundtrips_without_content() {
         "reported account context survives the round trip"
     );
     assert_eq!(result.exit_code, Some(0));
+    assert_eq!(
+        result.usage,
+        Some(TokenUsage {
+            input_tokens: Some(120),
+            output_tokens: Some(45),
+        }),
+        "provider-reported token accounting survives the round trip"
+    );
     assert_eq!(result.output_bytes, 12);
     assert_eq!(result.output, None);
     assert_eq!(result.error, None);
@@ -219,44 +234,85 @@ fn event_pages_follow_sequence_and_cursor_limits() {
 }
 
 #[test]
-fn session_keys_are_scoped_by_provider() {
+fn session_keys_are_scoped_by_integration() {
     let path = store_path("sessions");
     let store = RunStore::open(&path).expect("store opens");
     let claude = PersistedSession {
-        provider: ProviderKey::Claude,
+        provider: ProviderId::new("claude"),
+        integration: IntegrationId::new("claude"),
         model: Some("claude-model".to_owned()),
         effort: None,
         working_directory: PathBuf::from("/repo-a"),
     };
     let codex = PersistedSession {
-        provider: ProviderKey::Codex,
+        provider: ProviderId::new("codex"),
+        integration: IntegrationId::new("codex"),
         model: Some("codex-model".to_owned()),
         effort: Some("high".to_owned()),
         working_directory: PathBuf::from("/repo-b"),
     };
-    // Identical native session ids under different providers must coexist,
-    // and a provider-scoped lookup must return that provider's row even when
-    // another provider's association is newer.
+    // Identical native session ids under different integrations must
+    // coexist, and an integration-scoped lookup must return that
+    // integration's row even when another integration's association is
+    // newer.
     store.upsert_session("same-id", &codex).expect("upsert");
     store.upsert_session("same-id", &claude).expect("upsert");
     let found = store
-        .session("same-id", Some(ProviderKey::Codex))
+        .session("same-id", Some(&IntegrationId::new("codex")))
         .expect("session reads")
         .expect("session exists");
-    assert_eq!(found.provider, ProviderKey::Codex);
+    assert_eq!(found.integration, IntegrationId::new("codex"));
     assert_eq!(found.model.as_deref(), Some("codex-model"));
     let found = store
-        .session("same-id", Some(ProviderKey::Claude))
+        .session("same-id", Some(&IntegrationId::new("claude")))
         .expect("session reads")
         .expect("session exists");
-    assert_eq!(found.provider, ProviderKey::Claude);
+    assert_eq!(found.integration, IntegrationId::new("claude"));
     assert_eq!(found.model.as_deref(), Some("claude-model"));
     // The unscoped read still resolves to the most recent association.
     let found = store
         .session("same-id", None)
         .expect("session reads")
         .expect("session exists");
-    assert_eq!(found.provider, ProviderKey::Claude);
+    assert_eq!(found.integration, IntegrationId::new("claude"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn sessions_sharing_one_provider_route_by_integration() {
+    // Two integrations of the same upstream provider produce independent
+    // native sessions; an id collision across them must not merge or hide
+    // either association.
+    let path = store_path("sessions-same-provider");
+    let store = RunStore::open(&path).expect("store opens");
+    let cli = PersistedSession {
+        provider: ProviderId::new("anthropic"),
+        integration: IntegrationId::new("anthropic-cli"),
+        model: Some("cli-model".to_owned()),
+        effort: None,
+        working_directory: PathBuf::from("/repo-a"),
+    };
+    let api = PersistedSession {
+        provider: ProviderId::new("anthropic"),
+        integration: IntegrationId::new("anthropic-api"),
+        model: Some("api-model".to_owned()),
+        effort: None,
+        working_directory: PathBuf::from("/repo-b"),
+    };
+    store.upsert_session("same-id", &cli).expect("upsert");
+    store.upsert_session("same-id", &api).expect("upsert");
+
+    let found = store
+        .session("same-id", Some(&IntegrationId::new("anthropic-cli")))
+        .expect("session reads")
+        .expect("session exists");
+    assert_eq!(found.model.as_deref(), Some("cli-model"));
+    assert_eq!(found.provider, ProviderId::new("anthropic"));
+    let found = store
+        .session("same-id", Some(&IntegrationId::new("anthropic-api")))
+        .expect("session reads")
+        .expect("session exists");
+    assert_eq!(found.model.as_deref(), Some("api-model"));
     let _ = std::fs::remove_file(path);
 }
 
@@ -273,7 +329,8 @@ fn legacy_session_file_imports_into_the_database() {
         .insert(
             "legacy-session".to_owned(),
             PersistedSession {
-                provider: ProviderKey::Codex,
+                provider: ProviderId::new("codex"),
+                integration: IntegrationId::new("codex"),
                 model: Some("gpt-codex".to_owned()),
                 effort: None,
                 working_directory: PathBuf::from("/repo"),
@@ -289,10 +346,11 @@ fn legacy_session_file_imports_into_the_database() {
         1
     );
     let session = store
-        .session("legacy-session", Some(ProviderKey::Codex))
+        .session("legacy-session", Some(&IntegrationId::new("codex")))
         .expect("session reads")
         .expect("imported session exists");
-    assert_eq!(session.provider, ProviderKey::Codex);
+    assert_eq!(session.provider, ProviderId::new("codex"));
+    assert_eq!(session.integration, IntegrationId::new("codex"));
     assert_eq!(session.model.as_deref(), Some("gpt-codex"));
 
     // Re-importing is idempotent and does not duplicate rows.
@@ -317,8 +375,8 @@ fn live_foreign_owner_terminal_rows_stay_hidden() {
         .lock()
         .expect("run store mutex")
         .execute(
-            "INSERT INTO runs (run_id, owner_pid, provider, state, created_at)
-            VALUES ('foreign', ?1, 'claude', 'succeeded', 0)",
+            "INSERT INTO runs (run_id, owner_pid, provider, integration, state, created_at)
+            VALUES ('foreign', ?1, 'claude', 'claude', 'succeeded', 0)",
             params![child.id() as i64],
         )
         .expect("foreign row inserts");
@@ -397,8 +455,8 @@ fn reconcile_does_not_duplicate_a_terminal_event() {
         let connection = store.connection.lock().expect("run store mutex");
         connection
             .execute(
-                "INSERT INTO runs (run_id, owner_pid, provider, state, created_at)
-                VALUES ('half-closed', ?1, 'claude', 'running', 0)",
+                "INSERT INTO runs (run_id, owner_pid, provider, integration, state, created_at)
+                VALUES ('half-closed', ?1, 'claude', 'claude', 'running', 0)",
                 params![dead_pid as i64],
             )
             .expect("orphan row inserts");
@@ -455,8 +513,8 @@ fn exited_owners_reconcile_to_failed_on_next_open() {
         .lock()
         .expect("run store mutex")
         .execute(
-            "INSERT INTO runs (run_id, owner_pid, provider, state, created_at)
-            VALUES ('orphaned', ?1, 'claude', 'running', 0)",
+            "INSERT INTO runs (run_id, owner_pid, provider, integration, state, created_at)
+            VALUES ('orphaned', ?1, 'claude', 'claude', 'running', 0)",
             params![dead_pid as i64],
         )
         .expect("orphan row inserts");
@@ -501,6 +559,134 @@ fn exited_owners_reconcile_to_failed_on_next_open() {
             .expect("run reads")
             .is_none(),
         "same-pid live rows stay untouched"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn runs_completed_without_usage_report_none() {
+    let path = store_path("no-usage");
+    let store = RunStore::open(&path).expect("store opens");
+    store
+        .record_started(started_run("run-1"))
+        .expect("run starts");
+    store
+        .record_completed(
+            "run-1",
+            CompletedRun {
+                usage: None,
+                ..completed_run()
+            },
+        )
+        .expect("run completes");
+
+    let run = store
+        .stored_run("run-1")
+        .expect("run reads")
+        .expect("terminal run is visible");
+    assert_eq!(run.usage, None);
+    assert_eq!(
+        run.result().usage,
+        None,
+        "a run whose provider reported no accounting must not invent counts"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn version_two_databases_gain_the_usage_column() {
+    let path = store_path("migrate-v2");
+    // Seed the schema a version-2 store wrote: the runs table without the
+    // usage column, marked at schema version 2. Reopening it must apply the
+    // versioned migration before the no-op schema batch.
+    {
+        let connection = rusqlite::Connection::open(&path).expect("seed db opens");
+        connection
+            .execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO meta (key, value) VALUES ('schema_version', '2');
+                CREATE TABLE runs (
+                    run_id TEXT PRIMARY KEY,
+                    owner_pid INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    integration TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    status TEXT,
+                    created_at REAL NOT NULL,
+                    completed_at REAL,
+                    working_directory TEXT,
+                    integration_version TEXT,
+                    platform TEXT,
+                    requested_model TEXT,
+                    requested_effort TEXT,
+                    effective_model TEXT,
+                    effective_effort TEXT,
+                    external_tools TEXT,
+                    output_format TEXT,
+                    access TEXT,
+                    timeout_seconds INTEGER,
+                    requested_account TEXT,
+                    reported_account TEXT,
+                    resume TEXT,
+                    session_id TEXT,
+                    local_session_id TEXT,
+                    exit_code INTEGER,
+                    closed_reason TEXT,
+                    content_available INTEGER NOT NULL DEFAULT 0,
+                    output_bytes INTEGER NOT NULL DEFAULT 0,
+                    diagnostics_bytes INTEGER NOT NULL DEFAULT 0,
+                    output_truncated INTEGER NOT NULL DEFAULT 0,
+                    diagnostics_truncated INTEGER NOT NULL DEFAULT 0
+                );",
+            )
+            .expect("seed schema applies");
+        connection
+            .execute(
+                "INSERT INTO runs (run_id, owner_pid, provider, integration, state, created_at)
+                VALUES ('old-run', ?1, 'claude', 'claude', 'succeeded', 0)",
+                params![std::process::id() as i64],
+            )
+            .expect("seed row inserts");
+    }
+
+    let store = RunStore::open(&path).expect("store opens");
+    let version: String = store
+        .connection
+        .lock()
+        .expect("run store mutex")
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("schema version reads");
+    assert_eq!(version, "3", "the migration advances the schema version");
+
+    // A row written before the column existed reads back as no usage.
+    let old = store
+        .stored_run("old-run")
+        .expect("run reads")
+        .expect("migrated run is visible");
+    assert_eq!(old.result().usage, None);
+
+    // New completions on the migrated database persist usage like a fresh
+    // schema.
+    store
+        .record_started(started_run("run-1"))
+        .expect("run starts");
+    store
+        .record_completed("run-1", completed_run())
+        .expect("run completes");
+    let run = store
+        .stored_run("run-1")
+        .expect("run reads")
+        .expect("terminal run is visible");
+    assert_eq!(
+        run.result().usage,
+        Some(TokenUsage {
+            input_tokens: Some(120),
+            output_tokens: Some(45),
+        })
     );
     let _ = std::fs::remove_file(path);
 }

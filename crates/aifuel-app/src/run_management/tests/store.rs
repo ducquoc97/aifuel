@@ -38,6 +38,14 @@ fn terminal_runs_remain_readable_after_the_owner_drops() {
     assert_eq!(result.exit_code, Some(0));
     assert_eq!(result.session_id.as_deref(), Some("native-session"));
     assert_eq!(
+        result.usage,
+        Some(aifuel_core::TokenUsage {
+            input_tokens: Some(7),
+            output_tokens: Some(3),
+        }),
+        "token accounting survives owner restart through persisted history"
+    );
+    assert_eq!(
         result.output, None,
         "answers never persist without the content opt-in"
     );
@@ -84,7 +92,7 @@ fn persisted_event_pages_keep_cursor_contract() {
         })])
         .with_run_store(store);
         let mut request = request();
-        request.provider = ProviderKey::Claude;
+        request.integration = ProviderKey::Claude.into();
         let run = manager.start_run(request).expect("run starts");
         run_id = run.run_id.clone();
         wait_for_terminal(&manager, &run_id);
@@ -144,7 +152,7 @@ fn persisted_sessions_resume_across_owners() {
     let resumed = probe_manager(&path)
         .resume_session("native-session", request())
         .expect("persisted session resumes a new run");
-    assert_eq!(resumed.provider, ProviderKey::Claude);
+    assert_eq!(resumed.provider, ProviderId::from(ProviderKey::Claude));
     let _ = std::fs::remove_file(path);
 }
 

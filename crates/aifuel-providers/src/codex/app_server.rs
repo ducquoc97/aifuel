@@ -399,7 +399,8 @@ where
         local_session_id: thread_id.clone(),
         session_id: Some(thread_id),
         resumed_from: request.resume.clone(),
-        provider_id: request.provider,
+        provider_id: aifuel_core::ProviderId::from(aifuel_core::ProviderKey::Codex),
+        integration_id: request.integration.clone(),
         requested_model: request.model.clone(),
         requested_effort: request.effort.clone(),
         effective_model,
@@ -418,6 +419,7 @@ where
         error: diagnostics.clone(),
         diagnostics,
         timed_out: status == RunStatus::Timeout,
+        usage: None,
         working_directory: cwd.to_path_buf(),
     })
 }

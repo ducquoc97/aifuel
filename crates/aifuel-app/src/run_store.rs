@@ -21,7 +21,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use helpers::{invalid_text, pid_alive};
-use schema::{SCHEMA, SCHEMA_VERSION, TERMINAL_EVENT_KINDS, TERMINAL_STATES};
+use schema::{
+    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, SCHEMA, SCHEMA_VERSION, TERMINAL_EVENT_KINDS,
+    TERMINAL_STATES,
+};
 
 pub use error::RunStoreError;
 pub(crate) use records::{CompletedRun, StartedRun, StoredEventPage, StoredRun};
@@ -61,7 +64,7 @@ impl RunStore {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
-        connection.execute_batch(SCHEMA)?;
+        connection.execute_batch(META_SCHEMA)?;
         connection.execute(
             "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?1)",
             params![SCHEMA_VERSION.to_string()],
@@ -71,9 +74,20 @@ impl RunStore {
             [],
             |row| row.get(0),
         )?;
-        if version != SCHEMA_VERSION.to_string() {
-            return Err(RunStoreError::UnsupportedSchema(version));
+        // Versioned migrations run before the current schema batch so legacy
+        // tables gain their new columns before `CREATE TABLE IF NOT EXISTS`
+        // statements become no-ops. The batch also recreates the indexes the
+        // migration drops.
+        match version.as_str() {
+            "1" => {
+                connection.execute_batch(MIGRATION_V1)?;
+                connection.execute_batch(MIGRATION_V2)?;
+            }
+            "2" => connection.execute_batch(MIGRATION_V2)?,
+            version if version == SCHEMA_VERSION.to_string() => {}
+            version => return Err(RunStoreError::UnsupportedSchema(version.to_owned())),
         }
+        connection.execute_batch(SCHEMA)?;
         let store = Self {
             connection: Arc::new(Mutex::new(connection)),
             owner_pid: std::process::id(),
@@ -90,16 +104,17 @@ impl RunStore {
             .transpose()?;
         self.connection.lock().expect("run store mutex").execute(
             "INSERT INTO runs (
-                    run_id, owner_pid, provider, state, created_at,
+                    run_id, owner_pid, provider, integration, state, created_at,
                     working_directory, integration_version, platform,
                     requested_model, requested_effort,
                     external_tools, output_format, access, timeout_seconds,
                     requested_account, resume
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 run.run_id,
                 self.owner_pid,
                 run.provider.as_str(),
+                run.integration.as_str(),
                 RunState::Starting.as_str(),
                 run.created_at,
                 run.working_directory,
@@ -124,6 +139,10 @@ impl RunStore {
         run_id: &str,
         run: CompletedRun,
     ) -> Result<(), RunStoreError> {
+        let usage = run
+            .usage
+            .map(|usage| serde_json::to_string(&usage))
+            .transpose()?;
         self.connection.lock().expect("run store mutex").execute(
             "UPDATE runs SET
                     state = ?2, status = ?3, completed_at = ?4,
@@ -132,7 +151,7 @@ impl RunStore {
                     closed_reason = ?10, reported_account = ?11,
                     content_available = ?12, output_bytes = ?13,
                     diagnostics_bytes = ?14, output_truncated = ?15,
-                    diagnostics_truncated = ?16
+                    diagnostics_truncated = ?16, usage = ?17
                 WHERE run_id = ?1",
             params![
                 run_id,
@@ -151,6 +170,7 @@ impl RunStore {
                 run.diagnostics_bytes as i64,
                 run.output_truncated,
                 run.diagnostics_truncated,
+                usage,
             ],
         )?;
         Ok(())
@@ -204,8 +224,9 @@ impl RunStore {
         (used.max(0) as u64).saturating_add(additional as u64) <= MAX_EVENT_BYTES_PER_RUN as u64
     }
 
-    /// Persist the provider-scoped native session association. Native session
-    /// identifiers are only unique per provider, so the key is composite.
+    /// Persist the integration-scoped native session association. Native
+    /// session identifiers are only unique per integration, so the key is
+    /// composite; the upstream provider is kept as metadata.
     pub(crate) fn upsert_session(
         &self,
         session_id: &str,
@@ -213,10 +234,11 @@ impl RunStore {
     ) -> Result<(), RunStoreError> {
         self.connection.lock().expect("run store mutex").execute(
             "INSERT OR REPLACE INTO sessions
-                    (provider, session_id, model, effort, working_directory, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    (provider, integration, session_id, model, effort, working_directory, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 session.provider.as_str(),
+                session.integration.as_str(),
                 session_id,
                 session.model,
                 session.effort,
@@ -227,29 +249,35 @@ impl RunStore {
         Ok(())
     }
 
-    /// Return the stored session association. `provider` scopes the lookup:
-    /// native session ids are only unique per provider, so an unscoped query
-    /// could return a different provider's row on an id collision.
+    /// Return the stored session association. `integration` scopes the
+    /// lookup: native session ids are only unique per integration, so an
+    /// unscoped query could return a different integration's row on an id
+    /// collision.
     pub(crate) fn session(
         &self,
         session_id: &str,
-        provider: Option<aifuel_core::ProviderKey>,
+        integration: Option<&aifuel_core::IntegrationId>,
     ) -> Result<Option<PersistedSession>, RunStoreError> {
         self.connection
             .lock()
             .expect("run store mutex")
             .query_row(
-                "SELECT provider, model, effort, working_directory FROM sessions
-                WHERE session_id = ?1 AND (?2 IS NULL OR provider = ?2)
+                "SELECT provider, integration, model, effort, working_directory FROM sessions
+                WHERE session_id = ?1 AND (?2 IS NULL OR integration = ?2)
                 ORDER BY updated_at DESC LIMIT 1",
-                params![session_id, provider.map(|provider| provider.as_str())],
+                params![
+                    session_id,
+                    integration.map(|integration| integration.as_str())
+                ],
                 |row| {
                     let provider: String = row.get(0)?;
+                    let integration: String = row.get(1)?;
                     Ok(PersistedSession {
-                        provider: provider.parse().map_err(|_| invalid_text(0))?,
-                        model: row.get(1)?,
-                        effort: row.get(2)?,
-                        working_directory: Path::new(&row.get::<_, String>(3)?).to_path_buf(),
+                        provider: aifuel_core::ProviderId::new(provider),
+                        integration: aifuel_core::IntegrationId::new(integration),
+                        model: row.get(2)?,
+                        effort: row.get(3)?,
+                        working_directory: Path::new(&row.get::<_, String>(4)?).to_path_buf(),
                     })
                 },
             )
@@ -281,55 +309,64 @@ impl RunStore {
         let run = connection
             .query_row(
                 &format!(
-                    "SELECT run_id, provider, state, status, requested_model,
+                    "SELECT run_id, provider, integration, state, status, requested_model,
                         requested_effort, effective_model, effective_effort,
                         external_tools, session_id, local_session_id, exit_code,
                         created_at, completed_at,
                         content_available, output_bytes, diagnostics_bytes,
                         output_truncated, diagnostics_truncated, owner_pid,
                         closed_reason, reported_account, integration_version,
-                        platform
+                        platform, usage
                     FROM runs WHERE run_id = ?1 AND state IN ({TERMINAL_STATES})"
                 ),
                 params![run_id],
                 |row| {
                     let provider: String = row.get(1)?;
-                    let state: String = row.get(2)?;
-                    let status: Option<String> = row.get(3)?;
-                    let external_tools: Option<String> = row.get(8)?;
+                    let integration: String = row.get(2)?;
+                    let state: String = row.get(3)?;
+                    let status: Option<String> = row.get(4)?;
+                    let external_tools: Option<String> = row.get(9)?;
+                    let usage: Option<String> = row.get(25)?;
                     Ok(StoredRun {
                         run_id: row.get(0)?,
-                        provider: provider.parse().map_err(|_| invalid_text(1))?,
-                        state: RunState::parse(&state).ok_or_else(|| invalid_text(2))?,
+                        provider: aifuel_core::ProviderId::new(provider),
+                        integration: aifuel_core::IntegrationId::new(integration),
+                        state: RunState::parse(&state).ok_or_else(|| invalid_text(3))?,
                         status: status
                             .as_deref()
-                            .map(|status| RunStatus::parse(status).ok_or_else(|| invalid_text(3)))
+                            .map(|status| RunStatus::parse(status).ok_or_else(|| invalid_text(4)))
                             .transpose()?,
-                        requested_model: row.get(4)?,
-                        requested_effort: row.get(5)?,
-                        effective_model: row.get(6)?,
-                        effective_effort: row.get(7)?,
+                        requested_model: row.get(5)?,
+                        requested_effort: row.get(6)?,
+                        effective_model: row.get(7)?,
+                        effective_effort: row.get(8)?,
                         external_tools: external_tools
                             .map(|tools| {
                                 serde_json::from_str::<Vec<String>>(&tools)
-                                    .map_err(|_| invalid_text(8))
+                                    .map_err(|_| invalid_text(9))
                             })
                             .transpose()?,
-                        session_id: row.get(9)?,
-                        local_session_id: row.get(10)?,
-                        exit_code: row.get(11)?,
-                        created_at: row.get(12)?,
-                        completed_at: row.get(13)?,
-                        content_available: row.get::<_, i64>(14)? != 0,
-                        output_bytes: row.get::<_, i64>(15)?.max(0) as usize,
-                        diagnostics_bytes: row.get::<_, i64>(16)?.max(0) as usize,
-                        output_truncated: row.get::<_, i64>(17)? != 0,
-                        diagnostics_truncated: row.get::<_, i64>(18)? != 0,
-                        owner_pid: row.get(19)?,
-                        closed_reason: row.get(20)?,
-                        reported_account: row.get(21)?,
-                        integration_version: row.get(22)?,
-                        platform: row.get(23)?,
+                        session_id: row.get(10)?,
+                        local_session_id: row.get(11)?,
+                        exit_code: row.get(12)?,
+                        created_at: row.get(13)?,
+                        completed_at: row.get(14)?,
+                        content_available: row.get::<_, i64>(15)? != 0,
+                        output_bytes: row.get::<_, i64>(16)?.max(0) as usize,
+                        diagnostics_bytes: row.get::<_, i64>(17)?.max(0) as usize,
+                        output_truncated: row.get::<_, i64>(18)? != 0,
+                        diagnostics_truncated: row.get::<_, i64>(19)? != 0,
+                        owner_pid: row.get(20)?,
+                        closed_reason: row.get(21)?,
+                        reported_account: row.get(22)?,
+                        integration_version: row.get(23)?,
+                        platform: row.get(24)?,
+                        usage: usage
+                            .map(|usage| {
+                                serde_json::from_str::<aifuel_core::TokenUsage>(&usage)
+                                    .map_err(|_| invalid_text(25))
+                            })
+                            .transpose()?,
                     })
                 },
             )

@@ -13,7 +13,7 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     parse_output,
     // `plan` and `acceptEdits` do not prove a workspace boundary. Keep
     // workspace-write blocked until native effect tests establish one.
-    ExecutionCapabilities::new(true, false, false, true),
+    ExecutionCapabilities::new(true, false, false, true).with_prompt_completion(),
 )
 // The Anthropic CLI reference documents this non-interactive version flag.
 .with_version_probe(&["--version"])

@@ -9,6 +9,7 @@ use std::str::FromStr;
 mod agent_integration;
 mod agent_mcp_registration;
 mod execution;
+mod integration;
 mod run_management;
 mod status;
 pub use agent_integration::{
@@ -23,7 +24,12 @@ pub use execution::{
     AccessMode, AgentExecutionAdapter, AgentInputQuestion, AgentInteractionHandler,
     AgentInteractionKind, AgentInteractionRequest, AgentInteractionResponse, AgentRunError,
     AgentRunOutputHandler, ExecutionMode, OutputFormat, PermissionApprovalDecision,
-    RunCancellationToken, RunRequest, RunResult, RunStatus,
+    RunCancellationToken, RunRequest, RunResult, RunStatus, TokenUsage, resolve_integration,
+};
+pub use integration::{
+    ApiKeySource, AuthBinding, CliAdapterId, CollectorId, CredentialRef, EndpointConfig,
+    ExecutionConfig, Integration, IntegrationId, KeyDelivery, MonitoringConfig, OAuthProfileId,
+    ProviderId, SelectorMatch, WireApi, match_selector,
 };
 pub use run_management::{
     DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS, MAX_ANSWER_BYTES_PER_RUN, MAX_COMPLETED_CONTENT,

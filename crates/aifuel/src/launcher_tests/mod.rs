@@ -1,8 +1,8 @@
 use super::*;
 use aifuel_core::{
     AccessMode, AgentExecutionAdapter, AgentInteractionKind, AgentInteractionRequest,
-    AgentInteractionResponse, AgentRunError, AgentRunOutputHandler, ExecutionMode, ProviderKey,
-    RunCancellationToken, RunRequest, RunState, RunStatus,
+    AgentInteractionResponse, AgentRunError, AgentRunOutputHandler, ExecutionMode, IntegrationId,
+    ProviderId, ProviderKey, RunCancellationToken, RunRequest, RunState, RunStatus,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -15,8 +15,12 @@ mod streaming;
 pub(super) struct InputAdapter;
 
 impl AgentExecutionAdapter for InputAdapter {
-    fn provider(&self) -> ProviderKey {
-        ProviderKey::Codex
+    fn integration(&self) -> IntegrationId {
+        ProviderKey::Codex.into()
+    }
+
+    fn provider(&self) -> ProviderId {
+        ProviderKey::Codex.into()
     }
 
     fn execute(
@@ -62,8 +66,12 @@ impl AgentExecutionAdapter for InputAdapter {
 pub(super) struct StreamingAdapter;
 
 impl AgentExecutionAdapter for StreamingAdapter {
-    fn provider(&self) -> ProviderKey {
-        ProviderKey::Codex
+    fn integration(&self) -> IntegrationId {
+        ProviderKey::Codex.into()
+    }
+
+    fn provider(&self) -> ProviderId {
+        ProviderKey::Codex.into()
     }
 
     fn execute(
@@ -92,7 +100,8 @@ pub(super) fn streaming_result(request: &RunRequest) -> RunResult {
         local_session_id: "provider-session-id".to_owned(),
         session_id: None,
         resumed_from: request.resume.clone(),
-        provider_id: request.provider,
+        provider_id: ProviderId::from(ProviderKey::Codex),
+        integration_id: request.integration.clone(),
         requested_model: request.model.clone(),
         requested_effort: request.effort.clone(),
         effective_model: None,
@@ -111,6 +120,7 @@ pub(super) fn streaming_result(request: &RunRequest) -> RunResult {
         error: None,
         diagnostics: None,
         timed_out: false,
+        usage: None,
         working_directory: std::env::temp_dir(),
     }
 }
@@ -123,7 +133,7 @@ pub(super) fn run_result_with_output(request: &RunRequest, output: String) -> Ru
 
 pub(super) fn request() -> RunRequest {
     RunRequest {
-        provider: ProviderKey::Codex,
+        integration: ProviderKey::Codex.into(),
         model: Some("model-a".to_owned()),
         effort: None,
         external_tools: None,

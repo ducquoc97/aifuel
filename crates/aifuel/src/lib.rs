@@ -1,3 +1,4 @@
+pub mod auth_cli;
 pub mod launcher;
 pub mod mcp_catalog;
 mod model_catalog;
@@ -8,24 +9,155 @@ mod run_selection;
 pub mod selection_cli;
 
 use aifuel_app::{AgentMcpSetupFacade, AgentRunFacade, McpGatewayFacade, MonitoringFacade};
+use aifuel_core::{
+    AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter, AgentIntegrationInfo,
+    AgentRunError, AgentRunOutputHandler, AgentSetupGuidance, ExecutionConfig, IntegrationId,
+    ProviderId, RunCancellationToken, RunRequest, RunResult,
+};
 use aifuel_providers::{CollectionConfig, DiscoveryContext, ProviderMonitoring};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub use model_catalog::{model_catalog_snapshot, refresh_model_catalog};
 
 /// Construct the monitoring dependencies at the executable boundary.
 pub fn monitoring_facade() -> Result<MonitoringFacade<ProviderMonitoring>, String> {
     let context = DiscoveryContext::from_environment().map_err(|error| error.to_string())?;
-    let monitoring =
+    let mut monitoring =
         ProviderMonitoring::new(context.home_dir(), CollectionConfig::from_environment())?;
+    match integration_registry() {
+        Ok(registry) => {
+            let credentials = aifuel_providers::CredentialStore::new(aifuel_config_dir()?);
+            monitoring =
+                monitoring.with_integrations(registry.list().cloned().collect(), credentials);
+        }
+        // A malformed registry is a configuration error: catalog-provider
+        // monitoring still runs, and the failure is reported as a collection
+        // error in the report rather than silently narrowing coverage.
+        Err(error) => {
+            monitoring = monitoring.with_registry_error(error);
+        }
+    }
     Ok(MonitoringFacade::new(monitoring))
 }
 
-/// Compose the shared Agent Run facade with the compiled provider adapters.
-pub fn agent_run_facade() -> AgentRunFacade<'static> {
-    AgentRunFacade::new(aifuel_providers::agent_run_adapters())
+/// Compose the shared Agent Run facade over the runtime Integration set.
+pub fn agent_run_facade() -> Result<AgentRunFacade, String> {
+    Ok(AgentRunFacade::new(runtime_adapters()?))
+}
+
+/// The user-level AI Fuel configuration directory (`credentials.json`,
+/// `providers.json`, `execution.json`, ... live inside it).
+fn aifuel_config_dir() -> Result<PathBuf, String> {
+    Ok(user_config_dir(&user_home_dir()?)?.join("aifuel"))
+}
+
+/// The runtime Integration Registry: built-in descriptors plus validated
+/// `providers.json` entries. Registry errors are configuration errors and
+/// surface to the caller rather than narrowing the integration set.
+pub fn integration_registry() -> Result<aifuel_providers::IntegrationRegistry, String> {
+    let config_dir = aifuel_config_dir()?;
+    let config = aifuel_providers::ProvidersConfig::load(
+        config_dir.join(aifuel_providers::PROVIDERS_FILE_NAME),
+    )
+    .map_err(|error| error.to_string())?;
+    aifuel_providers::IntegrationRegistry::build(
+        aifuel_providers::builtin_integrations(),
+        config.into_entries(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Build the owned execution adapter set from the runtime registry: compiled
+/// CLI adapters behind their `Cli` descriptors and wire adapters behind
+/// `Http` descriptors. A `Cli` descriptor with no compiled adapter is a
+/// registry bug and fails loudly.
+fn runtime_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
+    let registry = integration_registry()?;
+    let credentials = aifuel_providers::CredentialStore::new(aifuel_config_dir()?);
+    let compiled = aifuel_providers::agent_run_adapters();
+    let mut adapters: Vec<Arc<dyn AgentExecutionAdapter>> = Vec::new();
+    for descriptor in registry.list() {
+        match &descriptor.integration.execution {
+            ExecutionConfig::Cli { adapter } => {
+                let compiled = compiled
+                    .iter()
+                    .find(|candidate| candidate.integration().as_str() == adapter.as_str())
+                    .ok_or_else(|| {
+                        format!("no compiled CLI adapter is registered for {adapter}")
+                    })?;
+                adapters.push(Arc::new(StaticAdapter(*compiled)));
+            }
+            ExecutionConfig::Http { .. } => {
+                match aifuel_providers::WireExecutionAdapter::from_integration(
+                    &descriptor.integration,
+                    credentials.clone(),
+                ) {
+                    Ok(adapter) => adapters.push(Arc::new(adapter)),
+                    // A descriptor for a Wire Api with no compiled engine is
+                    // still a valid registry entry for listing and auth, but
+                    // has no execution adapter - selection reports it
+                    // unsupported instead of failing the whole run surface.
+                    Err(aifuel_providers::WireAdapterError::IncompatibleExecution(detail)) => {
+                        eprintln!("aifuel: {detail}");
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
+        }
+    }
+    Ok(adapters)
+}
+
+/// Delegates a compiled `&'static` adapter through the owned adapter set so
+/// built-in CLI integrations can share the runtime registry.
+struct StaticAdapter(&'static dyn AgentExecutionAdapter);
+
+impl AgentExecutionAdapter for StaticAdapter {
+    fn integration(&self) -> IntegrationId {
+        self.0.integration()
+    }
+
+    fn provider(&self) -> ProviderId {
+        self.0.provider()
+    }
+
+    fn setup_guidance(&self) -> Option<AgentSetupGuidance> {
+        self.0.setup_guidance()
+    }
+
+    fn declared_agent_capabilities(&self) -> BTreeMap<AgentCapability, AgentCapabilityEvidence> {
+        self.0.declared_agent_capabilities()
+    }
+
+    fn agent_info(&self) -> AgentIntegrationInfo {
+        self.0.agent_info()
+    }
+
+    fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
+        self.0.validate(request)
+    }
+
+    fn execute(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+    ) -> Result<RunResult, AgentRunError> {
+        self.0.execute(request, cancellation)
+    }
+
+    fn execute_with_output_handler(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+        output_handler: &dyn AgentRunOutputHandler,
+    ) -> Result<RunResult, AgentRunError> {
+        self.0
+            .execute_with_output_handler(request, cancellation, output_handler)
+    }
 }
 
 /// Compose a run owner with the local user's execution MCP admission policy.
@@ -37,7 +169,7 @@ pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
     }
     let config = aifuel_app::selection::SelectionStore::load(execution_config_path()?)
         .map_err(|error| error.to_string())?;
-    let manager = aifuel_app::RunManager::new(aifuel_providers::agent_run_adapters())
+    let manager = aifuel_app::RunManager::new(runtime_adapters()?)
         .with_execution_policy(&config.policy)
         .with_session_store(session_store_path()?)?;
     let db_path = run_store_path()?;
@@ -126,7 +258,7 @@ pub fn resolve_selection_for_run(
         .map_err(|error| error.to_string())?;
     let inputs = aifuel_app::selection::SelectionInputs {
         explicit: aifuel_app::selection::SelectionSettings {
-            provider: Some(request.provider),
+            integration: Some(request.integration.clone()),
             model: request.model.clone(),
             effort: request.effort.clone(),
             access: access_explicit.then_some(request.access),
@@ -182,7 +314,7 @@ pub fn mcp_gateway_facade(host_id: &str) -> Result<McpGatewayFacade, String> {
     McpGatewayFacade::from_json(&bytes, host_id, user_home).map_err(|error| error.to_string())
 }
 
-fn user_home_dir() -> Result<PathBuf, String> {
+pub(crate) fn user_home_dir() -> Result<PathBuf, String> {
     #[cfg(windows)]
     let home = env::var_os("USERPROFILE").map(PathBuf::from).or_else(|| {
         let mut path = PathBuf::from(env::var_os("HOMEDRIVE")?);
@@ -197,7 +329,7 @@ fn user_home_dir() -> Result<PathBuf, String> {
 }
 
 #[cfg(windows)]
-fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
+pub(crate) fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
     env::var_os("APPDATA")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
@@ -207,12 +339,12 @@ fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
+pub(crate) fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
     Ok(user_home.join("Library").join("Application Support"))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
+pub(crate) fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
     if let Some(config_home) = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
         && config_home.is_absolute()
     {
@@ -222,6 +354,6 @@ fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
+pub(crate) fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
     Err("the user's application configuration directory could not be resolved".to_owned())
 }

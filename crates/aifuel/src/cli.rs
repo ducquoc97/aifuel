@@ -16,6 +16,9 @@ where
     if args.first().map(String::as_str) == Some("model") {
         return aifuel::model_cli::run(&args[1..]);
     }
+    if args.first().map(String::as_str) == Some("auth") {
+        return aifuel::auth_cli::run(&args[1..]);
+    }
     if args.first().map(String::as_str) == Some("approve") {
         return run_local_approval(&args[1..]);
     }
@@ -171,7 +174,8 @@ fn print_help() {
     println!("aifuel - monitor and explicitly launch AI coding providers");
     println!();
     println!("Usage: aifuel [--text | --json]");
-    println!("       aifuel run --provider PROVIDER_ID [OPTIONS]");
+    println!("       aifuel run --integration INTEGRATION_ID [OPTIONS]");
+    println!("       aifuel auth list|set-key|remove");
     println!("       aifuel profile list|save|remove");
     println!("       aifuel model list|refresh [--provider PROVIDER_ID] [--json]");
     println!("       aifuel approve --run RUN_ID --input INPUT_ID --decision DECISION");
@@ -290,6 +294,35 @@ fn render_status_text(report: &StatusReport) -> String {
                 })
                 .unwrap_or_else(|| "no reset".to_owned());
             output.push_str(&format!("  {:<28} {remaining:<10} {reset}\n", window.label));
+        }
+    }
+    let integration_observations: Vec<_> = report
+        .observations
+        .iter()
+        .filter(|observation| observation.integration_id.is_some())
+        .collect();
+    if !integration_observations.is_empty() {
+        output.push_str("\nIntegrations:\n");
+        for observation in integration_observations {
+            let state = match observation.state {
+                aifuel_core::ObservationState::Observed => observation
+                    .remaining_percent
+                    .map(|value| format!("{value:.1}% left"))
+                    .unwrap_or_else(|| "observed".to_owned()),
+                aifuel_core::ObservationState::Unsupported => "unsupported".to_owned(),
+                aifuel_core::ObservationState::Unauthenticated => "unauthenticated".to_owned(),
+                aifuel_core::ObservationState::Unavailable => "unavailable".to_owned(),
+            };
+            output.push_str(&format!(
+                "  {:<24} {:<14} {}\n",
+                observation
+                    .integration_id
+                    .as_ref()
+                    .map(aifuel_core::IntegrationId::as_str)
+                    .unwrap_or("unknown integration"),
+                observation.label,
+                state
+            ));
         }
     }
     output

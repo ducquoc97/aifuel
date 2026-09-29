@@ -3,7 +3,7 @@
 use aifuel_core::{
     AgentAuthenticationEvidence, AgentAuthenticationState, AgentCapability,
     AgentCapabilityEvidence, AgentIntegrationInfo, AgentPresenceEvidence, AgentPresenceState,
-    AgentVersionEvidence, ProviderKey,
+    AgentVersionEvidence, IntegrationId, ProviderId, ProviderKey,
 };
 use process_wrap::std::{StdChildWrapper, StdCommandWrap};
 use std::ffi::{OsStr, OsString};
@@ -35,6 +35,10 @@ pub(crate) fn inspect_agent(
     authentication_args: Option<&'static [&'static str]>,
     declared_capabilities: impl IntoIterator<Item = (AgentCapability, AgentCapabilityEvidence)>,
 ) -> AgentIntegrationInfo {
+    // The built-in CLI adapter's configured integration id equals its catalog
+    // provider id, so the compiled key supplies both identities.
+    let provider = ProviderId::from(provider);
+    let integration = IntegrationId::new(provider.as_str());
     let declared_capabilities = declared_capabilities.into_iter().collect::<Vec<_>>();
     let path = match resolve_program(program) {
         Ok(Some(path)) => path,
@@ -42,6 +46,7 @@ pub(crate) fn inspect_agent(
             let reason = format!("native executable {program:?} was not found on PATH");
             return AgentIntegrationInfo::from_inspection(
                 provider,
+                integration,
                 AgentPresenceEvidence {
                     state: AgentPresenceState::Absent,
                     reason: reason.clone(),
@@ -60,6 +65,7 @@ pub(crate) fn inspect_agent(
         Err(reason) => {
             return AgentIntegrationInfo::from_inspection(
                 provider,
+                integration,
                 AgentPresenceEvidence {
                     state: AgentPresenceState::Unknown,
                     reason: reason.clone(),
@@ -89,6 +95,7 @@ pub(crate) fn inspect_agent(
     });
     AgentIntegrationInfo::from_inspection(
         provider,
+        integration,
         AgentPresenceEvidence {
             state: AgentPresenceState::Present,
             reason: format!("native executable {program:?} was found on PATH"),

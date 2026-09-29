@@ -74,13 +74,13 @@ fn read_only_test_adapter(program: &'static str) -> CliExecutionAdapter {
 
 fn cli_test_request() -> RunRequest {
     let mut request = read_only_project_request();
-    request.provider = aifuel_core::ProviderKey::Gemini;
+    request.integration = aifuel_core::IntegrationId::from(aifuel_core::ProviderKey::Gemini);
     request
 }
 
 fn read_only_project_request() -> RunRequest {
     RunRequest {
-        provider: aifuel_core::ProviderKey::Antigravity,
+        integration: aifuel_core::IntegrationId::from(aifuel_core::ProviderKey::Antigravity),
         model: Some("model-a".to_owned()),
         effort: None,
         external_tools: None,
@@ -122,7 +122,7 @@ fn read_only_project_access_requires_verified_provider_enforcement() {
         ExecutionCapabilities::new(false, false, false, false).with_read_only(),
     );
     let mut codex_request = request;
-    codex_request.provider = aifuel_core::ProviderKey::Codex;
+    codex_request.integration = aifuel_core::IntegrationId::from(aifuel_core::ProviderKey::Codex);
     assert!(verified.validate(&codex_request).is_ok());
 }
 
@@ -204,7 +204,7 @@ fn provider_process_timeout_returns_captured_output_and_timeout_status() {
     );
     let mut request = cli_test_request();
     request.working_directory = None;
-    request.timeout = Some(Duration::from_secs(1));
+    request.timeout = Some(Duration::from_secs(5));
 
     let result = read_only_test_adapter(program)
         .execute(&request, &RunCancellationToken::new())
@@ -226,7 +226,7 @@ fn run_timeout_bounds_provider_capability_preflight() {
     );
     let mut request = cli_test_request();
     request.working_directory = None;
-    request.timeout = Some(Duration::from_secs(1));
+    request.timeout = Some(Duration::from_secs(5));
 
     let error = read_only_test_adapter(program)
         .execute(&request, &RunCancellationToken::new())

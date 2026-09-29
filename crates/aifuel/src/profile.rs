@@ -1,5 +1,5 @@
 use aifuel_app::selection::{ProfileSettings, SelectionSettings, SelectionStore};
-use aifuel_core::{AccessMode, ProviderKey};
+use aifuel_core::{AccessMode, IntegrationId};
 
 pub fn run(args: &[String]) -> Result<u8, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -44,12 +44,10 @@ fn save(args: &[String]) -> Result<u8, String> {
             .get(index)
             .ok_or_else(|| format!("{flag} requires a value"))?;
         match flag {
-            "--provider" => {
-                settings.provider = Some(
-                    value
-                        .parse::<ProviderKey>()
-                        .map_err(|error| error.to_string())?,
-                );
+            // `--provider` remains accepted as a legacy alias; the stored
+            // value has always been an Integration selector.
+            "--integration" | "--provider" => {
+                settings.integration = Some(IntegrationId::new(value));
             }
             "--model" => settings.model = Some(value.clone()),
             "--effort" => settings.effort = Some(value.clone()),
@@ -100,5 +98,6 @@ fn print_help() {
     println!("       aifuel profile save NAME [OPTIONS]");
     println!("       aifuel profile remove NAME");
     println!();
-    println!("Options: --provider ID --model ID --effort LEVEL --access MODE --timeout SECONDS");
+    println!("Options: --integration ID --model ID --effort LEVEL --access MODE --timeout SECONDS");
+    println!("  --provider is accepted as an alias for --integration");
 }

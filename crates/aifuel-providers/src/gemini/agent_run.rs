@@ -14,7 +14,7 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     build_args,
     parse_output,
     // Native workspace enforcement is unverified for the current integration.
-    ExecutionCapabilities::new(true, false, false, true),
+    ExecutionCapabilities::new(true, false, false, true).with_prompt_completion(),
 )
 // The Gemini CLI reference documents --version as printing and exiting.
 .with_version_probe(&["--version"])

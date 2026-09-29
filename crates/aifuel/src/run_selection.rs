@@ -1,11 +1,35 @@
 use crate as aifuel;
 use aifuel_app::selection::CatalogModel;
+use aifuel_core::AgentExecutionAdapter;
+use std::sync::Arc;
+
+/// Best-effort adapter set for selection/evidence paths: a registry that
+/// fails to build degrades to an empty set with a warning instead of
+/// denying the whole run surface.
+pub(crate) fn runtime_adapters_or_warn() -> Vec<Arc<dyn AgentExecutionAdapter>> {
+    crate::runtime_adapters().unwrap_or_else(|error| {
+        eprintln!("aifuel: warning - integration registry did not build: {error}");
+        Vec::new()
+    })
+}
 
 pub(crate) fn model_evidence_for_model(
-    provider: Option<aifuel_core::ProviderKey>,
+    adapters: &[Arc<dyn AgentExecutionAdapter>],
+    integration: Option<&aifuel_core::IntegrationId>,
     model_id: &str,
     cached_models: Option<&[aifuel::selection_cli::PickerModel]>,
 ) -> aifuel::selection_cli::PickerModelEvidence {
+    // Catalog evidence is keyed by upstream provider. Resolve the selected
+    // integration to its provider through the runtime registry, then to the
+    // catalog key when known. The Integration Identity is never parsed as a
+    // provider id - a non-catalog provider simply has no catalog evidence.
+    let provider = integration.and_then(|id| {
+        adapters
+            .iter()
+            .find(|adapter| adapter.integration() == *id)
+            .map(|adapter| adapter.provider())
+            .and_then(|provider| provider.as_str().parse::<aifuel_core::ProviderKey>().ok())
+    });
     let loaded_models;
     let models = if let Some(models) = cached_models {
         models

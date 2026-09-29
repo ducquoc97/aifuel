@@ -16,21 +16,35 @@ mod claude;
 mod code_assist;
 mod codex;
 mod copilot;
+mod credentials;
 mod devin;
 mod discovery;
 mod gemini;
+mod integrations;
 mod model_catalog;
 mod monitoring;
+mod openrouter;
 mod registration;
 mod registry;
 mod usage_helpers;
+mod wire;
 
 pub use agent_run_registry::agent_run_adapters;
+pub use credentials::{
+    CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore, CredentialStoreError,
+    ManagedCredential, OAuthTokens, ResolvedAuth, env_override, valid_env_var_name,
+};
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
+pub use integrations::{
+    ConfigError, EvidenceContext, EvidenceSource, IntegrationDescriptor, IntegrationOrigin,
+    IntegrationRegistry, PROVIDERS_FILE_NAME, PROVIDERS_SCHEMA_VERSION, ProvidersConfig,
+    RegistryError, ResolveError, builtin_integrations, inspect_any,
+};
 pub use model_catalog::{ProviderCatalogDiscovery, ProviderCatalogModel, discover_model_catalog};
 pub use monitoring::{CollectionConfig, ProviderMonitoring};
 pub use registration::agent_mcp_registration_adapter;
 pub(crate) use registration::codex_mcp_runtime_entry;
+pub use wire::{WireAdapterError, WireExecutionAdapter};
 
 pub(crate) use registry::{
     CatalogProvider, MonitoringFuture, default_monitoring_registry, default_registry,
