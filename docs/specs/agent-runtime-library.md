@@ -61,7 +61,7 @@ Host Applications          Embedding surfaces          Agent runtime library
 ```
 
 - Existing surfaces become thin hosts over the same contract: `aifuel run`, the dashboard's local server, and the `mcp execution` server are consumers, not parallel implementations. This spec does not break them; it defines the contract they sit on.
-- The stdio bridge (`aifuel runtime`, JSON-RPC over stdio) is how non-Rust hosts embed the runtime. One bridge process owns one runtime; a Host Application needing isolation spawns more.
+- The stdio bridge (`aifuel runtime`, JSON-RPC over stdio) is how non-Rust hosts embed the runtime. The bridge is one-runtime-per-process, matching the `codex app-server` model: each consumer spawns its own process and owns the live sessions it starts, while the persisted run store remains shared. A shared multi-consumer daemon is a later decision, made only if a consumer needs to drive live runs it did not start.
 - All wire shapes are versioned JSON (`v: 1` at the envelope/rpc level). TypeScript sketches below are illustrative; the Rust crate is the reference implementation, consistent with the repo's versioned-decoding rule.
 
 ## Contract
@@ -133,8 +133,9 @@ type SessionStatus =
 ### Subscribe and replay
 
 - `session.subscribe { lastSeenSeq }` returns a `SessionSnapshot` plus all events with `seq > lastSeenSeq`, in order. A UI reload, dashboard reconnect, or bridge restart reattaches without losing in-flight Agent Runs.
-- Replay is bounded on two axes: event count and payload bytes. When `lastSeenSeq` lags `headSeq` beyond either bound, the runtime skips replay and returns a fresh `SessionSnapshot` instead. This is the same fallback T3 Code uses (`afterSequence` bounded by `THREAD_RESUME_MAX_EVENTS` and `ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES`); the constants ship in the contract after one measurement pass on real sessions.
-- `SessionSnapshot` is the materialized read model: status, `ModelSelection`, cwd, pending Approval Requests, Checkpoints, `headSeq`, and a bounded `tail` of transcript items paginated by `seq`.
+- Replay is bounded on two axes: event count and payload bytes. When `lastSeenSeq` lags `headSeq` beyond either bound, the runtime skips replay and returns a fresh `SessionSnapshot` instead - the same fallback T3 Code uses (`afterSequence` bounded by `THREAD_RESUME_MAX_EVENTS` and `ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES`). The bounds are internal guard constants with conservative defaults, tunable between versions; they are not part of the versioned contract surface.
+- `SessionSnapshot` is the materialized read model: status, `ModelSelection`, cwd, pending Approval Requests, Checkpoints, `headSeq`, and `tail`.
+- `tail` is bounded semantically, not numerically: it carries the transcript items of the most recent Agent Run - the last turn - which is what a UI needs to render current state on reattach. Older turns are paginated by `seq` on demand.
 - Host Applications persist `lastSeenSeq` per session across consumer restarts, so resubscription is a fast replay rather than a cold snapshot.
 - Multiple consumers may subscribe to one session (dashboard plus MCP host). The event log serializes order. When two consumers answer one Approval Request, the first wins and the second receives `already_resolved`; the `approval.resolved` event's `answeredBy` keeps every consumer's UI honest.
 
@@ -234,8 +235,3 @@ trait AgentAdapter {
 1. P0 - contract and facade. `AgentCommand`/`AgentEvent`/`Receipt`/`SessionSnapshot` types, the in-process `AgentRuntime` facade over the existing run machinery, `CliAdapter` as the honest fallback, `integrations.list`, `models.list` merging Advertised/Entitled/Available, session.subscribe replay from the run store.
 2. P1 - deep adapters and durability. `CodexAdapter` over app-server and `ClaudeAdapter` over stream-json with live approvals, Checkpoints, `quota.observed`, and the stdio JSON-RPC bridge (`aifuel runtime`).
 3. P2 - coverage. `AcpAdapter`, `OpenCodeAdapter`, `checkpoint.restore`, `model.select` mid-session, image attachments.
-
-## Open questions
-
-- Replay and `tail` bounds: the event-count and byte-budget constants need one measurement pass against real sessions.
-- Whether the stdio bridge is one-runtime-per-process (simple, matches codex app-server) or multiplexes several host connections over one pipe.
