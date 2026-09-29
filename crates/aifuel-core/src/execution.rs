@@ -1,7 +1,7 @@
 //! Public contracts for explicit Agent Runs.
 
-use crate::{AgentIntegrationInfo, ProviderKey};
-use serde::Serialize;
+use crate::{AgentIntegrationInfo, IntegrationId, ProviderId};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -107,10 +107,13 @@ impl RunStatus {
     }
 }
 
-/// One explicit request to run a provider CLI through its execution adapter.
+/// One explicit request to run through one configured Agent Integration.
 #[derive(Clone)]
 pub struct RunRequest {
-    pub provider: ProviderKey,
+    /// The caller's run selection: a configured `IntegrationId`, or a bare
+    /// `ProviderId` when it maps to exactly one registered integration.
+    /// Routing resolves the selection to one integration before execution.
+    pub integration: IntegrationId,
     pub model: Option<String>,
     /// Requested model-specific effort. Adapters report an effective value
     /// only when the native provider exposes it.
@@ -192,7 +195,7 @@ impl fmt::Debug for RunRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RunRequest")
-            .field("provider", &self.provider)
+            .field("integration", &self.integration)
             .field("model", &self.model)
             .field("effort", &self.effort)
             .field("external_tools", &self.external_tools)
@@ -207,6 +210,14 @@ impl fmt::Debug for RunRequest {
     }
 }
 
+/// Token accounting a provider reported for one run, when it reports any.
+/// Missing counts stay unknown; they are never reported as zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
 /// The observed outcome and local metadata for one Agent Run.
 #[derive(Debug, Serialize)]
 pub struct RunResult {
@@ -214,7 +225,10 @@ pub struct RunResult {
     pub local_session_id: String,
     pub session_id: Option<String>,
     pub resumed_from: Option<String>,
-    pub provider_id: ProviderKey,
+    /// The upstream provider the run executed against.
+    pub provider_id: ProviderId,
+    /// The configured integration that routed this run.
+    pub integration_id: IntegrationId,
     pub requested_model: Option<String>,
     pub requested_effort: Option<String>,
     pub effective_model: Option<String>,
@@ -228,15 +242,26 @@ pub struct RunResult {
     pub output: String,
     pub error: Option<String>,
     pub diagnostics: Option<String>,
+    /// Token accounting the provider reported for this run. `None` when the
+    /// provider or adapter reports none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
     pub timed_out: bool,
     pub working_directory: PathBuf,
 }
 
-/// Failure to validate a request or execute its selected provider.
+/// Failure to validate a request or execute its selected integration.
 #[derive(Debug)]
 pub enum AgentRunError {
     InvalidRequest(String),
-    UnsupportedProvider(ProviderKey),
+    /// The requested selection matches no registered Agent Integration.
+    UnsupportedIntegration(IntegrationId),
+    /// A bare provider id maps to more than one registered integration and
+    /// cannot select one implicitly.
+    AmbiguousIntegration {
+        provider: ProviderId,
+        integrations: Vec<IntegrationId>,
+    },
     Timeout(String),
     Cancelled,
     Io(io::Error),
@@ -246,8 +271,25 @@ impl fmt::Display for AgentRunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRequest(message) => f.write_str(message),
-            Self::UnsupportedProvider(provider) => {
-                write!(f, "provider {provider} has no verified agent integration")
+            Self::UnsupportedIntegration(integration) => {
+                write!(
+                    f,
+                    "integration {integration} has no verified agent integration"
+                )
+            }
+            Self::AmbiguousIntegration {
+                provider,
+                integrations,
+            } => {
+                let candidates = integrations
+                    .iter()
+                    .map(IntegrationId::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(
+                    f,
+                    "provider {provider} maps to multiple Agent Integrations ({candidates}); select an integration explicitly"
+                )
             }
             Self::Timeout(message) => f.write_str(message),
             Self::Cancelled => f.write_str("agent run was cancelled"),
@@ -303,11 +345,15 @@ pub trait AgentRunOutputHandler: Send + Sync + fmt::Debug {
 
 /// Provider-specific implementation of the optional Agent Execution capability.
 ///
-/// An adapter handles exactly its `provider()` and never falls back to another
-/// provider. Implementations own child-process lifetime, captured output, and
-/// cancellation for any process they start.
+/// An adapter serves exactly its configured `integration()` and never falls
+/// back to another integration. Implementations own child-process lifetime,
+/// captured output, and cancellation for any process they start.
 pub trait AgentExecutionAdapter: Send + Sync {
-    fn provider(&self) -> ProviderKey;
+    /// The configured integration this adapter serves.
+    fn integration(&self) -> IntegrationId;
+
+    /// The upstream provider this integration executes against.
+    fn provider(&self) -> ProviderId;
 
     /// Return provider-owned setup instructions without inspecting local
     /// credentials or starting a native process.
@@ -343,6 +389,7 @@ pub trait AgentExecutionAdapter: Send + Sync {
     fn agent_info(&self) -> AgentIntegrationInfo {
         AgentIntegrationInfo::from_inspection(
             self.provider(),
+            self.integration(),
             crate::AgentPresenceEvidence {
                 state: crate::AgentPresenceState::Unknown,
                 reason: "the registered adapter does not expose native presence inspection"
@@ -364,8 +411,10 @@ pub trait AgentExecutionAdapter: Send + Sync {
 
     /// Validate capability metadata without starting a provider process.
     fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
-        if request.provider != self.provider() {
-            return Err(AgentRunError::UnsupportedProvider(request.provider));
+        if request.integration != self.integration() {
+            return Err(AgentRunError::UnsupportedIntegration(
+                request.integration.clone(),
+            ));
         }
         if request.prompt.trim().is_empty() {
             return Err(AgentRunError::InvalidRequest(
@@ -390,5 +439,37 @@ pub trait AgentExecutionAdapter: Send + Sync {
         _output_handler: &dyn AgentRunOutputHandler,
     ) -> Result<RunResult, AgentRunError> {
         self.execute(request, cancellation)
+    }
+}
+
+/// Resolve a caller's run selection to one canonical integration id.
+///
+/// An exact `IntegrationId` match always wins. Otherwise the selection is
+/// treated as a bare `ProviderId`: it resolves when exactly one registered
+/// integration uses that provider and fails with `AmbiguousIntegration` when
+/// several do. No registered integration at all yields `UnsupportedIntegration`.
+///
+/// `integrations` yields `(integration, provider)` pairs for the registered
+/// adapter set.
+pub fn resolve_integration(
+    selection: &IntegrationId,
+    integrations: impl Iterator<Item = (IntegrationId, ProviderId)>,
+) -> Result<IntegrationId, AgentRunError> {
+    let candidates: Vec<_> = integrations.collect();
+    match crate::match_selector(
+        selection.as_str(),
+        candidates.iter().map(|(id, provider)| (id, provider)),
+    ) {
+        crate::SelectorMatch::Exact(id) | crate::SelectorMatch::Unique(id) => Ok(id),
+        crate::SelectorMatch::Ambiguous {
+            provider,
+            candidates,
+        } => Err(AgentRunError::AmbiguousIntegration {
+            provider,
+            integrations: candidates,
+        }),
+        crate::SelectorMatch::Unknown => {
+            Err(AgentRunError::UnsupportedIntegration(selection.clone()))
+        }
     }
 }

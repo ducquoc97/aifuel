@@ -35,8 +35,12 @@ fn managed_cli_run_answers_one_native_question_and_returns_the_managed_result() 
 fn managed_cli_run_answers_each_native_question_by_id() {
     struct MultiQuestionAdapter;
     impl AgentExecutionAdapter for MultiQuestionAdapter {
-        fn provider(&self) -> ProviderKey {
-            ProviderKey::Codex
+        fn integration(&self) -> IntegrationId {
+            ProviderKey::Codex.into()
+        }
+
+        fn provider(&self) -> ProviderId {
+            ProviderKey::Codex.into()
         }
 
         fn execute(
@@ -116,8 +120,12 @@ fn managed_cli_run_answers_each_native_question_by_id() {
 fn noninteractive_multi_question_request_fails_before_reading_answers() {
     struct MultiQuestionAdapter;
     impl AgentExecutionAdapter for MultiQuestionAdapter {
-        fn provider(&self) -> ProviderKey {
-            ProviderKey::Codex
+        fn integration(&self) -> IntegrationId {
+            ProviderKey::Codex.into()
+        }
+
+        fn provider(&self) -> ProviderId {
+            ProviderKey::Codex.into()
         }
 
         fn execute(
@@ -177,8 +185,12 @@ fn noninteractive_multi_question_request_fails_before_reading_answers() {
 fn managed_cli_run_preserves_typed_mcp_elicitation_json_values() {
     struct ElicitationAdapter;
     impl AgentExecutionAdapter for ElicitationAdapter {
-        fn provider(&self) -> ProviderKey {
-            ProviderKey::Codex
+        fn integration(&self) -> IntegrationId {
+            ProviderKey::Codex.into()
+        }
+
+        fn provider(&self) -> ProviderId {
+            ProviderKey::Codex.into()
         }
 
         fn execute(

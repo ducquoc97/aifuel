@@ -3,14 +3,14 @@ use aifuel_app::selection::{
     CatalogRefreshResult, CatalogScope, GlobalSelectionConfig, SelectionError, SelectionInputs,
     SelectionSettings, SelectionSource, SelectionStore, StoredSession,
 };
-use aifuel_core::{AccessMode, ProviderKey};
+use aifuel_core::{AccessMode, IntegrationId, ProviderKey};
 use std::time::{Duration, UNIX_EPOCH};
 
 #[test]
 fn explicit_values_override_profile_and_global_defaults_with_sources() {
     let mut config = GlobalSelectionConfig {
         defaults: SelectionSettings {
-            provider: Some(ProviderKey::Codex),
+            integration: Some(ProviderKey::Codex.into()),
             model: Some("global-model".to_owned()),
             effort: Some("low".to_owned()),
             access: Some(AccessMode::ReadOnly),
@@ -21,7 +21,7 @@ fn explicit_values_override_profile_and_global_defaults_with_sources() {
     config.profiles.insert(
         "review".to_owned(),
         SelectionSettings {
-            provider: Some(ProviderKey::Claude),
+            integration: Some(ProviderKey::Claude.into()),
             model: Some("profile-model".to_owned()),
             effort: None,
             access: Some(AccessMode::WorkspaceWrite),
@@ -35,13 +35,16 @@ fn explicit_values_override_profile_and_global_defaults_with_sources() {
         .resolve(&inputs, None)
         .expect("selection should resolve");
 
-    assert_eq!(resolved.provider, ProviderKey::Claude);
+    assert_eq!(
+        resolved.integration,
+        IntegrationId::from(ProviderKey::Claude)
+    );
     assert_eq!(resolved.model.as_deref(), Some("explicit-model"));
     assert_eq!(resolved.effort.as_deref(), Some("low"));
     assert_eq!(resolved.access, AccessMode::WorkspaceWrite);
     assert_eq!(resolved.overall_deadline, Some(Duration::from_secs(60)));
     assert_eq!(
-        resolved.sources.provider,
+        resolved.sources.integration,
         SelectionSource::Profile("review".to_owned())
     );
     assert_eq!(resolved.sources.model, SelectionSource::Explicit);
@@ -52,7 +55,7 @@ fn explicit_values_override_profile_and_global_defaults_with_sources() {
 fn resume_ignores_global_defaults_and_does_not_inherit_access_or_deadline() {
     let config = GlobalSelectionConfig {
         defaults: SelectionSettings {
-            provider: Some(ProviderKey::Codex),
+            integration: Some(ProviderKey::Codex.into()),
             model: Some("changed-global".to_owned()),
             effort: Some("changed-effort".to_owned()),
             access: Some(AccessMode::WorkspaceWrite),
@@ -62,7 +65,7 @@ fn resume_ignores_global_defaults_and_does_not_inherit_access_or_deadline() {
     };
     let session = StoredSession {
         session_id: "session-1".to_owned(),
-        provider: ProviderKey::Claude,
+        integration: ProviderKey::Claude.into(),
         model: Some("stored-model".to_owned()),
         effort: Some("stored-effort".to_owned()),
         access: Some(AccessMode::WorkspaceWrite),
@@ -74,7 +77,10 @@ fn resume_ignores_global_defaults_and_does_not_inherit_access_or_deadline() {
         .resolve(&SelectionInputs::default(), Some(&session))
         .expect("same-provider resume should resolve");
 
-    assert_eq!(resolved.provider, ProviderKey::Claude);
+    assert_eq!(
+        resolved.integration,
+        IntegrationId::from(ProviderKey::Claude)
+    );
     assert_eq!(resolved.model.as_deref(), Some("stored-model"));
     assert_eq!(resolved.effort.as_deref(), Some("stored-effort"));
     assert_eq!(resolved.access, AccessMode::ReadOnly);
@@ -89,20 +95,21 @@ fn resume_rejects_profile_provider_conflict_even_when_explicit_provider_matches(
     config.profiles.insert(
         "wrong".to_owned(),
         SelectionSettings {
-            provider: Some(ProviderKey::Codex),
+            integration: Some(ProviderKey::Codex.into()),
             ..SelectionSettings::default()
         },
     );
-    let session = StoredSession::new("session-1", ProviderKey::Claude);
+    let session = StoredSession::new("session-1", ProviderKey::Claude.into());
     let mut inputs = SelectionInputs::named_profile("wrong");
-    inputs.explicit.provider = Some(ProviderKey::Claude);
+    inputs.explicit.integration = Some(ProviderKey::Claude.into());
 
     assert!(matches!(
         config.resolve(&inputs, Some(&session)),
-        Err(SelectionError::ProviderConflict {
-            session_provider: ProviderKey::Claude,
-            requested_provider: ProviderKey::Codex,
-        })
+        Err(SelectionError::IntegrationConflict {
+            session_integration,
+            requested_integration,
+        }) if session_integration == IntegrationId::from(ProviderKey::Claude)
+            && requested_integration == IntegrationId::from(ProviderKey::Codex)
     ));
 }
 
@@ -163,7 +170,7 @@ fn selection_store_persists_only_selection_and_policy_metadata() {
     let directory = tempfile_directory();
     let path = directory.join("aifuel").join("execution.json");
     let mut config = GlobalSelectionConfig::default();
-    config.defaults.provider = Some(ProviderKey::Codex);
+    config.defaults.integration = Some(ProviderKey::Codex.into());
     config.policy.allowed_roots.push(directory.clone());
     SelectionStore::save(&path, &config).expect("config should save");
     let bytes = std::fs::read(&path).expect("config should be readable");

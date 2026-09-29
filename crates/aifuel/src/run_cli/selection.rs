@@ -52,9 +52,10 @@ pub(super) fn resolve_cli_selection(
         .merge_over(&config.defaults);
     let mut initial = explicit.merge_over(&inherited);
     if resume {
-        initial.provider = explicit
-            .provider
-            .or_else(|| profile_settings.and_then(|settings| settings.provider));
+        initial.integration = explicit
+            .integration
+            .clone()
+            .or_else(|| profile_settings.and_then(|settings| settings.integration.clone()));
         initial.model = explicit
             .model
             .clone()
@@ -65,11 +66,11 @@ pub(super) fn resolve_cli_selection(
             .or_else(|| profile_settings.and_then(|settings| settings.effort.clone()));
     }
 
-    if !interactive && initial.provider.is_none() {
+    if !interactive && initial.integration.is_none() {
         let guidance = if resume {
-            "resume requires --provider or a provider in the selected profile; global provider defaults are ignored"
+            "resume requires --integration or an integration in the selected profile; global integration defaults are ignored"
         } else {
-            "run requires --provider, a provider in the selected profile, or a global provider default; connect stdin and stderr to a terminal to choose one"
+            "run requires --integration, an integration in the selected profile, or a global integration default; connect stdin and stderr to a terminal to choose one"
         };
         return Err(guidance.to_owned());
     }
@@ -78,20 +79,21 @@ pub(super) fn resolve_cli_selection(
     }
 
     if resume {
-        if initial.provider.is_none() {
-            let providers = aifuel_providers::agent_run_adapters()
-                .iter()
-                .map(|adapter| adapter.provider())
-                .collect::<Vec<_>>();
-            initial.provider = Some(
-                aifuel::selection_cli::pick_provider(input, output, &providers)
+        // One adapter set for the picker and model evidence so both read the
+        // same registry snapshot within this invocation.
+        let adapters = crate::run_selection::runtime_adapters_or_warn();
+        if initial.integration.is_none() {
+            let integrations = picker_integrations(&adapters);
+            initial.integration = Some(
+                aifuel::selection_cli::pick_integration(input, output, &integrations)
                     .map_err(|error| error.to_string())?
                     .map_err(|_| "run selection cancelled".to_owned())?,
             );
         }
         let model_evidence = explicit_model.as_deref().map(|model| {
             crate::run_selection::model_evidence_for_model(
-                initial.provider,
+                &adapters,
+                initial.integration.as_ref(),
                 model,
                 catalog_models.as_deref(),
             )
@@ -105,14 +107,16 @@ pub(super) fn resolve_cli_selection(
         });
     }
 
-    let needs_picker = initial.provider.is_none()
+    let needs_picker = initial.integration.is_none()
         || initial.model.is_none()
         || initial.effort.is_none()
         || working_directory.is_none();
     if !interactive || !needs_picker {
+        let adapters = crate::run_selection::runtime_adapters_or_warn();
         let model_evidence = explicit_model.as_deref().map(|model| {
             crate::run_selection::model_evidence_for_model(
-                initial.provider,
+                &adapters,
+                initial.integration.as_ref(),
                 model,
                 catalog_models.as_deref(),
             )
@@ -131,15 +135,11 @@ pub(super) fn resolve_cli_selection(
         Some(models) => models,
         None => crate::run_selection::load_picker_models()?,
     };
-    let providers = aifuel_providers::agent_run_adapters()
-        .iter()
-        .map(|adapter| adapter.provider())
-        .collect();
     let picked = aifuel::selection_cli::pick(
         input,
         output,
         aifuel::selection_cli::PickerOptions {
-            providers,
+            integrations: picker_integrations(&crate::run_selection::runtime_adapters_or_warn()),
             models,
             initial,
             working_directory,
@@ -184,18 +184,18 @@ fn resolve_cli_sources(
         .transpose()?;
     let mut resolver_config = config.clone();
     if resume {
-        resolver_config.defaults.provider = None;
+        resolver_config.defaults.integration = None;
         resolver_config.defaults.model = None;
         resolver_config.defaults.effort = None;
     }
     let mut explicit = explicit.clone();
-    if explicit.provider.is_none()
+    if explicit.integration.is_none()
         && profile_settings
-            .and_then(|settings| settings.provider)
+            .and_then(|settings| settings.integration.as_ref())
             .is_none()
-        && resolver_config.defaults.provider.is_none()
+        && resolver_config.defaults.integration.is_none()
     {
-        explicit.provider = selected.provider;
+        explicit.integration = selected.integration.clone();
     }
     if explicit.model.is_none()
         && profile_settings
@@ -226,4 +226,18 @@ fn resolve_cli_sources(
         .map_err(|error| format!("could not resolve selection sources: {error}"))?
         .sources;
     Ok(resolved)
+}
+
+/// The integrations the picker offers: every runtime-resolved execution
+/// adapter, so configured HTTP integrations (`ollama:local`, `providers.json`
+/// entries) appear alongside the built-in CLI integrations.
+fn picker_integrations(
+    adapters: &[std::sync::Arc<dyn aifuel_core::AgentExecutionAdapter>],
+) -> Vec<aifuel::selection_cli::PickerIntegration> {
+    adapters
+        .iter()
+        .map(|adapter| {
+            aifuel::selection_cli::PickerIntegration::new(adapter.integration(), adapter.provider())
+        })
+        .collect()
 }

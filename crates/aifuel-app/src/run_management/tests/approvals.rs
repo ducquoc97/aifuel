@@ -19,6 +19,7 @@ fn pending_approval_record(
     request.access = access;
     let record = Arc::new(RunRecord::new(
         run_id.to_owned(),
+        ProviderKey::Claude.into(),
         &request,
         None,
         None,
@@ -66,6 +67,7 @@ fn insert_interaction_record(
     request.access = access;
     let record = Arc::new(RunRecord::new(
         run_id.to_owned(),
+        ProviderKey::Claude.into(),
         &request,
         deadline,
         None,

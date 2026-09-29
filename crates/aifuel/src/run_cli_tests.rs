@@ -1,7 +1,7 @@
 use super::*;
 use crate as aifuel;
 use aifuel_app::selection::SelectionSource;
-use aifuel_core::{ProviderKey, RunState, RunStatus};
+use aifuel_core::{ProviderId, ProviderKey, RunState, RunStatus};
 
 #[test]
 fn run_has_no_default_overall_deadline() {
@@ -34,7 +34,7 @@ fn run_has_no_default_overall_deadline() {
 fn cli_records_selection_sources_using_shared_precedence() {
     let mut config = GlobalSelectionConfig {
         defaults: SelectionSettings {
-            provider: Some(ProviderKey::Gemini),
+            integration: Some(ProviderKey::Gemini.into()),
             model: Some("global-model".to_owned()),
             effort: Some("low".to_owned()),
             access: Some(aifuel_core::AccessMode::ReadOnly),
@@ -45,7 +45,7 @@ fn cli_records_selection_sources_using_shared_precedence() {
     config.profiles.insert(
         "work".to_owned(),
         SelectionSettings {
-            provider: Some(ProviderKey::Codex),
+            integration: Some(ProviderKey::Codex.into()),
             model: Some("profile-model".to_owned()),
             effort: Some("high".to_owned()),
             access: Some(aifuel_core::AccessMode::WorkspaceWrite),
@@ -77,7 +77,7 @@ fn cli_records_selection_sources_using_shared_precedence() {
     .expect("run request should resolve");
 
     assert_eq!(
-        request.selection_sources.provider,
+        request.selection_sources.integration,
         SelectionSource::Explicit
     );
     assert_eq!(request.selection_sources.model, SelectionSource::Explicit);
@@ -99,7 +99,7 @@ fn cli_records_selection_sources_using_shared_precedence() {
 fn terminal_picker_preserves_explicit_profile_and_global_precedence() {
     let mut config = GlobalSelectionConfig {
         defaults: SelectionSettings {
-            provider: Some(ProviderKey::Claude),
+            integration: Some(ProviderKey::Claude.into()),
             model: Some("global-model".to_owned()),
             effort: Some("low".to_owned()),
             access: Some(aifuel_core::AccessMode::ReadOnly),
@@ -110,7 +110,7 @@ fn terminal_picker_preserves_explicit_profile_and_global_precedence() {
     config.profiles.insert(
         "review".to_owned(),
         SelectionSettings {
-            provider: Some(ProviderKey::Codex),
+            integration: Some(ProviderKey::Codex.into()),
             model: Some("profile-model".to_owned()),
             effort: Some("medium".to_owned()),
             access: Some(aifuel_core::AccessMode::WorkspaceWrite),
@@ -118,7 +118,7 @@ fn terminal_picker_preserves_explicit_profile_and_global_precedence() {
         },
     );
     let explicit = SelectionSettings {
-        provider: Some(ProviderKey::Gemini),
+        integration: Some(ProviderKey::Gemini.into()),
         model: Some("explicit-model".to_owned()),
         effort: None,
         access: Some(aifuel_core::AccessMode::ReadOnly),
@@ -142,7 +142,10 @@ fn terminal_picker_preserves_explicit_profile_and_global_precedence() {
     )
     .expect("picker should use resolved explicit/profile values");
 
-    assert_eq!(selected.settings.provider, Some(ProviderKey::Gemini));
+    assert_eq!(
+        selected.settings.integration,
+        Some(ProviderKey::Gemini.into())
+    );
     assert_eq!(selected.settings.model.as_deref(), Some("explicit-model"));
     assert_eq!(selected.settings.effort.as_deref(), Some("medium"));
     assert_eq!(
@@ -165,7 +168,7 @@ fn terminal_picker_selects_a_provider_reported_model_without_inventing_values() 
         .collect::<Vec<_>>();
     let provider_index = providers
         .iter()
-        .position(|provider| *provider == ProviderKey::Codex)
+        .position(|provider| *provider == ProviderId::from(ProviderKey::Codex))
         .expect("Codex Agent Integration should be registered")
         + 1;
     let input_text = format!("{provider_index}\n1\n\np\n");
@@ -201,7 +204,10 @@ fn terminal_picker_selects_a_provider_reported_model_without_inventing_values() 
     )
     .expect("the picker should return a terminal selection");
 
-    assert_eq!(selected.settings.provider, Some(ProviderKey::Codex));
+    assert_eq!(
+        selected.settings.integration,
+        Some(ProviderKey::Codex.into())
+    );
     assert_eq!(
         selected.settings.model.as_deref(),
         Some("exact-catalog-model")
@@ -231,7 +237,7 @@ fn noninteractive_missing_provider_error_explains_the_terminal_option() {
     )
     .expect_err("scripted runs cannot prompt for a provider");
 
-    assert!(error.contains("--provider"));
+    assert!(error.contains("--integration"));
     assert!(error.contains("terminal"));
     assert!(input.get_ref().is_empty());
 }
@@ -239,7 +245,7 @@ fn noninteractive_missing_provider_error_explains_the_terminal_option() {
 #[test]
 fn noninteractive_missing_model_error_explains_how_to_select_one() {
     let mut config = GlobalSelectionConfig::default();
-    config.defaults.provider = Some(ProviderKey::Codex);
+    config.defaults.integration = Some(ProviderKey::Codex.into());
     let mut input = io::Cursor::new(Vec::new());
     let mut output = Vec::new();
 
@@ -270,7 +276,7 @@ fn explicit_model_without_catalog_match_keeps_unknown_evidence() {
         CliSelectionRequest {
             config: &config,
             explicit: SelectionSettings {
-                provider: Some(ProviderKey::Codex),
+                integration: Some(ProviderKey::Codex.into()),
                 model: Some("hand-picked-model".to_owned()),
                 ..SelectionSettings::default()
             },
@@ -295,7 +301,7 @@ fn explicit_model_without_catalog_match_keeps_unknown_evidence() {
 fn terminal_picker_prompts_stay_out_of_structured_run_output() {
     let config = GlobalSelectionConfig {
         defaults: SelectionSettings {
-            provider: Some(ProviderKey::Gemini),
+            integration: Some(ProviderKey::Gemini.into()),
             model: Some("configured-model".to_owned()),
             effort: Some("configured-effort".to_owned()),
             access: None,
@@ -321,7 +327,8 @@ fn terminal_picker_prompts_stay_out_of_structured_run_output() {
         schema_version: aifuel_core::RUN_MANAGEMENT_SCHEMA_VERSION,
         run_id: "managed-run-2".to_owned(),
         state: RunState::Succeeded,
-        provider: request.provider,
+        integration: request.integration.clone(),
+        provider: ProviderId::new(request.integration.as_str()),
         requested_model: request.model,
         requested_effort: request.effort,
         effective_model: None,
@@ -335,6 +342,7 @@ fn terminal_picker_prompts_stay_out_of_structured_run_output() {
         output: Some("answer".to_owned()),
         error: None,
         diagnostics: None,
+        usage: None,
         content_available: true,
         output_truncated: false,
         diagnostics_truncated: false,
@@ -398,7 +406,8 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
         schema_version: aifuel_core::RUN_MANAGEMENT_SCHEMA_VERSION,
         run_id: "managed-run-1".to_owned(),
         state: RunState::Succeeded,
-        provider: ProviderKey::Gemini,
+        integration: ProviderKey::Gemini.into(),
+        provider: ProviderKey::Gemini.into(),
         requested_model: Some("gemini-flash".to_owned()),
         requested_effort: None,
         effective_model: Some("gemini-flash".to_owned()),
@@ -412,6 +421,7 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
         output: Some("answer".to_owned()),
         error: None,
         diagnostics: None,
+        usage: None,
         content_available: true,
         output_truncated: false,
         diagnostics_truncated: false,
@@ -420,7 +430,7 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
     };
 
     let sources = SelectionSources {
-        provider: aifuel_app::selection::SelectionSource::Profile("work".to_owned()),
+        integration: aifuel_app::selection::SelectionSource::Profile("work".to_owned()),
         model: aifuel_app::selection::SelectionSource::Explicit,
         effort: aifuel_app::selection::SelectionSource::StoredSession,
         access: aifuel_app::selection::SelectionSource::GlobalDefault,
@@ -443,7 +453,7 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
     assert_eq!(value["output"], "answer");
     assert_eq!(value["model_evidence"], "catalog_record");
     assert_eq!(
-        value["selection_sources"]["provider"],
+        value["selection_sources"]["integration"],
         serde_json::json!({"profile":"work"})
     );
     assert_eq!(value["selection_sources"]["model"], "explicit");
@@ -478,7 +488,7 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
     assert!(deferred["selection_sources"].get("model").is_none());
     assert!(deferred["selection_sources"].get("effort").is_none());
     assert_eq!(
-        deferred["selection_sources"]["provider"],
+        deferred["selection_sources"]["integration"],
         serde_json::json!({"profile":"work"})
     );
 

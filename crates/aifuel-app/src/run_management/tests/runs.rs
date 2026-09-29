@@ -10,7 +10,7 @@ fn start_resolve_and_result_share_the_owner_local_contract() {
     let manager = RunManager::new(vec![adapter]);
 
     let resolved = manager.resolve_run(&request()).expect("request resolves");
-    assert_eq!(resolved.provider, ProviderKey::Claude);
+    assert_eq!(resolved.provider, ProviderId::from(ProviderKey::Claude));
     assert_eq!(resolved.requested_model.as_deref(), Some("model-a"));
     assert!(
         !serde_json::to_string(&resolved)
@@ -21,7 +21,7 @@ fn start_resolve_and_result_share_the_owner_local_contract() {
     let started = manager.start_run(request()).expect("run starts");
     let terminal = wait_for_terminal(&manager, &started.run_id);
     assert_eq!(terminal.state, RunState::Succeeded);
-    assert_eq!(terminal.provider, ProviderKey::Claude);
+    assert_eq!(terminal.provider, ProviderId::from(ProviderKey::Claude));
     assert!(terminal.completed_at.is_some());
 
     let result = manager

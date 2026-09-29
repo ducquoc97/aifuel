@@ -74,21 +74,16 @@ impl From<&ExecutionPolicy> for RunManagerPolicy {
     }
 }
 
-/// Inputs accepted by [`RunManager::new`].
-///
-/// The owned form is the public test/application seam. The static form keeps
-/// the compiled provider registry zero-copy at the executable boundary.
-pub enum AgentExecutionAdapters {
-    Owned(Vec<Arc<dyn AgentExecutionAdapter>>),
-    Static(&'static [&'static dyn AgentExecutionAdapter]),
-}
+/// Inputs accepted by [`RunManager::new`]: the owned adapter set built from
+/// the runtime Integration Registry or from test doubles.
+pub struct AgentExecutionAdapters(pub(crate) Vec<Arc<dyn AgentExecutionAdapter>>);
 
 impl<T> From<Vec<Arc<T>>> for AgentExecutionAdapters
 where
     T: AgentExecutionAdapter + 'static,
 {
     fn from(adapters: Vec<Arc<T>>) -> Self {
-        Self::Owned(
+        Self(
             adapters
                 .into_iter()
                 .map(|adapter| adapter as Arc<dyn AgentExecutionAdapter>)
@@ -99,13 +94,7 @@ where
 
 impl From<Vec<Arc<dyn AgentExecutionAdapter>>> for AgentExecutionAdapters {
     fn from(adapters: Vec<Arc<dyn AgentExecutionAdapter>>) -> Self {
-        Self::Owned(adapters)
-    }
-}
-
-impl From<&'static [&'static dyn AgentExecutionAdapter]> for AgentExecutionAdapters {
-    fn from(adapters: &'static [&'static dyn AgentExecutionAdapter]) -> Self {
-        Self::Static(adapters)
+        Self(adapters)
     }
 }
 
@@ -117,50 +106,9 @@ pub(super) struct AdapterSlot {
     pub info: std::sync::OnceLock<aifuel_core::AgentIntegrationInfo>,
 }
 
-#[derive(Clone)]
-pub(super) enum AdapterHandle {
-    Owned(Arc<dyn AgentExecutionAdapter>),
-    Static(&'static dyn AgentExecutionAdapter),
-}
-
-impl AdapterHandle {
-    fn provider(&self) -> aifuel_core::ProviderKey {
-        match self {
-            Self::Owned(adapter) => adapter.provider(),
-            Self::Static(adapter) => adapter.provider(),
-        }
-    }
-
-    fn agent_info(&self) -> aifuel_core::AgentIntegrationInfo {
-        match self {
-            Self::Owned(adapter) => adapter.agent_info(),
-            Self::Static(adapter) => adapter.agent_info(),
-        }
-    }
-
-    fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
-        match self {
-            Self::Owned(adapter) => adapter.validate(request),
-            Self::Static(adapter) => adapter.validate(request),
-        }
-    }
-
-    fn execute_with_output_handler(
-        &self,
-        request: &RunRequest,
-        cancellation: &RunCancellationToken,
-        output_handler: &dyn AgentRunOutputHandler,
-    ) -> Result<RunResult, AgentRunError> {
-        match self {
-            Self::Owned(adapter) => {
-                adapter.execute_with_output_handler(request, cancellation, output_handler)
-            }
-            Self::Static(adapter) => {
-                adapter.execute_with_output_handler(request, cancellation, output_handler)
-            }
-        }
-    }
-}
+/// One execution adapter behind a shared handle. Run workers clone it to
+/// outlive the slot that lent it.
+pub(super) type AdapterHandle = Arc<dyn AgentExecutionAdapter>;
 
 /// Shared owner-local Agent Run manager.
 #[derive(Clone)]
@@ -199,7 +147,10 @@ struct ManagerInner {
 
 #[derive(Debug, Clone)]
 struct SessionRecord {
-    provider: aifuel_core::ProviderKey,
+    /// The configured integration that created this native session.
+    integration: aifuel_core::IntegrationId,
+    /// The upstream provider the integration executed against.
+    provider: aifuel_core::ProviderId,
     model: Option<String>,
     effort: Option<String>,
     working_directory: PathBuf,
@@ -208,6 +159,7 @@ struct SessionRecord {
 impl From<PersistedSession> for SessionRecord {
     fn from(session: PersistedSession) -> Self {
         Self {
+            integration: session.integration,
             provider: session.provider,
             model: session.model,
             effort: session.effort,
@@ -218,7 +170,10 @@ impl From<PersistedSession> for SessionRecord {
 
 struct RunRecord {
     run_id: String,
-    provider: aifuel_core::ProviderKey,
+    /// The configured integration this run is routed through.
+    integration: aifuel_core::IntegrationId,
+    /// The upstream provider the selected integration executes against.
+    provider: aifuel_core::ProviderId,
     access: aifuel_core::AccessMode,
     requested_model: Option<String>,
     requested_effort: Option<String>,
@@ -274,6 +229,7 @@ struct ResultMetadata {
     output: Option<String>,
     error: Option<String>,
     diagnostics: Option<String>,
+    usage: Option<aifuel_core::TokenUsage>,
     output_truncated: bool,
     diagnostics_truncated: bool,
     output_bytes: usize,

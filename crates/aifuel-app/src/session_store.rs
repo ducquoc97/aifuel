@@ -6,12 +6,48 @@ use std::path::PathBuf;
 
 const SESSION_STORE_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct PersistedSession {
-    pub provider: aifuel_core::ProviderKey,
+    /// The configured integration that created this native session.
+    pub integration: aifuel_core::IntegrationId,
+    /// The upstream provider that integration executed against.
+    pub provider: aifuel_core::ProviderId,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub working_directory: PathBuf,
+}
+
+impl<'de> Deserialize<'de> for PersistedSession {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct PersistedSessionJson {
+            integration: Option<String>,
+            provider: Option<String>,
+            model: Option<String>,
+            effort: Option<String>,
+            working_directory: PathBuf,
+        }
+        let json = PersistedSessionJson::deserialize(deserializer)?;
+        // Version-1 rows stored only the provider key. Built-in integration
+        // ids equal the catalog provider ids, so that value serves both
+        // identities when a legacy row is read.
+        let integration = json
+            .integration
+            .or_else(|| json.provider.clone())
+            .ok_or_else(|| serde::de::Error::missing_field("integration"))?;
+        Ok(Self {
+            provider: aifuel_core::ProviderId::new(
+                json.provider.unwrap_or_else(|| integration.clone()),
+            ),
+            integration: aifuel_core::IntegrationId::new(integration),
+            model: json.model,
+            effort: json.effort,
+            working_directory: json.working_directory,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]

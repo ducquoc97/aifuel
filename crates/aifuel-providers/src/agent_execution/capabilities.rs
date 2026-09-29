@@ -15,6 +15,7 @@ pub(crate) struct ExecutionCapabilities {
     read_only: CapabilityState,
     supports_ordinary_input: bool,
     supports_permission_approval: bool,
+    supports_prompt_completion: bool,
 }
 
 impl ExecutionCapabilities {
@@ -36,6 +37,7 @@ impl ExecutionCapabilities {
             read_only: CapabilityState::Unknown,
             supports_ordinary_input: false,
             supports_permission_approval: false,
+            supports_prompt_completion: false,
         }
     }
 
@@ -80,6 +82,11 @@ impl ExecutionCapabilities {
 
     pub(crate) const fn with_permission_approval(mut self) -> Self {
         self.supports_permission_approval = true;
+        self
+    }
+
+    pub(crate) const fn with_prompt_completion(mut self) -> Self {
+        self.supports_prompt_completion = true;
         self
     }
 
@@ -140,6 +147,10 @@ impl ExecutionCapabilities {
             (
                 AgentCapability::StructuredOutput,
                 declared_flag(self.supports_jsonl, "structured output mode"),
+            ),
+            (
+                AgentCapability::PromptCompletion,
+                declared_flag(self.supports_prompt_completion, "direct prompt completion"),
             ),
         ]
         .into_iter()

@@ -11,7 +11,7 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     &["--prompt", "--plan", "--output-format"],
     build_args,
     parse_output,
-    ExecutionCapabilities::new(true, false, false, false),
+    ExecutionCapabilities::new(true, false, false, false).with_prompt_completion(),
 )
 // Use the documented flag; the `copilot version` command checks for updates.
 .with_version_probe(&["--version"])

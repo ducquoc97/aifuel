@@ -12,7 +12,8 @@ use aifuel_app::selection::{
     StoredSession,
 };
 use aifuel_core::{
-    AccessMode, OutputFormat, ProviderKey, RunManagementError, RunRequest, StoredSessionSelection,
+    AccessMode, IntegrationId, OutputFormat, ProviderId, ProviderKey, RunManagementError,
+    RunRequest, StoredSessionSelection,
 };
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Read, Write};
@@ -177,25 +178,21 @@ where
     let args = params.get("arguments").unwrap_or(&empty);
     match name {
         "list_agents" => {
-            only_fields(args, &["provider"])?;
-            let provider = optional_string(args, "provider")?
-                .map(str::parse)
-                .transpose()
-                .map_err(|error: aifuel_core::InvalidProviderKey| {
-                    RunManagementError::invalid_request(error.to_string())
-                })?;
+            only_fields(args, &["provider", "integration"])?;
+            let provider = optional_string(args, "provider")?.map(ProviderId::new);
+            let integration = optional_string(args, "integration")?.map(IntegrationId::new);
             Ok(json!({
                 "schema_version": 1,
-                "agents": encoded(manager.list_agents(provider))?
+                "agents": encoded(manager.list_agents(provider, integration))?
             }))
         }
         "list_models" => list_models(args, catalog, refresh_catalog),
         "start_run" => {
-            let (request, _) = resolve_request(args, selection, false, None)?;
+            let (request, _) = resolve_request(args, selection, false, None, manager)?;
             encoded(manager.start_run(request)?)
         }
         "resolve_run" => {
-            let (request, sources) = resolve_request(args, selection, false, None)?;
+            let (request, sources) = resolve_request(args, selection, false, None, manager)?;
             let mut resolved = encoded(manager.resolve_run(&request)?)?;
             resolved["selection_sources"] = encoded(sources)?;
             Ok(resolved)
@@ -207,6 +204,7 @@ where
                     "session_id",
                     "profile",
                     "provider",
+                    "integration",
                     "model",
                     "effort",
                     "external_tools",
@@ -223,8 +221,13 @@ where
                 .as_object_mut()
                 .expect("arguments object was validated")
                 .remove("session_id");
-            let (request, _) =
-                resolve_request(&request_args, selection, true, Some(&stored_session))?;
+            let (request, _) = resolve_request(
+                &request_args,
+                selection,
+                true,
+                Some(&stored_session),
+                manager,
+            )?;
             encoded(manager.resume_session(session_id, request)?)
         }
         "answer_input" => {
@@ -333,12 +336,14 @@ fn resolve_request(
     selection: &GlobalSelectionConfig,
     resume: bool,
     stored_session: Option<&StoredSessionSelection>,
+    manager: &RunManager,
 ) -> Result<(RunRequest, SelectionSources), RunManagementError> {
     only_fields(
         args,
         &[
             "profile",
             "provider",
+            "integration",
             "model",
             "effort",
             "external_tools",
@@ -348,12 +353,45 @@ fn resolve_request(
             "timeout_seconds",
         ],
     )?;
-    let provider = optional_string(args, "provider")?
-        .map(str::parse)
-        .transpose()
-        .map_err(|error: aifuel_core::InvalidProviderKey| {
-            RunManagementError::invalid_request(error.to_string())
-        })?;
+    // `integration` selects a configured integration directly; `provider`
+    // remains accepted as a bare provider id that resolves only when exactly
+    // one registered integration uses it. Both may be supplied together only
+    // when the provider selector resolves to the same integration id -
+    // agreement is real resolution, not string equality.
+    let integration = match (
+        optional_string(args, "integration")?,
+        optional_string(args, "provider")?,
+    ) {
+        (Some(integration), Some(provider)) => {
+            // Both selectors resolve through the registry: a bare provider id
+            // supplied as `integration` agrees with `provider` when they map
+            // to the same canonical integration.
+            let integration_resolved = manager
+                .resolve_integration(&IntegrationId::new(integration))
+                .map_err(|_| {
+                    RunManagementError::invalid_request(format!(
+                        "integration {integration} is not a registered integration"
+                    ))
+                })?;
+            let provider_resolved = manager
+                .resolve_integration(&IntegrationId::new(provider))
+                .map_err(|_| {
+                    RunManagementError::invalid_request(
+                        "provider and integration arguments disagree",
+                    )
+                })?;
+            if integration_resolved != provider_resolved {
+                return Err(RunManagementError::invalid_request(
+                    "provider and integration arguments disagree",
+                ));
+            }
+            Some(provider_resolved)
+        }
+        (Some(integration), None) | (None, Some(integration)) => {
+            Some(IntegrationId::new(integration))
+        }
+        (None, None) => None,
+    };
     let model = optional_string(args, "model")?.map(str::to_owned);
     let effort = optional_string(args, "effort")?.map(str::to_owned);
     let access = optional_string(args, "access")?
@@ -370,7 +408,7 @@ fn resolve_request(
         .transpose()?;
     let profile = optional_string(args, "profile")?.map(str::to_owned);
     let explicit = SelectionSettings {
-        provider,
+        integration,
         model,
         effort,
         access,
@@ -383,7 +421,7 @@ fn resolve_request(
         deadline_override: None,
     };
     let session = stored_session.map(|stored| {
-        let mut session = StoredSession::new(stored.session_id.clone(), stored.provider);
+        let mut session = StoredSession::new(stored.session_id.clone(), stored.integration.clone());
         session.model = stored.requested_model.clone();
         session.effort = stored.requested_effort.clone();
         session
@@ -398,8 +436,8 @@ fn resolve_request(
     }
     let policy_resolved = if resume {
         let mut policy_explicit = explicit;
-        if policy_explicit.provider.is_none() {
-            policy_explicit.provider = stored_session.map(|stored| stored.provider);
+        if policy_explicit.integration.is_none() {
+            policy_explicit.integration = stored_session.map(|stored| stored.integration.clone());
         }
         selection
             .resolve(
@@ -438,7 +476,7 @@ fn resolve_request(
     };
     Ok((
         RunRequest {
-            provider: resolved.provider,
+            integration: resolved.integration,
             model,
             effort,
             external_tools: parse_tools(args)?,

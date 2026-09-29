@@ -52,7 +52,7 @@ impl AgentInteractionHandler for AnswerHandler {
 
 fn request() -> RunRequest {
     RunRequest {
-        provider: ProviderKey::Codex,
+        integration: aifuel_core::IntegrationId::from(ProviderKey::Codex),
         model: Some("gpt-5-codex".to_owned()),
         effort: Some("high".to_owned()),
         external_tools: None,

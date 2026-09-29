@@ -115,7 +115,7 @@ fn list_agents_returns_provider_owned_presence_version_and_independent_capabilit
         .iter()
         .find(|agent| agent["provider"] == "codex")
         .expect("the compiled Codex integration should be listed");
-    assert_eq!(codex["integration"], "compiled");
+    assert_eq!(codex["integration"], "codex");
     assert!(codex["native_presence"]["state"].is_string());
     assert!(
         codex["native_presence"]["reason"]

@@ -40,8 +40,8 @@ pub fn run(args: &[String]) -> Result<u8, String> {
     let output_format = request.output;
     let result = match launcher::execute(&request) {
         Ok(result) => result,
-        Err(launcher::LaunchError::UnsupportedProvider(provider)) => {
-            eprintln!("aifuel: provider {provider} has no verified agent integration");
+        Err(launcher::LaunchError::UnsupportedIntegration(integration)) => {
+            eprintln!("aifuel: integration {integration} is not a registered agent integration");
             return Ok(3);
         }
         Err(launcher::LaunchError::Timeout(error)) => {
@@ -191,7 +191,7 @@ fn parse_run_args_with_context(
     interactive: bool,
     stdin_is_terminal: bool,
 ) -> Result<ParsedRunRequest, String> {
-    let mut provider = None;
+    let mut integration = None;
     let mut model = None;
     let mut effort = None;
     let mut external_tools = Vec::new();
@@ -217,7 +217,9 @@ fn parse_run_args_with_context(
                 print_run_help();
                 return Err(String::new());
             }
-            "--provider" => provider = Some(next_value(args, &mut index, argument)?),
+            "--integration" | "--provider" => {
+                integration = Some(next_value(args, &mut index, argument)?);
+            }
             "--model" => model = Some(next_value(args, &mut index, argument)?),
             "--effort" => effort = Some(next_value(args, &mut index, argument)?),
             "--external-tool" => external_tools.push(next_value(args, &mut index, argument)?),
@@ -264,10 +266,7 @@ fn parse_run_args_with_context(
     }
     let external_tools = (!external_tools.is_empty()).then_some(external_tools);
 
-    let provider = provider
-        .map(|provider| provider.parse())
-        .transpose()
-        .map_err(|error: aifuel_core::InvalidProviderKey| error.to_string())?;
+    let integration = integration.map(aifuel_core::IntegrationId::new);
     if prompt_count > 1 || prompt_file_count > 1 {
         return Err("provide exactly one value for the selected prompt option".to_owned());
     }
@@ -293,7 +292,7 @@ fn parse_run_args_with_context(
     };
 
     let explicit_selection = SelectionSettings {
-        provider,
+        integration,
         model,
         effort,
         access: access_explicit.then_some(access),
@@ -314,10 +313,11 @@ fn parse_run_args_with_context(
     )?;
     let model_evidence = selection.model_evidence;
     let mut request = launcher::RunRequest {
-        provider: selection
+        integration: selection
             .settings
-            .provider
-            .ok_or_else(|| "run requires a provider selection".to_owned())?,
+            .integration
+            .clone()
+            .ok_or_else(|| "run requires an integration selection".to_owned())?,
         model: selection.settings.model.clone(),
         effort: selection.settings.effort.clone(),
         external_tools,
@@ -337,7 +337,7 @@ fn parse_run_args_with_context(
         .resolve(
             &SelectionInputs {
                 explicit: SelectionSettings {
-                    provider: selection.settings.provider,
+                    integration: selection.settings.integration.clone(),
                     model: selection.settings.model.clone(),
                     effort: selection.settings.effort.clone(),
                     access: access_explicit.then_some(access),
@@ -350,7 +350,7 @@ fn parse_run_args_with_context(
             None,
         )
         .map_err(|error| format!("could not resolve run selection: {error}"))?;
-    request.provider = resolved.provider;
+    request.integration = resolved.integration;
     if request.resume.is_none() {
         request.model = resolved.model;
         request.effort = resolved.effort;
@@ -387,7 +387,7 @@ fn parse_timeout(value: &str) -> Result<Option<Duration>, String> {
 }
 
 fn print_run_help() {
-    println!("Usage: aifuel run --provider PROVIDER_ID [OPTIONS]");
+    println!("Usage: aifuel run --integration INTEGRATION_ID [OPTIONS]");
     println!();
     println!("  --prompt TEXT                         prompt text");
     println!("  --prompt-file PATH                    read prompt from a file");

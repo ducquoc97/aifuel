@@ -19,7 +19,7 @@ fn session_selection_lookup_returns_only_the_stored_provider_model_and_effort() 
         .session_selection("native-session")
         .expect("stored selection is available");
     assert_eq!(selection.session_id, "native-session");
-    assert_eq!(selection.provider, ProviderKey::Claude);
+    assert_eq!(selection.provider, ProviderId::from(ProviderKey::Claude));
     assert_eq!(selection.requested_model.as_deref(), Some("chosen-model"));
     assert_eq!(selection.requested_effort.as_deref(), Some("high"));
     assert!(
@@ -143,7 +143,7 @@ fn same_provider_session_can_resume_with_current_run_policy() {
         .resume_session("native-session", request())
         .expect("same-provider session resumes");
     let terminal = wait_for_terminal(&manager, &resumed.run_id);
-    assert_eq!(terminal.provider, ProviderKey::Claude);
+    assert_eq!(terminal.provider, ProviderId::from(ProviderKey::Claude));
     assert_ne!(first.run_id, resumed.run_id);
     manager.shutdown();
 }
@@ -254,6 +254,7 @@ fn worker_start_does_not_overwrite_pending_owner_input() {
     ] {
         let record = Arc::new(RunRecord::new(
             run_id.to_owned(),
+            ProviderKey::Claude.into(),
             &request(),
             None,
             None,

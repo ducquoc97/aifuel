@@ -45,9 +45,13 @@ fn list_models_reports_unknown_freshness_and_stale_cache_age() {
         structured(&fresh_response[0])["models"][0]["model_id"],
         "cached-model"
     );
-    assert_eq!(
-        structured(&fresh_response[0])["catalogs"][0]["age_seconds"].as_u64(),
-        Some(0)
+    // The seed and the subprocess read straddle a whole-second boundary, so
+    // the reported age can be 0 or 1. "Fresh" is already asserted above; here
+    // we only verify the age is present and near-zero.
+    assert!(
+        structured(&fresh_response[0])["catalogs"][0]["age_seconds"]
+            .as_u64()
+            .is_some_and(|age| age <= 1)
     );
 
     let stale = TestDirectory::new("execution-catalog-stale");

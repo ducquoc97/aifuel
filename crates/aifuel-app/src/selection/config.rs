@@ -1,4 +1,4 @@
-use aifuel_core::{AccessMode, ProviderKey};
+use aifuel_core::{AccessMode, IntegrationId};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -57,10 +57,16 @@ impl ExecutionPolicy {
 /// A partial set of settings. Missing values inherit from the next lower
 /// precedence source, or from the provider/native default when no source has a
 /// value.
+///
+/// `integration` holds the caller's selection text: an exact Integration
+/// Identity wins at resolution, while a bare upstream provider id resolves
+/// only when exactly one registered integration uses it. The legacy `provider`
+/// file key remains readable as an alias because built-in integration ids
+/// equal the catalog provider ids.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectionSettings {
-    #[serde(default, deserialize_with = "deserialize_provider")]
-    pub provider: Option<ProviderKey>,
+    #[serde(default, alias = "provider")]
+    pub integration: Option<IntegrationId>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -77,16 +83,19 @@ pub struct SelectionSettings {
 pub type ProfileSettings = SelectionSettings;
 
 impl SelectionSettings {
-    pub fn with_provider(provider: ProviderKey) -> Self {
+    pub fn with_integration(integration: IntegrationId) -> Self {
         Self {
-            provider: Some(provider),
+            integration: Some(integration),
             ..Self::default()
         }
     }
 
     pub fn merge_over(&self, lower: &Self) -> Self {
         Self {
-            provider: self.provider.or(lower.provider),
+            integration: self
+                .integration
+                .clone()
+                .or_else(|| lower.integration.clone()),
             model: self.model.clone().or_else(|| lower.model.clone()),
             effort: self.effort.clone().or_else(|| lower.effort.clone()),
             access: self.access.or(lower.access),
@@ -97,7 +106,7 @@ impl SelectionSettings {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.provider.is_none()
+        self.integration.is_none()
             && self.model.is_none()
             && self.effort.is_none()
             && self.access.is_none()
@@ -131,15 +140,6 @@ impl Default for GlobalSelectionConfig {
 
 fn default_schema_version() -> u32 {
     GLOBAL_SELECTION_SCHEMA_VERSION
-}
-
-fn deserialize_provider<'de, D>(deserializer: D) -> Result<Option<ProviderKey>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer)?
-        .map(|value| value.parse().map_err(serde::de::Error::custom))
-        .transpose()
 }
 
 fn deserialize_access<'de, D>(deserializer: D) -> Result<Option<AccessMode>, D::Error>

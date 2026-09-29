@@ -1,4 +1,6 @@
 use super::*;
+use aifuel_app::selection::CatalogProvenance;
+use aifuel_core::ProviderId;
 use std::io::Cursor;
 
 #[test]
@@ -25,7 +27,10 @@ fn picker_uses_catalog_model_and_prompt_only_scope_without_inventing_ids() {
     let result = pick(&mut input, &mut output, options)
         .expect("controlled terminal should be accepted")
         .expect("picker should return a selection");
-    assert_eq!(result.settings.provider, Some(ProviderKey::Codex));
+    assert_eq!(
+        result.settings.integration,
+        Some(IntegrationId::from(ProviderKey::Codex))
+    );
     assert_eq!(result.settings.model.as_deref(), Some("provider-exact-id"));
     assert_eq!(result.settings.effort, None);
     assert_eq!(result.working_directory, None);
@@ -74,20 +79,29 @@ fn picker_cancel_is_explicit() {
 }
 
 #[test]
-fn provider_only_picker_does_not_request_model_or_scope() {
+fn integration_only_picker_does_not_request_model_or_scope() {
     let mut input = Cursor::new(b"2\n".to_vec());
     let mut output = Vec::new();
-    let selected = pick_provider(
+    let selected = pick_integration(
         &mut input,
         &mut output,
-        &[ProviderKey::Claude, ProviderKey::Codex],
+        &[
+            PickerIntegration::new(
+                IntegrationId::from(ProviderKey::Claude),
+                ProviderId::from(ProviderKey::Claude),
+            ),
+            PickerIntegration::new(
+                IntegrationId::from(ProviderKey::Codex),
+                ProviderId::from(ProviderKey::Codex),
+            ),
+        ],
     )
     .expect("controlled terminal should be accepted")
-    .expect("provider should be selected");
+    .expect("integration should be selected");
 
-    assert_eq!(selected, ProviderKey::Codex);
+    assert_eq!(selected, IntegrationId::from(ProviderKey::Codex));
     let output = String::from_utf8(output).expect("picker output should be UTF-8");
-    assert!(output.contains("Select provider"));
+    assert!(output.contains("Select integration"));
     assert!(!output.contains("Select model"));
     assert!(!output.contains("Task scope"));
 }

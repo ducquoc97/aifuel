@@ -91,10 +91,13 @@ pub(super) fn ordinary_input_response(
 pub(super) fn map_validation_error(error: AgentRunError) -> RunManagementError {
     match error {
         AgentRunError::InvalidRequest(message) => RunManagementError::invalid_request(message),
-        AgentRunError::UnsupportedProvider(provider) => RunManagementError::new(
+        AgentRunError::UnsupportedIntegration(integration) => RunManagementError::new(
             RunManagementErrorCode::AgentUnavailable,
-            format!("provider {provider} has no registered Agent Integration"),
+            format!("integration {integration} has no registered Agent Integration"),
         ),
+        ambiguous @ AgentRunError::AmbiguousIntegration { .. } => {
+            RunManagementError::invalid_request(ambiguous.to_string())
+        }
         AgentRunError::Timeout(message) => {
             RunManagementError::new(RunManagementErrorCode::ConnectionTimeout, message)
         }

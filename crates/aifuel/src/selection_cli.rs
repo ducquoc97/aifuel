@@ -5,108 +5,13 @@
 //! enter an explicit model ID; the returned evidence label keeps that choice
 //! visibly unknown to callers.
 
-use aifuel_app::selection::{CatalogModel, CatalogProvenance, SelectionSettings};
-use aifuel_core::{CapabilityState, ProviderKey};
-use std::fmt;
+mod types;
+
+pub use types::*;
+
+use aifuel_core::{CapabilityState, IntegrationId, ProviderKey};
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PickerModel {
-    pub provider: ProviderKey,
-    pub model_id: String,
-    pub display_label: Option<String>,
-    pub provenance: CatalogProvenance,
-    pub advertisement: CapabilityState,
-    pub entitlement: CapabilityState,
-    pub execution: CapabilityState,
-    pub scope_label: Option<String>,
-    pub catalog_age_seconds: u64,
-    pub default_effort: Option<String>,
-    pub effort_values: Vec<String>,
-    pub effort_state: CapabilityState,
-}
-
-impl From<&CatalogModel> for PickerModel {
-    fn from(model: &CatalogModel) -> Self {
-        Self {
-            provider: model.provider,
-            model_id: model.model_id.clone(),
-            display_label: model.display_label.clone(),
-            provenance: model.provenance,
-            advertisement: model.advertisement,
-            entitlement: model.entitlement,
-            execution: model.execution,
-            scope_label: None,
-            catalog_age_seconds: 0,
-            default_effort: model.default_effort.clone(),
-            effort_values: model.efforts.values.clone(),
-            effort_state: model.efforts.state,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickerModelEvidence {
-    Catalog,
-    ExplicitOverrideUnknown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PickerOptions {
-    pub providers: Vec<ProviderKey>,
-    pub models: Vec<PickerModel>,
-    pub initial: SelectionSettings,
-    pub working_directory: Option<PathBuf>,
-}
-
-impl Default for PickerOptions {
-    fn default() -> Self {
-        Self {
-            providers: ProviderKey::ALL.to_vec(),
-            models: Vec::new(),
-            initial: SelectionSettings::default(),
-            working_directory: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PickerSelection {
-    pub settings: SelectionSettings,
-    pub working_directory: Option<PathBuf>,
-    pub model_evidence: PickerModelEvidence,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickerOutcome {
-    Cancelled,
-}
-
-#[derive(Debug)]
-pub enum PickerError {
-    NotInteractive,
-    Io(io::Error),
-    InvalidInput(String),
-}
-
-impl fmt::Display for PickerError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotInteractive => f.write_str("selection requires an interactive terminal"),
-            Self::Io(error) => write!(f, "selection picker I/O failed: {error}"),
-            Self::InvalidInput(message) => f.write_str(message),
-        }
-    }
-}
-
-impl std::error::Error for PickerError {}
-
-impl From<io::Error> for PickerError {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
-    }
-}
 
 /// Run the picker against the process terminal.
 pub fn pick_from_terminal(
@@ -130,25 +35,60 @@ pub fn pick(
     options: PickerOptions,
 ) -> Result<Result<PickerSelection, PickerOutcome>, PickerError> {
     let mut settings = options.initial;
-    let providers = if options.providers.is_empty() {
-        ProviderKey::ALL.to_vec()
+    let integrations = if options.integrations.is_empty() {
+        PickerOptions::default().integrations
     } else {
-        options.providers
+        options.integrations
     };
 
-    let provider = match settings.provider {
-        Some(provider) => provider,
-        None => match choose_provider(input, output, &providers)? {
-            Some(provider) => provider,
+    let integration = match settings.integration.take() {
+        Some(selector) => {
+            // The selector uses the shared rule: an exact Integration
+            // Identity, or a bare Provider Identity only when unambiguous.
+            match aifuel_core::match_selector(
+                selector.as_str(),
+                integrations
+                    .iter()
+                    .map(|candidate| (&candidate.id, &candidate.provider)),
+            ) {
+                aifuel_core::SelectorMatch::Exact(id) | aifuel_core::SelectorMatch::Unique(id) => {
+                    integrations
+                        .into_iter()
+                        .find(|candidate| candidate.id == id)
+                        .expect("a matched id is still in the list")
+                }
+                aifuel_core::SelectorMatch::Ambiguous { candidates, .. } => {
+                    return Err(PickerError::InvalidInput(format!(
+                        "integration {selector} is ambiguous; it could be {}",
+                        candidates
+                            .iter()
+                            .map(|candidate| candidate.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )));
+                }
+                // A stored or explicit selector that is not a registered
+                // integration is rejected here rather than kept with a
+                // fabricated provider id.
+                aifuel_core::SelectorMatch::Unknown => {
+                    return Err(PickerError::InvalidInput(format!(
+                        "integration {selector} is not a registered integration id"
+                    )));
+                }
+            }
+        }
+        None => match choose_integration(input, output, &integrations)? {
+            Some(integration) => integration,
             None => return Ok(Err(PickerOutcome::Cancelled)),
         },
     };
-    settings.provider = Some(provider);
+    settings.integration = Some(integration.id.clone());
 
+    let provider = integration.provider_key();
     let models = options
         .models
         .into_iter()
-        .filter(|model| model.provider == provider)
+        .filter(|model| Some(model.provider) == provider)
         .collect::<Vec<_>>();
     let (model, model_evidence, effort_values, effort_state, default_effort) =
         match settings.model.clone() {
@@ -173,7 +113,8 @@ pub fn pick(
                 (model, evidence, effort.0, effort.1, effort.2)
             }
             None => {
-                let Some(selected) = choose_model(input, output, provider, &models)? else {
+                let Some(selected) = choose_model(input, output, &integration, provider, &models)?
+                else {
                     return Ok(Err(PickerOutcome::Cancelled));
                 };
                 (
@@ -213,21 +154,21 @@ pub fn pick(
     }))
 }
 
-/// Prompt only for a provider, used when resuming a native session whose
-/// provider is not otherwise selected. The session remains authoritative for
-/// its stored model, effort, and repository scope.
-pub fn pick_provider(
+/// Prompt only for an integration, used when resuming a native session whose
+/// integration is not otherwise selected. The session remains authoritative
+/// for its stored model, effort, and repository scope.
+pub fn pick_integration(
     input: &mut impl BufRead,
     output: &mut impl Write,
-    providers: &[ProviderKey],
-) -> Result<Result<ProviderKey, PickerOutcome>, PickerError> {
-    let providers = if providers.is_empty() {
-        ProviderKey::ALL.to_vec()
+    integrations: &[PickerIntegration],
+) -> Result<Result<IntegrationId, PickerOutcome>, PickerError> {
+    let integrations = if integrations.is_empty() {
+        PickerOptions::default().integrations
     } else {
-        providers.to_vec()
+        integrations.to_vec()
     };
-    Ok(match choose_provider(input, output, &providers)? {
-        Some(provider) => Ok(provider),
+    Ok(match choose_integration(input, output, &integrations)? {
+        Some(integration) => Ok(integration.id),
         None => Err(PickerOutcome::Cancelled),
     })
 }
@@ -240,40 +181,48 @@ struct ChosenModel {
     default_effort: Option<String>,
 }
 
-fn choose_provider(
+fn choose_integration(
     input: &mut impl BufRead,
     output: &mut impl Write,
-    providers: &[ProviderKey],
-) -> Result<Option<ProviderKey>, PickerError> {
-    writeln!(output, "Select provider (c to cancel):")?;
-    for (index, provider) in providers.iter().enumerate() {
+    integrations: &[PickerIntegration],
+) -> Result<Option<PickerIntegration>, PickerError> {
+    writeln!(output, "Select integration (c to cancel):")?;
+    for (index, integration) in integrations.iter().enumerate() {
+        let provider_label = integration.provider_key().map_or_else(
+            || integration.provider.to_string(),
+            |key| key.display_name().to_string(),
+        );
         writeln!(
             output,
             "  {}. {} ({})",
             index + 1,
-            provider.display_name(),
-            provider
+            provider_label,
+            integration.id
         )?;
     }
     let value = prompt(input, output, "> ")?;
     if is_cancel(&value) {
         return Ok(None);
     }
-    let index = parse_index(&value, providers.len(), "provider")?;
-    Ok(Some(providers[index]))
+    let index = parse_index(&value, integrations.len(), "integration")?;
+    Ok(Some(integrations[index].clone()))
 }
 
 fn choose_model(
     input: &mut impl BufRead,
     output: &mut impl Write,
-    provider: ProviderKey,
+    integration: &PickerIntegration,
+    provider: Option<ProviderKey>,
     models: &[PickerModel],
 ) -> Result<Option<ChosenModel>, PickerError> {
     if models.is_empty() {
         writeln!(
             output,
             "No provider-reported models are known for {}. Enter an exact model ID override (c to cancel); support remains unknown.",
-            provider.display_name()
+            provider.map_or_else(
+                || integration.id.to_string(),
+                |key| key.display_name().to_string()
+            )
         )?;
         let model_id = prompt(input, output, "model ID: ")?;
         if is_cancel(&model_id) {

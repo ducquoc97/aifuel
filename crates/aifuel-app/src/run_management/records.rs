@@ -6,6 +6,7 @@ use super::*;
 impl RunRecord {
     pub(super) fn new(
         run_id: String,
+        provider: aifuel_core::ProviderId,
         request: &RunRequest,
         deadline: Option<Instant>,
         workspace_lock: Option<WorkspaceWriteLock>,
@@ -15,7 +16,8 @@ impl RunRecord {
     ) -> Self {
         Self {
             run_id,
-            provider: request.provider,
+            integration: request.integration.clone(),
+            provider,
             access: request.access,
             requested_model: request.model.clone(),
             requested_effort: request.effort.clone(),
@@ -52,7 +54,8 @@ impl RunRecord {
             schema_version: RUN_MANAGEMENT_SCHEMA_VERSION,
             run_id: self.run_id.clone(),
             state: metadata.state,
-            provider: self.provider,
+            integration: self.integration.clone(),
+            provider: self.provider.clone(),
             requested_model: self.requested_model.clone(),
             requested_effort: self.requested_effort.clone(),
             external_tools: self.external_tools.clone(),
@@ -83,7 +86,8 @@ impl RunRecord {
             schema_version: RUN_MANAGEMENT_SCHEMA_VERSION,
             run_id: self.run_id.clone(),
             state: metadata.state,
-            provider: self.provider,
+            integration: self.integration.clone(),
+            provider: self.provider.clone(),
             requested_model: self.requested_model.clone(),
             requested_effort: self.requested_effort.clone(),
             effective_model: result.effective_model.clone(),
@@ -97,6 +101,7 @@ impl RunRecord {
             output: result.output.clone().or(partial_output),
             error: result.error.clone(),
             diagnostics: result.diagnostics.clone(),
+            usage: result.usage.clone(),
             content_available: metadata.content_available || partial_available,
             output_truncated: result.output_truncated || output_capture.truncated,
             diagnostics_truncated: result.diagnostics_truncated,
@@ -184,6 +189,7 @@ impl ResultMetadata {
             output: None,
             error: None,
             diagnostics: None,
+            usage: None,
             output_truncated: false,
             diagnostics_truncated: false,
             output_bytes: 0,

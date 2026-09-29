@@ -5,7 +5,8 @@ use aifuel_app::RunManager;
 use aifuel_core::{
     AccessMode, AgentAuthenticationState, AgentCapability, AgentExecutionAdapter,
     AgentPresenceState, AgentRunError, AgentRunOutputHandler, AgentSetupGuidance, CapabilityState,
-    OutputFormat, ProviderKey, RunCancellationToken, RunRequest, RunResult, RunStatus,
+    IntegrationId, OutputFormat, ProviderId, ProviderKey, RunCancellationToken, RunRequest,
+    RunResult, RunStatus,
 };
 use std::fs;
 use std::future::Future;
@@ -54,7 +55,7 @@ fn marker_executor<'a>(
 
 fn request() -> RunRequest {
     RunRequest {
-        provider: ProviderKey::Gemini,
+        integration: IntegrationId::from(ProviderKey::Gemini),
         model: None,
         effort: None,
         external_tools: None,
@@ -93,7 +94,7 @@ fn provider_execution_capabilities_are_data_not_provider_key_checks() {
     assert!(generic_adapter.validate(&generic_request).is_ok());
 
     let mut codex_request = generic_request;
-    codex_request.provider = ProviderKey::Codex;
+    codex_request.integration = IntegrationId::from(ProviderKey::Codex);
     let codex_without_capabilities = CliExecutionAdapter::new(
         ProviderKey::Codex,
         "unused",
@@ -254,11 +255,11 @@ fn run_manager_lists_native_presence_and_only_reports_version_from_safe_probe() 
         )),
     ]);
 
-    let agents = manager.list_agents(None);
+    let agents = manager.list_agents(None, None);
     assert_eq!(agents.len(), 2);
     let claude = agents
         .iter()
-        .find(|agent| agent.provider == ProviderKey::Claude)
+        .find(|agent| agent.provider == ProviderId::from(ProviderKey::Claude))
         .expect("the selected provider should be listed");
     assert_eq!(claude.native_presence.state, AgentPresenceState::Present);
     assert_eq!(claude.native_version.version.as_deref(), Some("1.2.3"));
@@ -272,7 +273,7 @@ fn run_manager_lists_native_presence_and_only_reports_version_from_safe_probe() 
     assert!(!workspace_write.current.reason.is_empty());
 
     let antigravity = manager
-        .list_agents(Some(ProviderKey::Antigravity))
+        .list_agents(Some(ProviderId::from(ProviderKey::Antigravity)), None)
         .pop()
         .expect("provider filter should select only Antigravity");
     assert_eq!(
@@ -281,7 +282,11 @@ fn run_manager_lists_native_presence_and_only_reports_version_from_safe_probe() 
     );
     assert_eq!(antigravity.native_version.version, None);
     assert!(!antigravity.native_version.reason.is_empty());
-    assert!(manager.list_agents(Some(ProviderKey::Codex)).is_empty());
+    assert!(
+        manager
+            .list_agents(Some(ProviderId::from(ProviderKey::Codex)), None)
+            .is_empty()
+    );
 
     assert_eq!(
         fs::read_to_string(&version_log).expect("version probe should be logged"),
@@ -339,7 +344,7 @@ fn run_manager_listing_returns_setup_guidance_without_reading_authentication() {
     let manager = RunManager::new(vec![Arc::new(adapter)]);
 
     let agent = manager
-        .list_agents(Some(ProviderKey::Claude))
+        .list_agents(Some(ProviderId::from(ProviderKey::Claude)), None)
         .pop()
         .expect("the registered provider should be returned");
 
@@ -395,7 +400,7 @@ fn run_manager_version_probe_times_out_and_reaps_the_fake_process_group() {
     let started_at = Instant::now();
 
     let agent = manager
-        .list_agents(Some(ProviderKey::Gemini))
+        .list_agents(Some(ProviderId::from(ProviderKey::Gemini)), None)
         .pop()
         .expect("registered provider should be returned");
 
@@ -442,7 +447,7 @@ fn run_manager_version_probe_bounds_captured_output() {
     let manager = RunManager::new(vec![Arc::new(adapter)]);
 
     let agent = manager
-        .list_agents(Some(ProviderKey::Gemini))
+        .list_agents(Some(ProviderId::from(ProviderKey::Gemini)), None)
         .pop()
         .expect("registered provider should be returned");
 

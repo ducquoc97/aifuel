@@ -1,6 +1,8 @@
 use super::helpers::{event_size, now, ordinary_input_response};
 use super::*;
-use aifuel_core::{AccessMode, ExecutionMode, OutputFormat, ProviderKey};
+use aifuel_core::{
+    AccessMode, ExecutionMode, IntegrationId, OutputFormat, ProviderId, ProviderKey,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -23,8 +25,12 @@ struct InputAdapter;
 struct FailingAdapter;
 
 impl AgentExecutionAdapter for ProbeAdapter {
-    fn provider(&self) -> ProviderKey {
-        self.provider
+    fn integration(&self) -> IntegrationId {
+        self.provider.into()
+    }
+
+    fn provider(&self) -> ProviderId {
+        self.provider.into()
     }
 
     fn execute(
@@ -43,7 +49,8 @@ impl AgentExecutionAdapter for ProbeAdapter {
             local_session_id: "provider-session".to_owned(),
             session_id: Some("native-session".to_owned()),
             resumed_from: request.resume.clone(),
-            provider_id: self.provider,
+            provider_id: self.provider.into(),
+            integration_id: request.integration.clone(),
             requested_model: request.model.clone(),
             requested_effort: request.effort.clone(),
             effective_model: Some("effective-model".to_owned()),
@@ -58,14 +65,22 @@ impl AgentExecutionAdapter for ProbeAdapter {
             error: None,
             diagnostics: None,
             timed_out: false,
+            usage: Some(aifuel_core::TokenUsage {
+                input_tokens: Some(7),
+                output_tokens: Some(3),
+            }),
             working_directory: std::env::temp_dir(),
         })
     }
 }
 
 impl AgentExecutionAdapter for StreamingAdapter {
-    fn provider(&self) -> ProviderKey {
-        ProviderKey::Claude
+    fn integration(&self) -> IntegrationId {
+        ProviderKey::Claude.into()
+    }
+
+    fn provider(&self) -> ProviderId {
+        ProviderKey::Claude.into()
     }
 
     fn execute(
@@ -97,8 +112,12 @@ impl AgentExecutionAdapter for StreamingAdapter {
 }
 
 impl AgentExecutionAdapter for OversizedOutputAdapter {
-    fn provider(&self) -> ProviderKey {
-        ProviderKey::Claude
+    fn integration(&self) -> IntegrationId {
+        ProviderKey::Claude.into()
+    }
+
+    fn provider(&self) -> ProviderId {
+        ProviderKey::Claude.into()
     }
 
     fn execute(
@@ -123,8 +142,12 @@ impl AgentExecutionAdapter for OversizedOutputAdapter {
 }
 
 impl AgentExecutionAdapter for FailingAdapter {
-    fn provider(&self) -> ProviderKey {
-        ProviderKey::Claude
+    fn integration(&self) -> IntegrationId {
+        ProviderKey::Claude.into()
+    }
+
+    fn provider(&self) -> ProviderId {
+        ProviderKey::Claude.into()
     }
 
     fn execute(
@@ -137,8 +160,12 @@ impl AgentExecutionAdapter for FailingAdapter {
 }
 
 impl AgentExecutionAdapter for InputAdapter {
-    fn provider(&self) -> ProviderKey {
-        ProviderKey::Claude
+    fn integration(&self) -> IntegrationId {
+        ProviderKey::Claude.into()
+    }
+
+    fn provider(&self) -> ProviderId {
+        ProviderKey::Claude.into()
     }
 
     fn execute(
@@ -184,6 +211,7 @@ impl AgentExecutionAdapter for InputAdapter {
             session_id: None,
             resumed_from: None,
             provider_id: self.provider(),
+            integration_id: self.integration(),
             requested_model: request.model.clone(),
             requested_effort: request.effort.clone(),
             effective_model: None,
@@ -198,6 +226,7 @@ impl AgentExecutionAdapter for InputAdapter {
             error: None,
             diagnostics: None,
             timed_out: false,
+            usage: None,
             working_directory: request
                 .working_directory
                 .clone()
@@ -208,7 +237,7 @@ impl AgentExecutionAdapter for InputAdapter {
 
 fn request() -> RunRequest {
     RunRequest {
-        provider: ProviderKey::Claude,
+        integration: ProviderKey::Claude.into(),
         model: Some("model-a".to_owned()),
         effort: None,
         external_tools: None,
@@ -224,7 +253,10 @@ fn request() -> RunRequest {
 }
 
 fn wait_for_terminal(manager: &RunManager, id: &str) -> ManagedRun {
-    for _ in 0..100 {
+    // 500 x 2ms = 1s budget: oversized-output tests push MiB through the
+    // bounded retention path in debug builds, which a 200ms budget misses
+    // under even light load.
+    for _ in 0..500 {
         let run = manager.get_run(id).expect("run remains owner-local");
         if run.state.is_terminal() {
             return run;

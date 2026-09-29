@@ -1,7 +1,7 @@
 //! Provider-owned evidence for listing compiled Agent Integrations.
 
-use crate::ProviderKey;
 use crate::status::CapabilityState;
+use crate::{IntegrationId, ProviderId};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -19,10 +19,13 @@ pub enum AgentCapability {
     OrdinaryInput,
     PermissionApproval,
     StructuredOutput,
+    /// A direct prompt completion through a Wire Api in which AI Fuel
+    /// executes no provider-side tools.
+    PromptCompletion,
 }
 
 impl AgentCapability {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::ModelCatalog,
         Self::Streaming,
         Self::ReadOnly,
@@ -34,6 +37,7 @@ impl AgentCapability {
         Self::OrdinaryInput,
         Self::PermissionApproval,
         Self::StructuredOutput,
+        Self::PromptCompletion,
     ];
 
     fn display_name(self) -> &'static str {
@@ -49,6 +53,7 @@ impl AgentCapability {
             Self::OrdinaryInput => "ordinary-input forwarding",
             Self::PermissionApproval => "local permission approval forwarding",
             Self::StructuredOutput => "structured output mode",
+            Self::PromptCompletion => "direct prompt completion",
         }
     }
 }
@@ -115,8 +120,10 @@ pub struct AgentCapabilityAssessment {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AgentIntegrationInfo {
-    pub provider: ProviderKey,
-    pub integration: String,
+    /// The upstream provider this integration executes against.
+    pub provider: ProviderId,
+    /// The configured integration identity this listing describes.
+    pub integration: IntegrationId,
     pub native_presence: AgentPresenceEvidence,
     pub native_version: AgentVersionEvidence,
     pub native_authentication: AgentAuthenticationEvidence,
@@ -125,7 +132,11 @@ pub struct AgentIntegrationInfo {
 }
 
 impl AgentIntegrationInfo {
-    pub fn unknown(provider: ProviderKey, reason: impl Into<String>) -> Self {
+    pub fn unknown(
+        provider: ProviderId,
+        integration: IntegrationId,
+        reason: impl Into<String>,
+    ) -> Self {
         let reason = reason.into();
         let native_presence = AgentPresenceEvidence {
             state: AgentPresenceState::Unknown,
@@ -164,7 +175,7 @@ impl AgentIntegrationInfo {
             .collect();
         Self {
             provider,
-            integration: "compiled".to_owned(),
+            integration,
             native_presence,
             native_version,
             native_authentication,
@@ -177,7 +188,8 @@ impl AgentIntegrationInfo {
     /// and explicit adapter declarations. Declarations never promote runtime
     /// evidence to supported.
     pub fn from_inspection(
-        provider: ProviderKey,
+        provider: ProviderId,
+        integration: IntegrationId,
         native_presence: AgentPresenceEvidence,
         native_version: AgentVersionEvidence,
         native_authentication: AgentAuthenticationEvidence,
@@ -224,7 +236,7 @@ impl AgentIntegrationInfo {
             .collect();
         Self {
             provider,
-            integration: "compiled".to_owned(),
+            integration,
             native_presence,
             native_version,
             native_authentication,
@@ -278,6 +290,9 @@ fn current_capability_reason(capability: AgentCapability) -> String {
         }
         AgentCapability::StructuredOutput => {
             "structured output behavior was not observed for the installed version".to_owned()
+        }
+        AgentCapability::PromptCompletion => {
+            "direct prompt completion was not exercised for the installed version".to_owned()
         }
     }
 }

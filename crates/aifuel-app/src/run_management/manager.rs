@@ -3,26 +3,17 @@ use super::interaction::OwnerInteractionHandler;
 use super::workers::run_worker;
 use super::*;
 impl RunManager {
-    /// Construct an owner-local manager from owned adapters or the compiled
-    /// static provider registry.
+    /// Construct an owner-local manager from the owned adapter set.
     pub fn new(adapters: impl Into<AgentExecutionAdapters>) -> Self {
-        let adapters = match adapters.into() {
-            AgentExecutionAdapters::Owned(adapters) => adapters
-                .into_iter()
-                .map(|handle| AdapterSlot {
-                    handle: AdapterHandle::Owned(handle),
-                    info: std::sync::OnceLock::new(),
-                })
-                .collect(),
-            AgentExecutionAdapters::Static(adapters) => adapters
-                .iter()
-                .copied()
-                .map(|handle| AdapterSlot {
-                    handle: AdapterHandle::Static(handle),
-                    info: std::sync::OnceLock::new(),
-                })
-                .collect(),
-        };
+        let adapters = adapters
+            .into()
+            .0
+            .into_iter()
+            .map(|handle| AdapterSlot {
+                handle,
+                info: std::sync::OnceLock::new(),
+            })
+            .collect();
         let inner = Arc::new(ManagerInner {
             adapters,
             records: Mutex::new(HashMap::new()),
@@ -200,28 +191,53 @@ impl RunManager {
         self
     }
 
-    /// Return the compiled Agent Integrations owned by this manager. Presence
+    /// Return the configured integration ids owned by this manager. Presence
     /// of an adapter is deliberately separate from Provider Discovery and
     /// account authentication.
-    pub fn registered_providers(&self) -> Vec<aifuel_core::ProviderKey> {
+    pub fn registered_integrations(&self) -> Vec<aifuel_core::IntegrationId> {
         self.inner
             .adapters
             .iter()
-            .map(|slot| slot.handle.provider())
+            .map(|slot| slot.handle.integration())
             .collect()
     }
 
+    /// Resolve a caller's selection to the canonical registered integration
+    /// id. An exact `IntegrationId` match wins; a bare `ProviderId` resolves
+    /// only when exactly one registered integration uses that provider.
+    pub fn resolve_integration(
+        &self,
+        selection: &aifuel_core::IntegrationId,
+    ) -> Result<aifuel_core::IntegrationId, RunManagementError> {
+        aifuel_core::resolve_integration(
+            selection,
+            self.inner
+                .adapters
+                .iter()
+                .map(|slot| (slot.handle.integration(), slot.handle.provider())),
+        )
+        .map_err(helpers::map_validation_error)
+    }
+
     /// List compiled Agent Integrations and their independently reported
-    /// native presence, version, and capability evidence.
+    /// native presence, version, and capability evidence. `provider` filters
+    /// by upstream provider id; `integration` filters by the configured
+    /// integration id.
     pub fn list_agents(
         &self,
-        provider_filter: Option<aifuel_core::ProviderKey>,
+        provider: Option<aifuel_core::ProviderId>,
+        integration: Option<aifuel_core::IntegrationId>,
     ) -> Vec<aifuel_core::AgentIntegrationInfo> {
         self.inner
             .adapters
             .iter()
             .filter(|slot| {
-                provider_filter.is_none_or(|provider| slot.handle.provider() == provider)
+                provider
+                    .as_ref()
+                    .is_none_or(|provider| slot.handle.provider() == *provider)
+                    && integration
+                        .as_ref()
+                        .is_none_or(|integration| slot.handle.integration() == *integration)
             })
             .map(|slot| slot.handle.agent_info())
             .collect()
@@ -229,10 +245,11 @@ impl RunManager {
 
     /// Resolve and validate a request without starting an Agent Run.
     pub fn resolve_run(&self, request: &RunRequest) -> Result<ResolvedRun, RunManagementError> {
-        let resolved = self.resolve_request(request)?;
+        let (resolved, slot) = self.resolve_request_with_adapter(request)?;
         Ok(ResolvedRun {
             schema_version: RUN_MANAGEMENT_SCHEMA_VERSION,
-            provider: resolved.provider,
+            integration: resolved.integration,
+            provider: slot.handle.provider(),
             requested_model: resolved.model,
             requested_effort: resolved.effort,
             external_tools: resolved.external_tools,
@@ -332,7 +349,8 @@ impl RunManager {
         }
 
         let run_id = self.next_run_id();
-        let provider = request.provider;
+        let integration = request.integration.clone();
+        let provider = slot.handle.provider();
         let run_store = self
             .inner
             .run_store
@@ -347,6 +365,7 @@ impl RunManager {
             .retain_content;
         let record = Arc::new(RunRecord::new(
             run_id.clone(),
+            provider.clone(),
             &request,
             deadline,
             workspace_lock,
@@ -364,6 +383,7 @@ impl RunManager {
             && let Err(error) = store.record_started(crate::run_store::StartedRun {
                 run_id: run_id.clone(),
                 provider,
+                integration: integration.clone(),
                 created_at: record.created_at,
                 working_directory: request
                     .working_directory
@@ -392,7 +412,7 @@ impl RunManager {
             record: Arc::downgrade(&record),
         }));
         let worker = thread::Builder::new()
-            .name(format!("aifuel-run-{provider}"))
+            .name(format!("aifuel-run-{integration}"))
             .spawn(move || {
                 run_worker(
                     worker_inner,
@@ -423,6 +443,7 @@ impl RunManager {
                         exit_code: None,
                         closed_reason: Some("spawn_failed".to_owned()),
                         reported_account: None,
+                        usage: None,
                         content_available: false,
                         output_bytes: 0,
                         diagnostics_bytes: 0,

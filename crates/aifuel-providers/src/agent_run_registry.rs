@@ -17,18 +17,21 @@ pub fn agent_run_adapters() -> &'static [&'static dyn AgentExecutionAdapter] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aifuel_core::{AgentCapability, CapabilityState, ProviderKey};
+    use aifuel_core::{AgentCapability, CapabilityState, IntegrationId, ProviderId, ProviderKey};
 
     #[test]
     fn execution_registration_is_independent_of_monitoring_catalog_membership() {
-        let providers = agent_run_adapters()
+        // Every built-in CLI adapter registers one integration whose id
+        // equals its catalog provider id and whose upstream provider is the
+        // same catalog id.
+        let registered = agent_run_adapters()
             .iter()
-            .map(|adapter| adapter.provider())
+            .map(|adapter| (adapter.integration(), adapter.provider()))
             .collect::<Vec<_>>();
 
         assert_eq!(
-            providers,
-            vec![
+            registered,
+            [
                 ProviderKey::Claude,
                 ProviderKey::Codex,
                 ProviderKey::Copilot,
@@ -36,6 +39,9 @@ mod tests {
                 ProviderKey::Antigravity,
                 ProviderKey::Devin,
             ]
+            .into_iter()
+            .map(|key| (IntegrationId::from(key), ProviderId::from(key)))
+            .collect::<Vec<_>>()
         );
     }
 
@@ -59,7 +65,7 @@ mod tests {
 
         let codex = agent_run_adapters()
             .iter()
-            .find(|adapter| adapter.provider() == ProviderKey::Codex)
+            .find(|adapter| adapter.provider() == ProviderId::from(ProviderKey::Codex))
             .expect("Codex is compiled");
         let declarations = codex.declared_agent_capabilities();
         assert_eq!(
@@ -77,7 +83,7 @@ mod tests {
 
         let antigravity = agent_run_adapters()
             .iter()
-            .find(|adapter| adapter.provider() == ProviderKey::Antigravity)
+            .find(|adapter| adapter.provider() == ProviderId::from(ProviderKey::Antigravity))
             .expect("Antigravity is compiled");
         assert_eq!(
             antigravity.declared_agent_capabilities()[&AgentCapability::ReadOnly].state,
@@ -136,7 +142,7 @@ mod tests {
         for (provider, install, login, check, documentation_url) in expected {
             let adapter = agent_run_adapters()
                 .iter()
-                .find(|adapter| adapter.provider() == provider)
+                .find(|adapter| adapter.provider() == ProviderId::from(provider))
                 .expect("every built-in provider is registered");
             let guidance = adapter
                 .setup_guidance()
