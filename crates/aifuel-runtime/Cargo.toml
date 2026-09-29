@@ -1,0 +1,16 @@
+[package]
+name = "aifuel-runtime"
+description = "Portable agent runtime facade: typed command dispatch over provider adapters and the durable session event log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aifuel-core = { path = "../aifuel-core", version = "0.1" }
+aifuel-app = { path = "../aifuel-app", version = "0.1" }
+aifuel-providers = { path = "../aifuel-providers", version = "0.1" }
+
+[dev-dependencies]
+serde_json.workspace = true
