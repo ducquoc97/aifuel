@@ -49,6 +49,9 @@ fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
         AccessMode::WorkspaceWrite => {
             args.extend(["--permission-mode".to_owned(), "accept-edits".to_owned()]);
         }
+        AccessMode::Full => {
+            args.extend(["--permission-mode".to_owned(), "dangerous".to_owned()]);
+        }
     }
     match request.output {
         OutputFormat::Text => {}

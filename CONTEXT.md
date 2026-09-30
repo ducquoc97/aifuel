@@ -60,6 +60,22 @@ _Avoid_: Single run, quota window
 One execution attempt through an Agent Integration within an Agent Session. Each run has its own requested model, execution context, and outcome.
 _Avoid_: Session, account usage
 
+**Host Application**:
+Any local process that embeds the agent runtime library and exposes it through its own transport: the AI Fuel CLI and dashboard, a desktop GUI, a stdio bridge consumer, or a future remote relay. The Host Application owns transport, authentication, and UI.
+_Avoid_: Client, frontend, server
+
+**Session Event Log**:
+The durable, per-session sequence of typed events persisted by the runtime, extending the existing per-user SQLite run store. It assigns each event a monotonic `seq` and powers replay for any consumer.
+_Avoid_: Event store in the event-sourcing sense, chat history table
+
+**Approval Request**:
+A typed, blocking question from a running agent delivered to the Host Application: tool permission, plan approval, free-form question, or MCP elicitation. It carries explicit options and is answered through the contract.
+_Avoid_: Prompt, dialog, notification
+
+**Checkpoint**:
+A hidden git ref recorded at the end of an Agent Run that mutates the workspace, enabling diff, restore, and PR flows per run.
+_Avoid_: Snapshot, backup, commit
+
 **Execution Availability**:
 An observation of readiness to attempt a selected model through an Agent Integration in a particular account, platform, version, authentication, and permission context. Readiness does not guarantee that the provider will accept the run.
 _Avoid_: Guaranteed execution, catalog availability

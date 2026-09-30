@@ -16,10 +16,14 @@ pub(crate) fn reject_unsupported(
     integration: &IntegrationId,
     request: &RunRequest,
 ) -> Result<(), AgentRunError> {
-    if request.access == AccessMode::WorkspaceWrite {
+    if matches!(
+        request.access,
+        AccessMode::WorkspaceWrite | AccessMode::Full
+    ) {
         return Err(AgentRunError::InvalidRequest(format!(
-            "{integration} cannot enforce workspace-write access; wire \
-             execution performs no provider-side tools"
+            "{integration} cannot enforce {} access; wire \
+             execution performs no provider-side tools",
+            request.access.as_str()
         )));
     }
     if request.external_tools.is_some() {

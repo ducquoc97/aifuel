@@ -42,6 +42,9 @@ fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
         aifuel_core::AccessMode::WorkspaceWrite => {
             args.extend(["--mode".to_owned(), "accept-edits".to_owned()]);
         }
+        aifuel_core::AccessMode::Full => {
+            args.push("--dangerously-skip-permissions".to_owned());
+        }
     }
     if let Some(session) = &request.resume {
         args.extend(["--conversation".to_owned(), session.clone()]);

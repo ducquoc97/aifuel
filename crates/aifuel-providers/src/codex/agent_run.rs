@@ -58,6 +58,7 @@ fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
         match request.access {
             aifuel_core::AccessMode::ReadOnly => "read-only".to_owned(),
             aifuel_core::AccessMode::WorkspaceWrite => "workspace-write".to_owned(),
+            aifuel_core::AccessMode::Full => "danger-full-access".to_owned(),
         },
     ]);
     if request.output != OutputFormat::Text {

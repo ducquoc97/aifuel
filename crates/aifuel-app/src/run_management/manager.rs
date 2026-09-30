@@ -288,7 +288,10 @@ impl RunManager {
                     .ok_or_else(|| RunManagementError::invalid_request("run timeout is too large"))
             })
             .transpose()?;
-        let workspace_lock = if request.access == aifuel_core::AccessMode::WorkspaceWrite {
+        // Every workspace-mutating access mode serializes on the directory
+        // lock: `workspace-write` and `full` alike; only read-only runs
+        // share the directory.
+        let workspace_lock = if request.access != aifuel_core::AccessMode::ReadOnly {
             request
                 .working_directory
                 .as_deref()

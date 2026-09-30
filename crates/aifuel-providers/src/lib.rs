@@ -13,6 +13,7 @@ mod agent_run_registry;
 mod antigravity;
 mod catalog;
 mod claude;
+mod cli_adapter;
 mod code_assist;
 mod codex;
 mod copilot;
@@ -30,6 +31,9 @@ mod usage_helpers;
 mod wire;
 
 pub use agent_run_registry::agent_run_adapters;
+pub use cli_adapter::{
+    AdapterDiscovery, CliAdapter, cli_fallback_adapters, integration_summary, quota_summary,
+};
 pub use credentials::{
     CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore, CredentialStoreError,
     ManagedCredential, OAuthTokens, ResolvedAuth, env_override, valid_env_var_name,

@@ -257,3 +257,35 @@ fn workspace_write_runs_conflict_across_manager_instances() {
     first.shutdown();
     second.shutdown();
 }
+
+#[test]
+fn full_access_runs_take_the_workspace_lock_too() {
+    // `full` mutates the workspace like `workspace-write`, so overlapping
+    // full-access runs serialize on the same directory lock.
+    let workspace = std::env::temp_dir();
+    let wait = Arc::new(AtomicBool::new(true));
+    let first = RunManager::new(vec![Arc::new(ProbeAdapter {
+        provider: ProviderKey::Claude,
+        wait: Arc::clone(&wait),
+    })]);
+    let second = RunManager::new(vec![Arc::new(ProbeAdapter {
+        provider: ProviderKey::Claude,
+        wait: Arc::clone(&wait),
+    })]);
+    let mut request = request();
+    request.access = AccessMode::Full;
+    request.working_directory = Some(workspace);
+    let started = first
+        .start_run(request.clone())
+        .expect("first full-access run starts");
+    let error = second
+        .start_run(request)
+        .expect_err("overlapping full-access runs must conflict");
+    assert_eq!(error.code, RunManagementErrorCode::WriteConflict);
+    first
+        .cancel_run(&started.run_id)
+        .expect("first run cancels");
+    wait.store(false, Ordering::Release);
+    first.shutdown();
+    second.shutdown();
+}
