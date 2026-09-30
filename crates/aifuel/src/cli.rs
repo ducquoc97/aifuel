@@ -22,6 +22,9 @@ where
     if args.first().map(String::as_str) == Some("approve") {
         return run_local_approval(&args[1..]);
     }
+    if args.first().map(String::as_str) == Some("runtime") {
+        return run_runtime_bridge(&args[1..]);
+    }
     if args.first().map(String::as_str) == Some("mcp") {
         return match args.get(1).map(String::as_str) {
             None => {
@@ -118,6 +121,26 @@ where
     })
 }
 
+/// `aifuel runtime`: serve the agent runtime as JSON-RPC over stdin and
+/// stdout for Host Applications embedding the runtime out-of-process.
+/// stdout is protocol-owned; every diagnostic goes to stderr.
+fn run_runtime_bridge(args: &[String]) -> Result<u8, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("Usage: aifuel runtime");
+        println!(
+            "Serves one agent runtime as newline-delimited JSON-RPC over standard input and output."
+        );
+        return Ok(0);
+    }
+    if !args.is_empty() {
+        return Err("Usage: aifuel runtime".to_owned());
+    }
+    let runtime = aifuel::agent_runtime()?;
+    let stdin = std::io::stdin();
+    aifuel_runtime::bridge::serve_stdio(&runtime, stdin.lock(), std::io::stdout())?;
+    Ok(0)
+}
+
 fn run_local_approval(args: &[String]) -> Result<u8, String> {
     #[cfg(any(unix, windows))]
     {
@@ -179,6 +202,7 @@ fn print_help() {
     println!("       aifuel profile list|save|remove");
     println!("       aifuel model list|refresh [--provider PROVIDER_ID] [--json]");
     println!("       aifuel approve --run RUN_ID --input INPUT_ID --decision DECISION");
+    println!("       aifuel runtime");
     println!("       aifuel mcp");
     println!("       aifuel mcp execution");
     println!("       aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...]");
@@ -187,6 +211,7 @@ fn print_help() {
     println!();
     println!("The default command collects live status for discovered providers.");
     println!("run delegates one explicit prompt to a verified provider CLI.");
+    println!("runtime serves the agent runtime contract over standard input and output.");
     println!("mcp serves read-only status over standard input and output.");
     println!("mcp execution manages Agent Runs owned by its standard-input connection.");
     println!("mcp gateway serves selected external MCP tools over standard input and output.");
