@@ -60,80 +60,40 @@ pub trait RuntimeAdapter: AgentAdapter {
     }
 }
 
-impl RuntimeAdapter for CliAdapter {
-    fn integration(&self) -> IntegrationId {
-        CliAdapter::integration(self)
-    }
+/// The forwarding body every concrete adapter shares: each method calls
+/// the adapter's own inherent operation of the same name, and
+/// `quota_observation` keeps the trait default (the CLI adapters declare
+/// no Monitoring Collection Contract).
+macro_rules! runtime_adapter {
+    ($adapter:ty) => {
+        impl RuntimeAdapter for $adapter {
+            fn integration(&self) -> IntegrationId {
+                <$adapter>::integration(self)
+            }
 
-    fn provider(&self) -> ProviderId {
-        CliAdapter::provider(self)
-    }
+            fn provider(&self) -> ProviderId {
+                <$adapter>::provider(self)
+            }
 
-    fn agent_info(&self) -> AgentIntegrationInfo {
-        CliAdapter::agent_info(self).clone()
-    }
+            fn agent_info(&self) -> AgentIntegrationInfo {
+                <$adapter>::agent_info(self).clone()
+            }
 
-    fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
-        CliAdapter::resume_cursor(self, session_id)
-    }
+            fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
+                <$adapter>::resume_cursor(self, session_id)
+            }
 
-    fn set_selection(
-        &self,
-        handle: &AgentSessionHandle,
-        selection: ModelSelection,
-    ) -> Result<ModelDescriptor, AgentRuntimeError> {
-        CliAdapter::set_selection(self, handle, selection)
-    }
+            fn set_selection(
+                &self,
+                handle: &AgentSessionHandle,
+                selection: ModelSelection,
+            ) -> Result<ModelDescriptor, AgentRuntimeError> {
+                <$adapter>::set_selection(self, handle, selection)
+            }
+        }
+    };
 }
 
-impl RuntimeAdapter for CodexAdapter {
-    fn integration(&self) -> IntegrationId {
-        CodexAdapter::integration(self)
-    }
-
-    fn provider(&self) -> ProviderId {
-        CodexAdapter::provider(self)
-    }
-
-    fn agent_info(&self) -> AgentIntegrationInfo {
-        CodexAdapter::agent_info(self).clone()
-    }
-
-    fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
-        CodexAdapter::resume_cursor(self, session_id)
-    }
-
-    fn set_selection(
-        &self,
-        handle: &AgentSessionHandle,
-        selection: ModelSelection,
-    ) -> Result<ModelDescriptor, AgentRuntimeError> {
-        CodexAdapter::set_selection(self, handle, selection)
-    }
-}
-
-impl RuntimeAdapter for ClaudeAdapter {
-    fn integration(&self) -> IntegrationId {
-        ClaudeAdapter::integration(self)
-    }
-
-    fn provider(&self) -> ProviderId {
-        ClaudeAdapter::provider(self)
-    }
-
-    fn agent_info(&self) -> AgentIntegrationInfo {
-        ClaudeAdapter::agent_info(self).clone()
-    }
-
-    fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
-        ClaudeAdapter::resume_cursor(self, session_id)
-    }
-
-    fn set_selection(
-        &self,
-        handle: &AgentSessionHandle,
-        selection: ModelSelection,
-    ) -> Result<ModelDescriptor, AgentRuntimeError> {
-        ClaudeAdapter::set_selection(self, handle, selection)
-    }
-}
+runtime_adapter!(CliAdapter);
+runtime_adapter!(CodexAdapter);
+runtime_adapter!(ClaudeAdapter);
