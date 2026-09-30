@@ -16,7 +16,7 @@
 mod capabilities;
 mod http;
 mod openai_chat;
-mod sse;
+pub(crate) mod sse;
 mod stream;
 
 use crate::{CredentialStore, ResolvedAuth};

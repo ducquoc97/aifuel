@@ -73,8 +73,10 @@ pub fn integration_registry() -> Result<aifuel_providers::IntegrationRegistry, S
 
 /// Build the owned execution adapter set from the runtime registry: compiled
 /// CLI adapters behind their `Cli` descriptors and wire adapters behind
-/// `Http` descriptors. A `Cli` descriptor with no compiled adapter is a
-/// registry bug and fails loudly.
+/// `Http` descriptors. A `Cli` descriptor naming an adapter outside the
+/// compiled set is served by the agent runtime (`aifuel runtime`) instead -
+/// it stays a valid registry entry for listing and auth, and simply has no
+/// adapter on this execution surface.
 fn runtime_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
     let registry = integration_registry()?;
     let credentials = aifuel_providers::CredentialStore::new(aifuel_config_dir()?);
@@ -83,12 +85,15 @@ fn runtime_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
     for descriptor in registry.list() {
         match &descriptor.integration.execution {
             ExecutionConfig::Cli { adapter } => {
-                let compiled = compiled
+                let Some(compiled) = compiled
                     .iter()
                     .find(|candidate| candidate.integration().as_str() == adapter.as_str())
-                    .ok_or_else(|| {
-                        format!("no compiled CLI adapter is registered for {adapter}")
-                    })?;
+                else {
+                    eprintln!(
+                        "aifuel: {adapter} is served by the agent runtime, not the compiled run surface"
+                    );
+                    continue;
+                };
                 adapters.push(Arc::new(StaticAdapter(*compiled)));
             }
             ExecutionConfig::Http { .. } => {
