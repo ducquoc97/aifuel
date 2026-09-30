@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// One unit of user input sent to an Agent Session as one Agent Run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserInput {
     pub text: String,
     /// Host-resolved local paths. The runtime never fetches URLs on a host's
@@ -15,14 +15,14 @@ pub struct UserInput {
 }
 
 /// A host-resolved local file attached to a [`UserInput`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attachment {
     pub kind: AttachmentKind,
     pub path: PathBuf,
 }
 
 /// The attachment kinds the contract can carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttachmentKind {
     Image,

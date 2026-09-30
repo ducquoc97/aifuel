@@ -8,14 +8,14 @@ use crate::{
     AccessMode, ApprovalDecision, CheckpointId, CommandId, IntegrationId, ModelSelection,
     RequestId, RunId, Seq, SessionId, UserInput,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// One command submitted by a Host Application to the runtime.
 ///
 /// The `type` tag spellings are the stable contract surface; consumers must
 /// not silently rename them.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AgentCommand {
     /// Create an Agent Session bound to one Provider Integration.
