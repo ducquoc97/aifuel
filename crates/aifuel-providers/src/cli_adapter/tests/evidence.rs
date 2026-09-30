@@ -24,6 +24,7 @@ fn capabilities_follow_declared_evidence() {
             effort: false,
             images: false,
             todos: false,
+            external_tools: false,
         }
     );
 

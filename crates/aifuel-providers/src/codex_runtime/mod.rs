@@ -19,6 +19,10 @@
 //!   layer, never silently approving.
 //! - `effort` and `images` map onto native `turn/start` fields (`effort`,
 //!   `localImage` inputs); `todos` maps `turn/plan/updated`.
+//! - `external_tools` injects the filtered AI Fuel Gateway as the
+//!   thread's only `mcp_servers` entry and gates setup on
+//!   `mcpServerStatus/list` reporting exactly the selected tools; a
+//!   session never runs on a partial or wider tool set.
 //! - `checkpoints` stays `false`: the runtime owns the git-ref feature.
 //! - Quota stays `None`: token accounting feeds `run.completed` usage
 //!   only; Quota Pool observations come from the monitoring contract,
@@ -244,7 +248,9 @@ pub fn codex_adapter(context: &AdapterDiscovery) -> CodexAdapter {
 /// The honest declarations this adapter can surface. Sessions stream
 /// message deltas, resume provider threads, answer every supported
 /// approval kind, and report todos and effort the protocol carries.
-/// Checkpoints stay unimplemented: the runtime owns that feature.
+/// External tools are enforced by the managed Gateway MCP server the
+/// handshake registers and polls ready. Checkpoints stay unimplemented:
+/// the runtime owns that feature.
 pub const CAPABILITIES: AdapterCapabilities = AdapterCapabilities {
     streaming: true,
     resume: true,
@@ -253,6 +259,7 @@ pub const CAPABILITIES: AdapterCapabilities = AdapterCapabilities {
     effort: true,
     images: true,
     todos: true,
+    external_tools: true,
 };
 
 /// The access spellings `turn/start` carries per turn: the Codex

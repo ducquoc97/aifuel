@@ -284,6 +284,7 @@ pub const CAPABILITIES: AdapterCapabilities = AdapterCapabilities {
     effort: false,
     images: true,
     todos: true,
+    external_tools: false,
 };
 
 /// The declared execution evidence `list_agents` reports for this

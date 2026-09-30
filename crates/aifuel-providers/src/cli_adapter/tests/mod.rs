@@ -161,6 +161,34 @@ impl AgentExecutionAdapter for FakeExecution {
         self.declared.clone()
     }
 
+    fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
+        if request.integration != self.integration() {
+            return Err(AgentRunError::UnsupportedIntegration(
+                request.integration.clone(),
+            ));
+        }
+        if request.prompt.trim().is_empty() {
+            return Err(AgentRunError::InvalidRequest(
+                "prompt must not be empty".to_owned(),
+            ));
+        }
+        // Mirror the production rule: an exact external tool selection
+        // rides on the request, and only a declared `ExternalMcpTools`
+        // executor can enforce it.
+        if request.external_tools.is_some()
+            && self
+                .declared
+                .get(&AgentCapability::ExternalMcpTools)
+                .map(|evidence| evidence.state)
+                != Some(CapabilityState::Supported)
+        {
+            return Err(AgentRunError::InvalidRequest(
+                "the fake provider cannot enforce an exact external tool selection".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     fn agent_info(&self) -> AgentIntegrationInfo {
         let declared: Vec<_> = self
             .declared
@@ -306,6 +334,7 @@ pub(super) fn options(provider: ProviderKey, access: AccessMode) -> StartOptions
         },
         access,
         resume_cursor: None,
+        external_tools: Vec::new(),
     }
 }
 

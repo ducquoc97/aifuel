@@ -257,6 +257,7 @@ pub const CAPABILITIES: AdapterCapabilities = AdapterCapabilities {
     effort: true,
     images: false,
     todos: false,
+    external_tools: false,
 };
 
 /// The access spellings `--permission-mode` carries per session. The

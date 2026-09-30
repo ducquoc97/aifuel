@@ -206,7 +206,14 @@ pub(super) fn permission_request(
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     let tool_call = params.get("toolCall").cloned().unwrap_or(Value::Null);
     let options = parse_permission_options(params.get("options").unwrap_or(&Value::Null));
-    let request = approval_request(&tool_call, &options, access);
+    let mut request = approval_request(&tool_call, &options, access);
+    // The JSON-RPC frame is the provider-native ask: keep its method and
+    // parameters so a host can rebuild and answer the request directly.
+    request.native_method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    request.parameters = Some(params);
     (options, request)
 }
 
@@ -246,6 +253,10 @@ pub(super) fn approval_request(
         detail,
         options: approvals::permission_options(access, options.accept_option.is_none()),
         requires_confirm: false,
+        interaction_kind: None,
+        questions: Vec::new(),
+        parameters: None,
+        native_method: None,
     }
 }
 

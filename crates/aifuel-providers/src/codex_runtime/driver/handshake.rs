@@ -47,6 +47,10 @@ pub(super) async fn handshake(
         .as_ref()
         .map_or(Value::Null, |model| json!(model));
     let sandbox = thread_sandbox(setup.access);
+    // A selected tool set spawns the filtered AI Fuel Gateway MCP server
+    // through the thread config; empty selections register no server.
+    let config = crate::codex::app_server::mcp_server_config(&setup.external_tools)
+        .map_err(|error| error.to_string())?;
     let request = match &setup.resume_cursor {
         Some(thread_id) => json!({
             "method": "thread/resume",
@@ -56,7 +60,7 @@ pub(super) async fn handshake(
                 "model": model,
                 "approvalPolicy": APPROVAL_POLICY,
                 "sandbox": sandbox,
-                "config": {"mcp_servers": {}},
+                "config": config,
                 "excludeTurns": true,
             }
         }),
@@ -68,7 +72,7 @@ pub(super) async fn handshake(
                 "ephemeral": false,
                 "approvalPolicy": APPROVAL_POLICY,
                 "sandbox": sandbox,
-                "config": {"mcp_servers": {}},
+                "config": config,
             }
         }),
     };
@@ -80,10 +84,57 @@ pub(super) async fn handshake(
     .await
     .map_err(|error| error.to_string())?;
     let response = wait_response(stdin, messages, 1, deadline).await?;
-    response["result"]["thread"]["id"]
+    let thread_id = response["result"]["thread"]["id"]
         .as_str()
         .map(str::to_owned)
-        .ok_or_else(|| "the app-server did not report a thread id".to_owned())
+        .ok_or_else(|| "the app-server did not report a thread id".to_owned())?;
+    if !setup.external_tools.is_empty() {
+        wait_for_mcp_tools(stdin, messages, &thread_id, &setup.external_tools, deadline).await?;
+    }
+    Ok(thread_id)
+}
+
+/// Poll `mcpServerStatus/list` until the managed Gateway server reports
+/// exactly the selected tools, the same readiness gate the one-shot run
+/// path applies. A session that would run without its declared external
+/// tools fails the handshake instead of silently starting without them.
+async fn wait_for_mcp_tools(
+    stdin: &mut Box<dyn AsyncWrite + Unpin + Send>,
+    messages: &mut UnboundedReceiver<ServerMail>,
+    thread_id: &str,
+    expected_tools: &[String],
+    deadline: Instant,
+) -> Result<(), String> {
+    // Ids 0 and 1 ran the handshake; 2 belongs to the first post-setup
+    // request, matching the run path's numbering.
+    let mut request_id = 3_u64;
+    loop {
+        if Instant::now() >= deadline {
+            return Err(
+                "selected Codex MCP tools did not become ready within the 10-second setup limit"
+                    .to_owned(),
+            );
+        }
+        send(
+            stdin,
+            json!({
+                "id": request_id,
+                "method": "mcpServerStatus/list",
+                "params": {"threadId": thread_id, "detail": "full", "limit": 100}
+            }),
+            Some(deadline),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let response = wait_response(stdin, messages, request_id, deadline).await?;
+        request_id = request_id.saturating_add(1);
+        match crate::codex::app_server::mcp_tools_are_ready(&response, expected_tools) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 /// Read until the response for request `id` arrives or the deadline

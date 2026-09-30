@@ -118,6 +118,8 @@ impl AgentAdapter for CliAdapter {
         }
         // Validate access enforcement up front with the same request shape
         // a run carries; an unenforceable session fails before it exists.
+        // The probe carries the exact external tool selection so an
+        // execution adapter that cannot enforce it rejects `start`.
         let probe = RunRequest {
             integration: self.integration(),
             model: (!options.selection.model.is_empty()).then(|| options.selection.model.clone()),
@@ -125,7 +127,8 @@ impl AgentAdapter for CliAdapter {
                 .selection
                 .effort
                 .map(|effort| effort.as_str().to_owned()),
-            external_tools: None,
+            external_tools: (!options.external_tools.is_empty())
+                .then(|| options.external_tools.clone()),
             account: None,
             prompt: "capability check".to_owned(),
             output: OutputFormat::Text,
@@ -148,6 +151,7 @@ impl AgentAdapter for CliAdapter {
             options.selection,
             options.access,
             resume_cursor.clone(),
+            options.external_tools,
         );
         session.emit(AgentEventKind::SessionCreated {
             integration_id: integration.id.clone(),

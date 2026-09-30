@@ -3,7 +3,7 @@
 //! transport so the assertions see the exact wire exchange.
 
 use super::*;
-use aifuel_core::AgentAdapter;
+use aifuel_core::{AgentAdapter, ReceiptCode};
 
 #[test]
 fn start_runs_the_handshake_and_reports_the_provider_session() {
@@ -56,6 +56,24 @@ fn start_runs_the_handshake_and_reports_the_provider_session() {
         AgentEventKind::SessionClosed { .. }
     ));
     script.join().expect("the agent script completes");
+}
+
+#[test]
+fn external_tools_are_rejected_before_the_agent_is_spawned() {
+    // ACP offers no way to restrict the agent's tool set, so a non-empty
+    // selection fails `start` rather than silently running on a wider
+    // set than asked.
+    let (adapter, agents) = duplex_adapter();
+    let mut options = options(AccessMode::WorkspaceWrite);
+    options.external_tools = vec!["docs__search".to_owned()];
+    let error = adapter
+        .start(&integration(), options)
+        .expect_err("a session cannot promise tools it cannot enforce");
+    assert_eq!(error.code, ReceiptCode::Unsupported);
+    assert!(
+        agents.try_recv().is_err(),
+        "no agent transport was requested for a rejected selection"
+    );
 }
 
 #[test]

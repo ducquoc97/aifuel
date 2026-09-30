@@ -116,6 +116,25 @@ fn effort_is_rejected_because_opencode_exposes_no_effort_ladder() {
 }
 
 #[test]
+fn external_tools_are_rejected_before_a_serve_is_spawned() {
+    // The session API offers no way to restrict the server's tool set,
+    // so a non-empty selection fails `start` rather than silently
+    // running on a wider set than asked.
+    let fake = FakeServe::start();
+    let adapter = adapter_with(&fake);
+    let mut options = options(AccessMode::WorkspaceWrite);
+    options.external_tools = vec!["docs__search".to_owned()];
+    let error = adapter
+        .start(&integration(), options)
+        .expect_err("a session cannot promise tools it cannot enforce");
+    assert_eq!(error.code, ReceiptCode::Unsupported);
+    assert!(
+        fake.requests().is_empty(),
+        "no request reached the server for a rejected selection"
+    );
+}
+
+#[test]
 fn stop_emits_session_closed() {
     let fake = FakeServe::start();
     let adapter = adapter_with(&fake);

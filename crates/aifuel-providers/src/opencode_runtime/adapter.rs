@@ -132,6 +132,14 @@ impl AgentAdapter for OpenCodeAdapter {
         // Resolve before spawn so a malformed `provider/model` spelling
         // or an unselectable effort fails before any process exists.
         self.resolve(&options.selection)?;
+        // The session API offers no way to restrict the server's tool
+        // set, so a non-empty selection fails before spawn rather than
+        // silently running wider than asked.
+        if !options.external_tools.is_empty() {
+            return Err(AgentRuntimeError::unsupported(
+                "the OpenCode session API adapter cannot enforce an exact external tool selection",
+            ));
+        }
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let session_id = SessionId::new(format!("opencode-session-{}-{id}", std::process::id()));

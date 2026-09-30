@@ -105,6 +105,14 @@ impl AgentAdapter for AcpAdapter {
         // any process exists. An unadvertised model still resolves: the
         // session's advertised selector validates it at setup time.
         self.resolve(&options.selection)?;
+        // The protocol offers no way to restrict the agent's tool set,
+        // so a non-empty selection fails before spawn rather than
+        // silently running wider than asked.
+        if !options.external_tools.is_empty() {
+            return Err(AgentRuntimeError::unsupported(
+                "the ACP adapter cannot enforce an exact external tool selection",
+            ));
+        }
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let session_id = SessionId::new(format!("acp-session-{}-{id}", std::process::id()));

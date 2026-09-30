@@ -79,6 +79,10 @@ pub(crate) fn approval_request(
             detail,
             options: Vec::new(),
             requires_confirm: false,
+            interaction_kind: Some(request.kind),
+            questions: request.questions.clone(),
+            parameters: Some(request.parameters.clone()),
+            native_method: Some(request.method.clone()),
         },
         AgentInteractionKind::McpElicitation => ApprovalRequest {
             kind: ApprovalKind::McpElicitation,
@@ -86,6 +90,10 @@ pub(crate) fn approval_request(
             detail,
             options: Vec::new(),
             requires_confirm: false,
+            interaction_kind: Some(request.kind),
+            questions: request.questions.clone(),
+            parameters: Some(request.parameters.clone()),
+            native_method: Some(request.method.clone()),
         },
         AgentInteractionKind::CommandApproval | AgentInteractionKind::FileChangeApproval => {
             ApprovalRequest {
@@ -94,6 +102,10 @@ pub(crate) fn approval_request(
                 detail,
                 options: permission_options(access, request.requires_expanded_access),
                 requires_confirm: false,
+                interaction_kind: Some(request.kind),
+                questions: request.questions.clone(),
+                parameters: Some(request.parameters.clone()),
+                native_method: Some(request.method.clone()),
             }
         }
         AgentInteractionKind::PermissionProfileApproval => ApprovalRequest {
@@ -102,6 +114,10 @@ pub(crate) fn approval_request(
             detail,
             options: decline_only_options(),
             requires_confirm: false,
+            interaction_kind: Some(request.kind),
+            questions: request.questions.clone(),
+            parameters: Some(request.parameters.clone()),
+            native_method: Some(request.method.clone()),
         },
     }
 }
@@ -165,24 +181,47 @@ pub(crate) fn decision_response(
             })
         }
         AgentInteractionKind::OrdinaryInput | AgentInteractionKind::McpElicitation => {
-            let ApprovalDecision::Text(text) = decision else {
-                return Err(invalid_state(
-                    "input requests take free text, not a declared option",
-                ));
-            };
-            let question = match question_ids {
-                [] => "answer".to_owned(),
-                [only] => only.clone(),
-                _ => {
-                    return Err(unsupported(
-                        "a free-text decision cannot answer a multi-question request",
-                    ));
+            match decision {
+                ApprovalDecision::Text(text) => {
+                    let question = match question_ids {
+                        [] => "answer".to_owned(),
+                        [only] => only.clone(),
+                        _ => {
+                            return Err(unsupported(
+                                "a free-text decision cannot answer a multi-question request",
+                            ));
+                        }
+                    };
+                    Ok(AgentInteractionResponse::Answers(BTreeMap::from([(
+                        question,
+                        vec![text.clone()],
+                    )])))
                 }
-            };
-            Ok(AgentInteractionResponse::Answers(BTreeMap::from([(
-                question,
-                vec![text.clone()],
-            )])))
+                ApprovalDecision::Answers(answers) => {
+                    // Answers bind to the questions the request declared;
+                    // an answer for a question it never asked is rejected
+                    // rather than forwarded to the provider.
+                    if let Some(unasked) = answers
+                        .keys()
+                        .find(|id| !question_ids.is_empty() && !question_ids.contains(id))
+                    {
+                        return Err(invalid_state(format!(
+                            "{unasked:?} was not asked on this request"
+                        )));
+                    }
+                    Ok(AgentInteractionResponse::Answers(answers.clone()))
+                }
+                ApprovalDecision::Elicitation(content)
+                    if kind == AgentInteractionKind::McpElicitation =>
+                {
+                    // The MCP elicitation content returns to the provider
+                    // verbatim, the shape its `requestedSchema` asked for.
+                    Ok(AgentInteractionResponse::Elicitation(content.clone()))
+                }
+                _ => Err(invalid_state(
+                    "input requests take free text, answers, or elicitation content",
+                )),
+            }
         }
     }
 }

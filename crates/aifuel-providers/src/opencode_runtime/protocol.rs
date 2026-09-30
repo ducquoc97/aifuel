@@ -199,6 +199,12 @@ pub(super) fn permission_request(
         detail,
         options: permission_options(access),
         requires_confirm: false,
+        interaction_kind: None,
+        questions: Vec::new(),
+        // The SSE properties are the provider-native ask: keep them plus
+        // the event type so a host can rebuild the permission payload.
+        parameters: Some(properties.clone()),
+        native_method: Some(EV_PERMISSION_UPDATED.to_owned()),
     };
     Some((permission_id, request))
 }

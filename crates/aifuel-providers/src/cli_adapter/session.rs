@@ -44,6 +44,10 @@ pub(super) struct SessionState {
     /// reconcile seeded. Used as `RunRequest::resume` where the adapter
     /// declares `resume`.
     pub resume_cursor: Option<String>,
+    /// The exact external tool selection the session was opened with,
+    /// forwarded to the wrapped execution adapter on every run so its
+    /// `validate` - not this session - owns the enforceability ruling.
+    pub external_tools: Vec<String>,
     pub active_run: Option<ActiveRun>,
 }
 
@@ -63,6 +67,7 @@ impl CliSession {
         selection: ModelSelection,
         access: AccessMode,
         resume_cursor: Option<String>,
+        external_tools: Vec<String>,
     ) -> Arc<Self> {
         let (emit, events) = mpsc::channel();
         Arc::new(Self {
@@ -75,6 +80,7 @@ impl CliSession {
                 closed: false,
                 selection,
                 resume_cursor,
+                external_tools,
                 active_run: None,
             }),
             next_id: AtomicU64::new(0),
@@ -141,6 +147,7 @@ impl CliSession {
             ));
         }
         let selection = state.selection.clone();
+        let external_tools = state.external_tools.clone();
         let run_id = RunId::new(format!(
             "run-{}-{}",
             std::process::id(),
@@ -160,7 +167,7 @@ impl CliSession {
             integration: self.integration.clone(),
             model: (!selection.model.is_empty()).then(|| selection.model.clone()),
             effort: selection.effort.map(|effort| effort.as_str().to_owned()),
-            external_tools: None,
+            external_tools: (!external_tools.is_empty()).then_some(external_tools),
             account: None,
             prompt: input.text,
             // Structured output is requested only where declared: it is the
