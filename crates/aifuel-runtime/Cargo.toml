@@ -11,6 +11,5 @@ repository.workspace = true
 aifuel-core = { path = "../aifuel-core", version = "0.1" }
 aifuel-app = { path = "../aifuel-app", version = "0.1" }
 aifuel-providers = { path = "../aifuel-providers", version = "0.1" }
-
-[dev-dependencies]
+serde.workspace = true
 serde_json.workspace = true

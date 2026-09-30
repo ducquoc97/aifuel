@@ -26,8 +26,8 @@ mod harness;
 pub use execution::{ExecScript, ScriptedExecution};
 pub use fake::{FakeAdapter, FakeScript};
 pub use harness::{
-    collect_run, collect_until, create, created_session, is_completed, next_id, receipt_code,
-    receipt_seq, receipt_snapshot, run_start, selection, subscribe,
+    collect_run, collect_until, consumer, create, created_session, is_completed, next_id,
+    receipt_code, receipt_seq, receipt_snapshot, run_start, selection, subscribe,
 };
 
 /// The Integration Identity the test adapter serves.

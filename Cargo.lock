@@ -82,6 +82,7 @@ dependencies = [
  "aifuel-app",
  "aifuel-core",
  "aifuel-providers",
+ "serde",
  "serde_json",
 ]
 

@@ -32,11 +32,11 @@ pub trait RuntimeAdapter: AgentAdapter {
     /// adapter-side; the facade calls it at most once per summary.
     fn agent_info(&self) -> AgentIntegrationInfo;
 
-    /// The provider resume cursor a live session has reported, where the
-    /// adapter declares the `resume` capability. `None` means either the
-    /// adapter cannot resume or the session has not reported one yet; the
-    /// facade records only `Some` cursors at shutdown.
-    fn provider_session(&self, session_id: &SessionId) -> Option<String>;
+    /// The resume cursor a live session has reported, where the adapter
+    /// declares the `resume` capability. `None` means either the adapter
+    /// cannot resume or the session has not reported one yet; the facade
+    /// records only `Some` cursors at shutdown.
+    fn resume_cursor(&self, session_id: &SessionId) -> Option<String>;
 
     /// Apply an already-resolved `model.select` to a live session.
     /// Implementations keep their own readiness checks: a closed session or
@@ -61,8 +61,8 @@ impl RuntimeAdapter for CliAdapter {
         CliAdapter::agent_info(self).clone()
     }
 
-    fn provider_session(&self, session_id: &SessionId) -> Option<String> {
-        CliAdapter::provider_session(self, session_id)
+    fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
+        CliAdapter::resume_cursor(self, session_id)
     }
 
     fn set_selection(

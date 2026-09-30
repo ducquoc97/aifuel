@@ -10,13 +10,14 @@ use aifuel_core::{
     AgentCommand, AgentEventKind, ApprovalDecision, ReceiptCode, ReceiptOutcome, RunOutcome,
 };
 use support::{
-    ExecScript, cli_runtime, collect_run, collect_until, create, created_session, next_id,
-    run_start, subscribe, test_dir,
+    ExecScript, cli_runtime, collect_run, collect_until, consumer, create, created_session,
+    next_id, run_start, subscribe, test_dir,
 };
 
 #[test]
 fn cli_adapter_run_streams_deltas_and_persists_the_resume_cursor() {
     let dir = test_dir("e2e-run");
+    let host = consumer("host");
     let (store, runtime) = cli_runtime(
         &dir,
         vec![ExecScript::Succeed {
@@ -24,17 +25,17 @@ fn cli_adapter_run_streams_deltas_and_persists_the_resume_cursor() {
             session_id: Some("native-77"),
         }],
     );
-    let session_id = created_session(&runtime.dispatch(create(&dir, "scripted-model"), "host"));
-    let events = runtime.events("host").expect("consumer channel");
+    let session_id = created_session(&runtime.dispatch(create(&dir, "scripted-model"), &host));
+    let events = runtime.events(&host).expect("consumer channel");
     assert!(
         runtime
-            .dispatch(subscribe(&session_id, 0), "host")
+            .dispatch(subscribe(&session_id, 0), &host)
             .receipt
             .ok
     );
     assert!(
         runtime
-            .dispatch(run_start(&session_id, "hi"), "host")
+            .dispatch(run_start(&session_id, "hi"), &host)
             .receipt
             .ok
     );
@@ -82,16 +83,17 @@ fn cli_adapter_run_streams_deltas_and_persists_the_resume_cursor() {
 #[test]
 fn cli_adapter_approval_round_trips_through_the_real_handler() {
     let dir = test_dir("e2e-approval");
+    let host = consumer("host");
     let (_store, runtime) = cli_runtime(
         &dir,
         vec![ExecScript::Approve {
             description: "run the build",
         }],
     );
-    let session_id = created_session(&runtime.dispatch(create(&dir, "scripted-model"), "host"));
-    let events = runtime.events("host").expect("consumer channel");
-    runtime.dispatch(subscribe(&session_id, 0), "host");
-    runtime.dispatch(run_start(&session_id, "build"), "host");
+    let session_id = created_session(&runtime.dispatch(create(&dir, "scripted-model"), &host));
+    let events = runtime.events(&host).expect("consumer channel");
+    runtime.dispatch(subscribe(&session_id, 0), &host);
+    runtime.dispatch(run_start(&session_id, "build"), &host);
 
     let collected = collect_until(&events, |event| {
         matches!(event.kind, AgentEventKind::ApprovalRequested { .. })
@@ -111,7 +113,7 @@ fn cli_adapter_approval_round_trips_through_the_real_handler() {
             request_id: request_id.clone(),
             decision: ApprovalDecision::OptionId("accept".to_owned()),
         },
-        "host",
+        &host,
     );
     assert!(outcome.receipt.ok);
 
@@ -137,7 +139,7 @@ fn cli_adapter_approval_round_trips_through_the_real_handler() {
             request_id,
             decision: ApprovalDecision::OptionId("decline".to_owned()),
         },
-        "host",
+        &host,
     );
     assert!(matches!(
         outcome.receipt.outcome,

@@ -2,8 +2,9 @@
 //! facade's integration tests.
 
 use aifuel_core::{
-    AccessMode, AgentCommand, AgentEvent, AgentEventKind, CommandId, IntegrationId, ModelSelection,
-    Receipt, ReceiptCode, ReceiptOutcome, SessionId, SessionSnapshot, SessionStatus, UserInput,
+    AccessMode, AgentCommand, AgentEvent, AgentEventKind, CommandId, ConsumerId, IntegrationId,
+    ModelSelection, Receipt, ReceiptCode, ReceiptOutcome, SessionId, SessionSnapshot,
+    SessionStatus, UserInput,
 };
 use aifuel_runtime::CommandOutcome;
 use std::path::Path;
@@ -11,6 +12,11 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use super::FAKE_INTEGRATION;
+
+/// A consumer identity for `dispatch` and `events` calls.
+pub fn consumer(id: &str) -> ConsumerId {
+    ConsumerId::new(id)
+}
 
 /// One unique command id per call.
 pub fn next_id() -> CommandId {

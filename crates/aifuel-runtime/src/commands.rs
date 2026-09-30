@@ -16,8 +16,8 @@ use crate::runtime::{AgentRuntime, LiveSession};
 use crate::{MAX_REPLAY_BYTES, MAX_REPLAY_EVENTS};
 use aifuel_core::{
     AccessMode, AgentEventKind, AgentRuntimeError, AgentSessionHandle, ApprovalDecision, CommandId,
-    ModelSelection, Receipt, ReceiptCode, RequestId, RunId, Seq, SessionId, SessionStatus,
-    StartOptions, UserInput,
+    ConsumerId, ExecutionAvailability, ModelDescriptor, ModelSelection, Receipt, ReceiptCode,
+    RequestId, RunId, Seq, SessionId, SessionStatus, StartOptions, UserInput,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -35,7 +35,7 @@ impl AgentRuntime {
         access: AccessMode,
     ) -> CommandOutcome {
         let Some(descriptor) = self.registry.descriptor_for(&selection.integration_id) else {
-            return CommandOutcome::err(
+            return CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::InvalidSelection,
                 format!(
@@ -45,17 +45,17 @@ impl AgentRuntime {
             );
         };
         let Some(adapter) = self.registry.adapter_for(&selection.integration_id) else {
-            return CommandOutcome::err(
+            return CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::Unsupported,
                 format!("no adapter serves integration {}", selection.integration_id),
             );
         };
         // Resolve before start, per the contract: a selection that cannot
-        // resolve fails `invalid_selection` here rather than failing a run
-        // later.
-        if let Err(error) = adapter.resolve(&selection) {
-            return CommandOutcome::err(command_id, error.code, error.message);
+        // resolve - or resolves to a model that cannot run - fails
+        // `invalid_selection` here rather than failing a run later.
+        if let Err(error) = resolve_ready(&*adapter, &selection) {
+            return CommandOutcome::rejected(command_id, error.code, error.message);
         }
         let handle = match adapter.start(
             &descriptor.integration,
@@ -63,10 +63,11 @@ impl AgentRuntime {
                 cwd: cwd.clone(),
                 selection: selection.clone(),
                 access,
+                resume_cursor: None,
             },
         ) {
             Ok(handle) => handle,
-            Err(error) => return CommandOutcome::err(command_id, error.code, error.message),
+            Err(error) => return CommandOutcome::rejected(command_id, error.code, error.message),
         };
         let cleanup = |handle: AgentSessionHandle| {
             let _ = adapter.stop(handle);
@@ -76,7 +77,7 @@ impl AgentRuntime {
             .record_agent_session(&handle.session_id, &selection, &cwd)
         {
             cleanup(handle);
-            return CommandOutcome::err(
+            return CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::ProviderError,
                 store_error(error).message,
@@ -94,7 +95,7 @@ impl AgentRuntime {
             Ok(event) => event,
             Err(error) => {
                 cleanup(handle);
-                return CommandOutcome::err(
+                return CommandOutcome::rejected(
                     command_id,
                     ReceiptCode::ProviderError,
                     store_error(error).message,
@@ -107,11 +108,12 @@ impl AgentRuntime {
             handle.session_id.clone(),
             Arc::clone(&adapter),
             handle.clone(),
+            false,
         ) {
             Ok(join) => join,
             Err(error) => {
                 cleanup(handle);
-                return CommandOutcome::err(
+                return CommandOutcome::rejected(
                     command_id,
                     ReceiptCode::ProviderError,
                     format!("the session event pump could not start: {error}"),
@@ -145,19 +147,19 @@ impl AgentRuntime {
         command_id: CommandId,
         session_id: SessionId,
         last_seen_seq: Seq,
-        consumer_id: &str,
+        consumer_id: &ConsumerId,
     ) -> CommandOutcome {
         match self.store.agent_session(&session_id) {
             Ok(Some(_)) => {}
             Ok(None) => {
-                return CommandOutcome::err(
+                return CommandOutcome::rejected(
                     command_id,
                     ReceiptCode::UnknownSession,
                     "no Agent Session with that id is known",
                 );
             }
             Err(error) => {
-                return CommandOutcome::err(
+                return CommandOutcome::rejected(
                     command_id,
                     ReceiptCode::ProviderError,
                     store_error(error).message,
@@ -177,7 +179,7 @@ impl AgentRuntime {
         ) {
             Ok(page) => page,
             Err(error) => {
-                return CommandOutcome::err(
+                return CommandOutcome::rejected(
                     command_id,
                     ReceiptCode::ProviderError,
                     store_error(error).message,
@@ -190,12 +192,12 @@ impl AgentRuntime {
             }
         }
         if let Some(live) = inner.live.get_mut(&session_id) {
-            live.subscribers.insert(consumer_id.to_owned());
+            live.subscribers.insert(consumer_id.clone());
         }
         let snapshot = match self.store.snapshot(&session_id) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                return CommandOutcome::err(
+                return CommandOutcome::rejected(
                     command_id,
                     ReceiptCode::ProviderError,
                     store_error(error).message,
@@ -203,7 +205,7 @@ impl AgentRuntime {
             }
         };
         let Some(snapshot) = snapshot else {
-            return CommandOutcome::err(
+            return CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::ProviderError,
                 "the session row disappeared mid-subscribe",
@@ -224,7 +226,7 @@ impl AgentRuntime {
                 Receipt::ok(command_id, 0, None, None),
                 CommandPayload::Sessions(sessions),
             ),
-            Err(error) => CommandOutcome::err(
+            Err(error) => CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::ProviderError,
                 store_error(error).message,
@@ -251,7 +253,7 @@ impl AgentRuntime {
         if let Some(live) = live {
             let already_closed = live.closed;
             if let Err(error) = live.adapter.stop(live.handle) {
-                return CommandOutcome::err(command_id, error.code, error.message);
+                return CommandOutcome::rejected(command_id, error.code, error.message);
             }
             // The adapter's stream closed with the session; the pump drains
             // the queued events before exiting so `session.closed` lands
@@ -259,53 +261,51 @@ impl AgentRuntime {
             if let Some(pump) = live.pump {
                 let _ = pump.join();
             }
-            if already_closed {
-                return match self.head_seq(&session_id) {
-                    Ok(seq) => {
-                        CommandOutcome::ok(Receipt::ok(command_id, seq, Some(session_id), None))
-                    }
-                    Err(error) => CommandOutcome::err(command_id, error.code, error.message),
-                };
-            }
-            return match self
-                .store
-                .append(&session_id, AgentEventKind::SessionClosed { reason: None })
-            {
-                Ok(event) => {
-                    CommandOutcome::ok(Receipt::ok(command_id, event.seq, Some(session_id), None))
-                }
-                Err(error) => CommandOutcome::err(
-                    command_id,
-                    ReceiptCode::ProviderError,
-                    store_error(error).message,
-                ),
+            // An adapter-initiated close already recorded the fact; answer
+            // with the log's head rather than appending a second copy.
+            return if already_closed {
+                self.head_seq_outcome(command_id, session_id)
+            } else {
+                self.append_session_closed(command_id, session_id)
             };
         }
         match self.store.agent_session(&session_id) {
-            Ok(Some(session)) if session.status == SessionStatus::Closed => CommandOutcome::err(
-                command_id,
-                ReceiptCode::InvalidState,
-                "the Agent Session is already closed",
-            ),
-            Ok(Some(_)) => match self
-                .store
-                .append(&session_id, AgentEventKind::SessionClosed { reason: None })
-            {
-                Ok(event) => {
-                    CommandOutcome::ok(Receipt::ok(command_id, event.seq, Some(session_id), None))
-                }
-                Err(error) => CommandOutcome::err(
+            Ok(Some(session)) if session.status == SessionStatus::Closed => {
+                CommandOutcome::rejected(
                     command_id,
-                    ReceiptCode::ProviderError,
-                    store_error(error).message,
-                ),
-            },
-            Ok(None) => CommandOutcome::err(
+                    ReceiptCode::InvalidState,
+                    "the Agent Session is already closed",
+                )
+            }
+            Ok(Some(_)) => self.append_session_closed(command_id, session_id),
+            Ok(None) => CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::UnknownSession,
                 "no Agent Session with that id is known",
             ),
-            Err(error) => CommandOutcome::err(
+            Err(error) => CommandOutcome::rejected(
+                command_id,
+                ReceiptCode::ProviderError,
+                store_error(error).message,
+            ),
+        }
+    }
+
+    /// Append `session.closed` as the session's last fact and answer with
+    /// its seq.
+    fn append_session_closed(
+        &self,
+        command_id: CommandId,
+        session_id: SessionId,
+    ) -> CommandOutcome {
+        match self
+            .store
+            .append(&session_id, AgentEventKind::SessionClosed { reason: None })
+        {
+            Ok(event) => {
+                CommandOutcome::ok(Receipt::ok(command_id, event.seq, Some(session_id), None))
+            }
+            Err(error) => CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::ProviderError,
                 store_error(error).message,
@@ -327,11 +327,8 @@ impl AgentRuntime {
             return self.not_live(&command_id, &session_id);
         };
         match adapter.send(&handle, input) {
-            Ok(_run_id) => match self.head_seq(&session_id) {
-                Ok(seq) => CommandOutcome::ok(Receipt::ok(command_id, seq, Some(session_id), None)),
-                Err(error) => CommandOutcome::err(command_id, error.code, error.message),
-            },
-            Err(error) => CommandOutcome::err(command_id, error.code, error.message),
+            Ok(_run_id) => self.head_seq_outcome(command_id, session_id),
+            Err(error) => CommandOutcome::rejected(command_id, error.code, error.message),
         }
     }
 
@@ -346,11 +343,8 @@ impl AgentRuntime {
             return self.not_live(&command_id, &session_id);
         };
         match adapter.cancel(&handle, run_id) {
-            Ok(()) => match self.head_seq(&session_id) {
-                Ok(seq) => CommandOutcome::ok(Receipt::ok(command_id, seq, Some(session_id), None)),
-                Err(error) => CommandOutcome::err(command_id, error.code, error.message),
-            },
-            Err(error) => CommandOutcome::err(command_id, error.code, error.message),
+            Ok(()) => self.head_seq_outcome(command_id, session_id),
+            Err(error) => CommandOutcome::rejected(command_id, error.code, error.message),
         }
     }
 
@@ -365,7 +359,7 @@ impl AgentRuntime {
         session_id: SessionId,
         request_id: RequestId,
         decision: ApprovalDecision,
-        consumer_id: &str,
+        consumer_id: &ConsumerId,
     ) -> CommandOutcome {
         let Some((adapter, handle)) = self.live_session(&session_id) else {
             return self.not_live(&command_id, &session_id);
@@ -375,7 +369,7 @@ impl AgentRuntime {
             inner
                 .answers
                 .entry((session_id.clone(), request_id.clone()))
-                .or_insert_with(|| consumer_id.to_owned());
+                .or_insert_with(|| consumer_id.clone());
         }
         let result = adapter.answer(&handle, request_id.clone(), decision);
         if let Err(error) = result {
@@ -391,12 +385,9 @@ impl AgentRuntime {
                     .answers
                     .remove(&(session_id.clone(), request_id.clone()));
             }
-            return CommandOutcome::err(command_id, error.code, error.message);
+            return CommandOutcome::rejected(command_id, error.code, error.message);
         }
-        match self.head_seq(&session_id) {
-            Ok(seq) => CommandOutcome::ok(Receipt::ok(command_id, seq, Some(session_id), None)),
-            Err(error) => CommandOutcome::err(command_id, error.code, error.message),
-        }
+        self.head_seq_outcome(command_id, session_id)
     }
 
     /// `model.select`: resolve the selection, apply it to the live session,
@@ -411,26 +402,25 @@ impl AgentRuntime {
         let Some((adapter, handle)) = self.live_session(&session_id) else {
             return self.not_live(&command_id, &session_id);
         };
-        if let Err(error) = adapter.resolve(&selection) {
-            return CommandOutcome::err(command_id, error.code, error.message);
+        // The same readiness gate as `session.create`: a selection that
+        // resolves to a model that cannot run fails `invalid_selection`.
+        if let Err(error) = resolve_ready(&*adapter, &selection) {
+            return CommandOutcome::rejected(command_id, error.code, error.message);
         }
         if let Err(error) = adapter.set_selection(&handle, selection.clone()) {
-            return CommandOutcome::err(command_id, error.code, error.message);
+            return CommandOutcome::rejected(command_id, error.code, error.message);
         }
         if let Err(error) = self
             .store
             .record_agent_session_selection(&session_id, &selection)
         {
-            return CommandOutcome::err(
+            return CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::ProviderError,
                 store_error(error).message,
             );
         }
-        match self.head_seq(&session_id) {
-            Ok(seq) => CommandOutcome::ok(Receipt::ok(command_id, seq, Some(session_id), None)),
-            Err(error) => CommandOutcome::err(command_id, error.code, error.message),
-        }
+        self.head_seq_outcome(command_id, session_id)
     }
 
     /// The live adapter handle for a session the facade created.
@@ -451,7 +441,7 @@ impl AgentRuntime {
     /// driven, `unknown_session` when it is not known at all.
     fn not_live(&self, command_id: &CommandId, session_id: &SessionId) -> CommandOutcome {
         match self.store.agent_session(session_id) {
-            Ok(Some(session)) => CommandOutcome::err(
+            Ok(Some(session)) => CommandOutcome::rejected(
                 command_id.clone(),
                 ReceiptCode::InvalidState,
                 format!(
@@ -459,12 +449,12 @@ impl AgentRuntime {
                     session.status.as_str()
                 ),
             ),
-            Ok(None) => CommandOutcome::err(
+            Ok(None) => CommandOutcome::rejected(
                 command_id.clone(),
                 ReceiptCode::UnknownSession,
                 "no Agent Session with that id is known",
             ),
-            Err(error) => CommandOutcome::err(
+            Err(error) => CommandOutcome::rejected(
                 command_id.clone(),
                 ReceiptCode::ProviderError,
                 store_error(error).message,
@@ -472,12 +462,40 @@ impl AgentRuntime {
         }
     }
 
+    /// The `ok` receipt for an accepted session-scoped command: the log's
+    /// current head sequence for the session.
+    fn head_seq_outcome(&self, command_id: CommandId, session_id: SessionId) -> CommandOutcome {
+        match self.head_seq(&session_id) {
+            Ok(seq) => CommandOutcome::ok(Receipt::ok(command_id, seq, Some(session_id), None)),
+            Err(error) => CommandOutcome::rejected(command_id, error.code, error.message),
+        }
+    }
+
     /// The log's current head sequence for a session.
     fn head_seq(&self, session_id: &SessionId) -> Result<Seq, AgentRuntimeError> {
-        // `seq > i64::MAX` matches nothing; the page still carries `head_seq`.
-        self.store
-            .replay(session_id, i64::MAX as Seq, 1, 1)
-            .map(|page| page.head_seq)
-            .map_err(store_error)
+        self.store.head_seq(session_id).map_err(store_error)
+    }
+}
+
+/// The readiness gate `session.create` and `model.select` share: resolve
+/// the selection through the adapter, then reject an availability that
+/// cannot run. `ready` proceeds and `unknown` proceeds too - an unprobed
+/// provider would otherwise be unusable, and a genuinely broken execution
+/// surfaces as `provider_error` at run start.
+fn resolve_ready(
+    adapter: &dyn RuntimeAdapter,
+    selection: &ModelSelection,
+) -> Result<ModelDescriptor, AgentRuntimeError> {
+    let descriptor = adapter.resolve(selection)?;
+    match descriptor.availability {
+        ExecutionAvailability::Ready | ExecutionAvailability::Unknown => Ok(descriptor),
+        ExecutionAvailability::NeedsAuth => Err(AgentRuntimeError::new(
+            ReceiptCode::InvalidSelection,
+            "the integration needs authentication before it can run",
+        )),
+        ExecutionAvailability::Unsupported => Err(AgentRuntimeError::new(
+            ReceiptCode::InvalidSelection,
+            "the integration cannot execute in this environment",
+        )),
     }
 }

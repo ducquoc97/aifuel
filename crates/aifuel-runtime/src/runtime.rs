@@ -8,10 +8,12 @@
 //! explicit adapter set, for embedders and tests.
 
 use crate::adapter::RuntimeAdapter;
+use crate::pump;
 use crate::registry::Registry;
-use aifuel_app::RunStore;
+use aifuel_app::{RunStore, warn_store_write};
 use aifuel_core::{
-    AgentEvent, AgentRuntimeError, AgentSessionHandle, ReceiptCode, RequestId, SessionId,
+    AccessMode, AgentEvent, AgentEventKind, AgentRuntimeError, AgentSessionHandle, ConsumerId,
+    ModelSelection, ReceiptCode, RequestId, SessionId, SessionStatus, StartOptions,
 };
 use aifuel_providers::{
     AdapterDiscovery, CredentialStore, DiscoveryContext, IntegrationDescriptor,
@@ -32,11 +34,11 @@ pub(crate) struct Inner {
     /// Sessions a live adapter owns right now, keyed by session id.
     pub(crate) live: HashMap<SessionId, LiveSession>,
     /// One event channel per consumer id, created on first use.
-    pub(crate) consumers: HashMap<String, Consumer>,
+    pub(crate) consumers: HashMap<ConsumerId, Consumer>,
     /// The consumer that answered each pending Approval Request, keyed by
     /// `(session, request)`. The pump stamps it onto the adapter-emitted
     /// `approval.resolved` and removes it there.
-    pub(crate) answers: HashMap<(SessionId, RequestId), String>,
+    pub(crate) answers: HashMap<(SessionId, RequestId), ConsumerId>,
 }
 
 /// One session a live adapter owns: its handle, its subscriber set, and
@@ -44,7 +46,7 @@ pub(crate) struct Inner {
 pub(crate) struct LiveSession {
     pub(crate) adapter: Arc<dyn RuntimeAdapter>,
     pub(crate) handle: AgentSessionHandle,
-    pub(crate) subscribers: BTreeSet<String>,
+    pub(crate) subscribers: BTreeSet<ConsumerId>,
     pub(crate) pump: Option<JoinHandle<()>>,
     /// `session.closed` is already in the log, facade- or adapter-authored.
     pub(crate) closed: bool,
@@ -80,7 +82,9 @@ impl AgentRuntime {
     ///
     /// On open, persisted sessions still carrying an in-flight status -
     /// left by a crash or a killed process - are marked `interrupted` and
-    /// the fact is recorded in each session's log.
+    /// the fact is recorded in each session's log. Interrupted sessions
+    /// holding a resume cursor then get a provider-side continuation
+    /// attempt where their adapter declares `resume`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, AgentRuntimeError> {
         let path = path.as_ref();
         let store = RunStore::open(path).map_err(|error| {
@@ -149,10 +153,8 @@ impl AgentRuntime {
             shutdown: AtomicBool::new(false),
         };
         // Startup reconcile: sessions still showing an in-flight status were
-        // cut off mid-run, so the interruption is recorded as a fact. The
-        // contract trait has no provider-resume primitive at P0, so
-        // sessions marked interrupted stay interrupted; a stored resume
-        // cursor remains on the row for the adapters that will consume it.
+        // cut off mid-run, so the interruption is recorded as a fact before
+        // continuation is attempted.
         runtime
             .store
             .mark_interrupted_on_shutdown()
@@ -162,7 +164,118 @@ impl AgentRuntime {
                     format!("the startup reconcile could not run: {error}"),
                 )
             })?;
+        runtime.resume_interrupted_sessions();
         Ok(runtime)
+    }
+
+    /// Attempt provider-side continuation for each persisted `interrupted`
+    /// session holding a resume cursor whose serving adapter declares
+    /// `resume`. On success the facade records `session.status: working`
+    /// and a pump takes over the adapter's stream; on failure the session
+    /// stays `interrupted` - continuation was attempted, never assumed.
+    /// Sessions without a cursor or a resume-capable adapter stay
+    /// interrupted permanently.
+    fn resume_interrupted_sessions(&self) {
+        let sessions = match self.store.agent_sessions() {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                warn_store_write(&error);
+                return;
+            }
+        };
+        for session in sessions {
+            if session.status != SessionStatus::Interrupted {
+                continue;
+            }
+            let Some(cursor) = session.resume_cursor.clone() else {
+                continue;
+            };
+            let (Some(descriptor), Some(adapter)) = (
+                self.registry.descriptor_for(&session.integration),
+                self.registry.adapter_for(&session.integration),
+            ) else {
+                continue;
+            };
+            if !adapter.capabilities().resume {
+                continue;
+            }
+            let handle = match adapter.start(
+                &descriptor.integration,
+                StartOptions {
+                    cwd: session.cwd.clone(),
+                    selection: ModelSelection {
+                        integration_id: session.integration.clone(),
+                        model: session.model.clone().unwrap_or_default(),
+                        effort: session.effort,
+                    },
+                    // The projection does not persist the session's access
+                    // mode, so a continuation asks for the least privilege
+                    // rather than inventing authorization the host never
+                    // re-declared.
+                    access: AccessMode::ReadOnly,
+                    resume_cursor: Some(cursor),
+                },
+            ) {
+                Ok(handle) => handle,
+                Err(error) => {
+                    eprintln!(
+                        "aifuel: agent session {} could not resume: {error}",
+                        session.session_id
+                    );
+                    continue;
+                }
+            };
+            // The facade records the continuation fact before the pump
+            // starts draining, so `working` lands ahead of the adapter's
+            // own emissions; the pump drops the adapter's fresh-session
+            // `idle` prelude for a resumed session.
+            if let Err(error) = self.store.append(
+                &session.session_id,
+                AgentEventKind::SessionStatus {
+                    status: SessionStatus::Working,
+                },
+            ) {
+                warn_store_write(&error);
+                let _ = adapter.stop(handle);
+                continue;
+            }
+            match pump::spawn(
+                self.store.clone(),
+                Arc::downgrade(&self.inner),
+                session.session_id.clone(),
+                Arc::clone(&adapter),
+                handle.clone(),
+                true,
+            ) {
+                Ok(join) => {
+                    self.inner.lock().expect("runtime mutex").live.insert(
+                        session.session_id.clone(),
+                        LiveSession {
+                            adapter,
+                            handle,
+                            subscribers: BTreeSet::new(),
+                            pump: Some(join),
+                            closed: false,
+                        },
+                    );
+                }
+                Err(error) => {
+                    eprintln!("aifuel: the resumed session's event pump could not start: {error}");
+                    let _ = adapter.stop(handle);
+                    // The `working` fact already landed; record that the
+                    // continuation fell through so the projection tells the
+                    // truth.
+                    if let Err(error) = self.store.append(
+                        &session.session_id,
+                        AgentEventKind::SessionStatus {
+                            status: SessionStatus::Interrupted,
+                        },
+                    ) {
+                        warn_store_write(&error);
+                    }
+                }
+            }
+        }
     }
 
     /// The consumer's live event channel: one channel per consumer id
@@ -172,7 +285,7 @@ impl AgentRuntime {
     /// The channel is created on first use - either here or by a
     /// `session.subscribe` - and the receiver is handed out exactly once;
     /// a second call returns `None`.
-    pub fn events(&self, consumer_id: &str) -> Option<Receiver<AgentEvent>> {
+    pub fn events(&self, consumer_id: &ConsumerId) -> Option<Receiver<AgentEvent>> {
         let mut inner = self.inner.lock().expect("runtime mutex");
         Self::consumer(&mut inner, consumer_id).receiver.take()
     }
@@ -194,7 +307,7 @@ impl AgentRuntime {
                 .filter(|(_, live)| live.adapter.capabilities().resume)
                 .filter_map(|(session_id, live)| {
                     live.adapter
-                        .provider_session(session_id)
+                        .resume_cursor(session_id)
                         .map(|cursor| (session_id.clone(), cursor))
                 })
                 .collect()
@@ -210,10 +323,10 @@ impl AgentRuntime {
     }
 
     /// The consumer's channel entry, creating it on first use.
-    pub(crate) fn consumer<'a>(inner: &'a mut Inner, consumer_id: &str) -> &'a mut Consumer {
+    pub(crate) fn consumer<'a>(inner: &'a mut Inner, consumer_id: &ConsumerId) -> &'a mut Consumer {
         inner
             .consumers
-            .entry(consumer_id.to_owned())
+            .entry(consumer_id.clone())
             .or_insert_with(|| {
                 let (sender, receiver) = mpsc::channel();
                 Consumer {
@@ -230,10 +343,4 @@ impl Drop for AgentRuntime {
     fn drop(&mut self) {
         self.shutdown();
     }
-}
-
-/// Best-effort store writes during shutdown report on stderr the same way
-/// the run manager's history writes do.
-fn warn_store_write(error: &aifuel_app::RunStoreError) {
-    eprintln!("aifuel: run history write failed: {error}");
 }

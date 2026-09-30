@@ -13,6 +13,10 @@
 //!   adapter's own copies are skipped here. An adapter-emitted
 //!   `session.closed` the facade did not initiate still lands, once, so a
 //!   provider-side close is never lost.
+//! - A resumed session's adapter emits the same fresh-session `idle`
+//!   prelude a new session does, but the facade already recorded
+//!   `session.status: working` as the continuation fact; the pump drops
+//!   that one stale `idle` so the projection stays honest.
 //! - `approval.resolved` is adapter-emitted inside the run's causal order;
 //!   the pump only rewrites `answered_by` to the consumer id the facade
 //!   registered when it accepted the answer.
@@ -20,22 +24,25 @@
 use crate::adapter::RuntimeAdapter;
 use crate::runtime::Inner;
 use aifuel_app::RunStore;
-use aifuel_core::{AgentEvent, AgentEventKind, AgentSessionHandle, SessionId};
+use aifuel_core::{AgentEvent, AgentEventKind, AgentSessionHandle, SessionId, SessionStatus};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 
 /// Start the drain loop for one live session. The pump ends when the
-/// adapter's stream closes or the runtime is dropped.
+/// adapter's stream closes or the runtime is dropped. `resumed` marks a
+/// startup-reconcile continuation: the adapter's fresh-session `idle`
+/// prelude is stale there, so the first one is skipped.
 pub(crate) fn spawn(
     store: RunStore,
     inner: Weak<Mutex<Inner>>,
     session_id: SessionId,
     adapter: Arc<dyn RuntimeAdapter>,
     handle: AgentSessionHandle,
+    resumed: bool,
 ) -> std::io::Result<JoinHandle<()>> {
     thread::Builder::new()
         .name(format!("aifuel-runtime-pump-{session_id}"))
-        .spawn(move || drain(store, inner, session_id, adapter, handle))
+        .spawn(move || drain(store, inner, session_id, adapter, handle, resumed))
 }
 
 fn drain(
@@ -44,7 +51,11 @@ fn drain(
     session_id: SessionId,
     adapter: Arc<dyn RuntimeAdapter>,
     handle: AgentSessionHandle,
+    resumed: bool,
 ) {
+    // For a resumed session the adapter replays its fresh-session prelude;
+    // the first `idle` would undo the `working` the facade just recorded.
+    let mut skip_startup_idle = resumed;
     for mut kind in adapter.events(&handle) {
         let Some(inner) = inner.upgrade() else {
             return;
@@ -54,6 +65,12 @@ fn drain(
             // The facade's `session.create` append is the authoritative
             // record; the adapter's copy of the same fact is skipped.
             AgentEventKind::SessionCreated { .. } => continue,
+            AgentEventKind::SessionStatus {
+                status: SessionStatus::Idle,
+            } if skip_startup_idle => {
+                skip_startup_idle = false;
+                continue;
+            }
             AgentEventKind::SessionClosed { .. } => {
                 // Only an adapter-initiated close lands: once the facade's
                 // `session.close` removes the live entry or records the
@@ -75,11 +92,12 @@ fn drain(
                     .answers
                     .remove(&(session_id.clone(), request_id.clone()))
                 {
-                    *answered_by = consumer;
+                    *answered_by = consumer.as_str().to_owned();
                 }
             }
             _ => {}
         }
+        skip_startup_idle = false;
         match store.append(&session_id, kind) {
             Ok(event) => broadcast(&inner, &session_id, &event),
             Err(error) => {
