@@ -2,12 +2,15 @@
 //! `session.close`, and the session-scoped error paths.
 
 use crate::support::{
-    FakeAdapter, FakeScript, collect_run, consumer, create, created_session, fake_runtime, next_id,
-    receipt_code, receipt_seq, receipt_snapshot, run_start, selection, subscribe, test_dir,
+    FAKE_INTEGRATION, FakeAdapter, FakeScript, collect_run, consumer, create, created_session,
+    fake_descriptor, fake_runtime, next_id, receipt_code, receipt_seq, receipt_snapshot, run_start,
+    runtime_at, selection, subscribe, test_dir,
 };
 use aifuel_core::{
-    AgentCommand, AgentEventKind, ApprovalDecision, ReceiptCode, RunId, SessionId, SessionStatus,
+    AdapterCapabilities, AgentCommand, AgentEventKind, ApprovalDecision, IntegrationId,
+    ReceiptCode, RunId, SessionId, SessionStatus,
 };
+use std::sync::Arc;
 
 #[test]
 fn session_create_subscribe_run_events_completed() {
@@ -196,6 +199,8 @@ fn session_create_with_full_access_runs() {
             cwd: dir.clone(),
             selection: selection("fake-a"),
             access: aifuel_core::AccessMode::Full,
+            resume_cursor: None,
+            external_tools: Vec::new(),
         },
         &c1,
     );
@@ -207,6 +212,97 @@ fn session_create_with_full_access_runs() {
     let session_id = created_session(&outcome);
     let outcome = runtime.dispatch(run_start(&session_id, "hi"), &c1);
     assert!(outcome.receipt.ok);
+    runtime.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn external_tools_reject_when_the_adapter_cannot_enforce() {
+    // A host asking for an exact tool allowlist gets a loud failure on an
+    // adapter that does not declare `external_tools`: the request is never
+    // silently dropped.
+    let dir = test_dir("tools-unsupported");
+    let (_store, runtime) = fake_runtime(
+        &dir,
+        FakeAdapter::default_capabilities(),
+        vec![FakeAdapter::model("fake-a", &[])],
+        vec![],
+    );
+    let c1 = consumer("c1");
+    let outcome = runtime.dispatch(
+        AgentCommand::SessionCreate {
+            command_id: next_id(),
+            cwd: dir.clone(),
+            selection: selection("fake-a"),
+            access: aifuel_core::AccessMode::ReadOnly,
+            resume_cursor: None,
+            external_tools: vec!["gateway.search".to_owned()],
+        },
+        &c1,
+    );
+    assert_eq!(receipt_code(&outcome), ReceiptCode::Unsupported);
+    runtime.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn external_tools_plumb_into_the_adapter_start() {
+    // When the adapter declares the capability, the host's tool allowlist
+    // reaches `StartOptions` verbatim.
+    let dir = test_dir("tools-supported");
+    let adapter = Arc::new(FakeAdapter::new(
+        AdapterCapabilities {
+            external_tools: true,
+            ..FakeAdapter::default_capabilities()
+        },
+        vec![FakeAdapter::model("fake-a", &[])],
+    ));
+    let (_store, runtime) = runtime_at(&dir, vec![adapter.clone()], vec![fake_descriptor()]);
+    let c1 = consumer("c1");
+    let outcome = runtime.dispatch(
+        AgentCommand::SessionCreate {
+            command_id: next_id(),
+            cwd: dir.clone(),
+            selection: selection("fake-a"),
+            access: aifuel_core::AccessMode::ReadOnly,
+            resume_cursor: None,
+            external_tools: vec!["gateway.search".to_owned(), "gateway.fetch".to_owned()],
+        },
+        &c1,
+    );
+    assert!(
+        outcome.receipt.ok,
+        "a tool-capable adapter creates: {:?}",
+        outcome.receipt.outcome
+    );
+    assert_eq!(
+        adapter.recorded_tools(),
+        vec![vec![
+            "gateway.search".to_owned(),
+            "gateway.fetch".to_owned()
+        ]],
+        "the adapter's StartOptions carry the host's allowlist"
+    );
+    runtime.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn registered_adapters_lists_the_runtime_adapter_set() {
+    // Hosts enumerate adapters by Integration Identity to route work.
+    let dir = test_dir("adapters");
+    let (_store, runtime) = fake_runtime(
+        &dir,
+        FakeAdapter::default_capabilities(),
+        vec![FakeAdapter::model("fake-a", &[])],
+        vec![],
+    );
+    let adapters = runtime.registered_adapters();
+    assert_eq!(adapters.len(), 1);
+    assert_eq!(
+        adapters[0].integration(),
+        IntegrationId::new(FAKE_INTEGRATION)
+    );
     runtime.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

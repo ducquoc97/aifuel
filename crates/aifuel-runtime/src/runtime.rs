@@ -13,7 +13,7 @@
 use crate::adapter::RuntimeAdapter;
 use crate::pump;
 use crate::registry::Registry;
-use aifuel_app::{RunStore, warn_store_write};
+use aifuel_app::{OwnerGuard, RunStore, warn_store_write};
 use aifuel_core::{
     AccessMode, AgentEvent, AgentEventKind, AgentRuntimeError, AgentSessionHandle, ConsumerId,
     ModelSelection, ReceiptCode, RequestId, SessionId, SessionStatus, StartOptions,
@@ -81,6 +81,10 @@ pub struct AgentRuntime {
     pub(crate) registry: Registry,
     pub(crate) inner: Arc<Mutex<Inner>>,
     shutdown: AtomicBool,
+    /// The store's agent-session owner id, registered live for exactly this
+    /// runtime's lifetime: another runtime in this process leaves these
+    /// sessions alone, and a dropped runtime's sessions become adoptable.
+    owner: OwnerGuard,
 }
 
 impl AgentRuntime {
@@ -92,11 +96,14 @@ impl AgentRuntime {
     /// and the Integration Registry resolve the same way the `aifuel`
     /// binary's own surfaces resolve them.
     ///
-    /// On open, persisted sessions still carrying an in-flight status -
-    /// left by a crash or a killed process - are marked `interrupted` and
-    /// the fact is recorded in each session's log. Interrupted sessions
-    /// holding a resume cursor then get a provider-side continuation
-    /// attempt where their adapter declares `resume`.
+    /// On open, persisted sessions still carrying an in-flight status whose
+    /// recorded owner is gone - left by a crash or a killed process - are
+    /// marked `interrupted` and the fact is recorded in each session's
+    /// log. A session another live runtime owns keeps its driver.
+    /// Interrupted sessions holding a resume cursor then get a
+    /// provider-side continuation attempt where their adapter declares
+    /// `resume`, and only orphaned sessions are candidates, so two
+    /// runtimes sharing one store cannot double-attach.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, AgentRuntimeError> {
         let path = path.as_ref();
         let store = RunStore::open(path).map_err(|error| {
@@ -166,6 +173,10 @@ impl AgentRuntime {
         descriptors: Vec<IntegrationDescriptor>,
         discovery: AdapterDiscovery,
     ) -> Result<Self, AgentRuntimeError> {
+        // The owner id the store stamps on `agent_sessions` rows registers
+        // live for this runtime's lifetime, so same-process opens see this
+        // runtime's sessions as owned rather than adoptable.
+        let owner = store.register_owner();
         let runtime = Self {
             store,
             registry: Registry::new(adapters, descriptors, discovery),
@@ -175,13 +186,15 @@ impl AgentRuntime {
                 answers: HashMap::new(),
             })),
             shutdown: AtomicBool::new(false),
+            owner,
         };
-        // Startup reconcile: sessions still showing an in-flight status were
-        // cut off mid-run, so the interruption is recorded as a fact before
-        // continuation is attempted.
+        // Startup reconcile: in-flight sessions whose recorded owner is
+        // gone were cut off mid-run, so the interruption is recorded as a
+        // fact before continuation is attempted. A live foreign host's
+        // sessions are left alone.
         runtime
             .store
-            .mark_interrupted_on_shutdown()
+            .reconcile_orphaned_sessions()
             .map_err(|error| {
                 AgentRuntimeError::new(
                     ReceiptCode::ProviderError,
@@ -192,15 +205,16 @@ impl AgentRuntime {
         Ok(runtime)
     }
 
-    /// Attempt provider-side continuation for each persisted `interrupted`
-    /// session holding a resume cursor whose serving adapter declares
-    /// `resume`. On success the facade records `session.status: working`
-    /// and a pump takes over the adapter's stream; on failure the session
-    /// stays `interrupted` - continuation was attempted, never assumed.
-    /// Sessions without a cursor or a resume-capable adapter stay
-    /// interrupted permanently.
+    /// Attempt provider-side continuation for each orphaned persisted
+    /// `interrupted` session holding a resume cursor whose serving adapter
+    /// declares `resume`. On success the facade records `session.status:
+    /// working`, claims the row's owner, and a pump takes over the
+    /// adapter's stream; on failure the session stays `interrupted` -
+    /// continuation was attempted, never assumed. Sessions without a
+    /// cursor or a resume-capable adapter stay interrupted permanently,
+    /// and sessions another live runtime owns are never candidates.
     fn resume_interrupted_sessions(&self) {
-        let sessions = match self.store.agent_sessions() {
+        let sessions = match self.store.orphaned_agent_sessions() {
             Ok(sessions) => sessions,
             Err(error) => {
                 warn_store_write(&error);
@@ -238,6 +252,10 @@ impl AgentRuntime {
                     // re-declared.
                     access: AccessMode::ReadOnly,
                     resume_cursor: Some(cursor),
+                    // A continuation redeclares no tool enforcement: the
+                    // host that owned the session declared it, and the
+                    // projection persists no copy to replay here.
+                    external_tools: Vec::new(),
                 },
             ) {
                 Ok(handle) => handle,
@@ -287,6 +305,12 @@ impl AgentRuntime {
                             monitoring: descriptor.integration.monitoring.is_some(),
                         },
                     );
+                    // The session is live under this runtime now, so its
+                    // owner re-stamps to this store's id: this runtime's
+                    // shutdown marks it and other opens leave it alone.
+                    if let Err(error) = self.store.claim_agent_session(&session.session_id) {
+                        warn_store_write(&error);
+                    }
                 }
                 Err(error) => {
                     eprintln!("aifuel: the resumed session's event pump could not start: {error}");
@@ -307,6 +331,44 @@ impl AgentRuntime {
         }
     }
 
+    /// The session's provider resume cursor: the live adapter's report
+    /// where the session is live, else the cursor the store persisted.
+    /// `None` when the session is unknown or has reported none.
+    pub fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
+        let live = {
+            let inner = self.inner.lock().expect("runtime mutex");
+            inner.live.get(session_id).map(|live| {
+                (
+                    Arc::clone(&live.adapter),
+                    live.handle.provider_session.clone(),
+                )
+            })
+        };
+        if let Some((adapter, provider_session)) = live
+            && let Some(cursor) = adapter.resume_cursor(session_id).or(provider_session)
+        {
+            return Some(cursor);
+        }
+        self.store
+            .agent_session(session_id)
+            .ok()
+            .flatten()
+            .and_then(|session| session.resume_cursor)
+    }
+
+    /// Every adapter registered with this runtime, in first-match
+    /// resolution order, so an embedder can serve the same adapter set
+    /// behind another contract surface.
+    pub fn registered_adapters(&self) -> Vec<Arc<dyn RuntimeAdapter>> {
+        self.registry.adapters()
+    }
+
+    /// The agent-session owner id this runtime registered for its
+    /// lifetime, useful for correlating store rows with a live host.
+    pub fn owner_id(&self) -> &str {
+        self.owner.id()
+    }
+
     /// The consumer's live event channel: one channel per consumer id
     /// carrying stamped [`AgentEvent`]s for every session that consumer has
     /// subscribed to.
@@ -320,10 +382,11 @@ impl AgentRuntime {
     }
 
     /// Graceful shutdown: persist each live session's provider resume cursor
-    /// where the serving adapter declares `resume`, then mark every
-    /// in-flight session `interrupted` with the fact recorded in its log.
-    /// Store failures are reported on stderr, matching the run store's
-    /// best-effort write convention.
+    /// where the serving adapter declares `resume`, then mark this owner's
+    /// in-flight sessions `interrupted` with the fact recorded in each
+    /// log. Another live host's sessions keep their driver and stay
+    /// untouched. Store failures are reported on stderr, matching the run
+    /// store's best-effort write convention.
     pub fn shutdown(&self) {
         if self.shutdown.swap(true, Ordering::SeqCst) {
             return;

@@ -385,3 +385,109 @@ fn interrupted_session_without_cursor_stays_interrupted() {
     runtime.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_second_runtime_leaves_a_live_owners_sessions_alone() {
+    // Two runtimes sharing one store each own their sessions: opening a
+    // second runtime reconciles only orphaned sessions, and its shutdown
+    // marks only its own in-flight work.
+    let dir = test_dir("two-owners");
+    let (store_a, runtime_a) = fake_runtime(
+        &dir,
+        FakeAdapter::default_capabilities(),
+        vec![FakeAdapter::model("fake-a", &[])],
+        vec![FakeScript::Block { cursor: None }],
+    );
+    let c1 = consumer("c1");
+    let session_id = created_session(&runtime_a.dispatch(create(&dir, "fake-a"), &c1));
+    let outcome = runtime_a.dispatch(run_start(&session_id, "work"), &c1);
+    assert!(outcome.receipt.ok);
+    let status = || {
+        store_a
+            .agent_session(&session_id)
+            .expect("session reads")
+            .expect("session exists")
+            .status
+    };
+    for _ in 0..200 {
+        if status() == SessionStatus::Working {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(status(), SessionStatus::Working);
+
+    // B opens over the same store while A still lives: the startup
+    // reconcile must leave A's in-flight session working.
+    let (_store_b, runtime_b) = fake_runtime(
+        &dir,
+        FakeAdapter::default_capabilities(),
+        vec![FakeAdapter::model("fake-a", &[])],
+        vec![],
+    );
+    assert_eq!(
+        status(),
+        SessionStatus::Working,
+        "a live owner's session is never reconciled by another open"
+    );
+
+    // B's shutdown marks only B's sessions - A's keeps running.
+    runtime_b.shutdown();
+    assert_eq!(
+        status(),
+        SessionStatus::Working,
+        "a foreign owner's shutdown leaves the session alone"
+    );
+
+    // A's own shutdown does mark it.
+    runtime_a.shutdown();
+    assert_eq!(status(), SessionStatus::Interrupted);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn resume_cursor_reads_the_live_adapter_then_the_persisted_row() {
+    // `AgentRuntime::resume_cursor` answers from the live adapter while the
+    // session runs, then from the persisted row once it is not live.
+    let dir = test_dir("cursor-read");
+    let (_store, runtime) = fake_runtime(
+        &dir,
+        FakeAdapter::default_capabilities(),
+        vec![FakeAdapter::model("fake-a", &[])],
+        vec![FakeScript::Block {
+            cursor: Some("native-7"),
+        }],
+    );
+    let c1 = consumer("c1");
+    let session_id = created_session(&runtime.dispatch(create(&dir, "fake-a"), &c1));
+    assert_eq!(runtime.resume_cursor(&session_id), None);
+    let outcome = runtime.dispatch(run_start(&session_id, "work"), &c1);
+    assert!(outcome.receipt.ok);
+    assert_eq!(
+        runtime.resume_cursor(&session_id).as_deref(),
+        Some("native-7"),
+        "the live adapter's cursor answers first"
+    );
+    runtime.shutdown();
+    drop(runtime);
+
+    // A runtime whose adapter cannot resume never adopts the session, so
+    // the read falls through to the persisted row.
+    let (_store, runtime) = reopen(
+        &dir,
+        FakeAdapter::new(
+            AdapterCapabilities {
+                resume: false,
+                ..FakeAdapter::default_capabilities()
+            },
+            vec![],
+        ),
+    );
+    assert_eq!(
+        runtime.resume_cursor(&session_id).as_deref(),
+        Some("native-7"),
+        "the persisted cursor answers when the session is not live"
+    );
+    runtime.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

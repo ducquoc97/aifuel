@@ -27,6 +27,7 @@ const UNSERVED_CAPABILITIES: AdapterCapabilities = AdapterCapabilities {
     effort: false,
     images: false,
     todos: false,
+    external_tools: false,
 };
 
 /// The runtime's compiled adapter set over the registered Integration
@@ -59,6 +60,11 @@ impl Registry {
             .iter()
             .find(|adapter| adapter.integration() == *integration)
             .cloned()
+    }
+
+    /// Every registered adapter, in first-match resolution order.
+    pub(crate) fn adapters(&self) -> Vec<Arc<dyn RuntimeAdapter>> {
+        self.adapters.clone()
     }
 
     /// The descriptor for one Integration Identity, whether or not an

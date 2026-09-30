@@ -16,8 +16,8 @@ mod adapter;
 pub use adapter::FakeAdapter;
 
 use aifuel_core::{
-    AgentEventKind, ApprovalDecision, ApprovalRequest, MessageStream, ModelSelection, RequestId,
-    RunId, RunOutcome, SessionStatus,
+    AgentEventKind, ApprovalDecision, ApprovalRequest, MessageStream, ModelSelection, ReceiptCode,
+    RequestId, RunId, RunOutcome, SessionStatus,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,13 +40,17 @@ pub enum FakeScript {
     /// Block until cancelled, then emit `run.completed` cancelled.
     /// `cursor` is reported immediately, before blocking.
     Block { cursor: Option<&'static str> },
+    /// Emit a non-retryable run-scoped `error` fact, then `run.completed`
+    /// failed - the provider-side failure shape a session worker emits when
+    /// the run's execution call itself errored.
+    Fail { message: &'static str },
 }
 
 impl FakeScript {
     fn cursor(&self) -> Option<&'static str> {
         match self {
             Self::Complete { cursor, .. } | Self::Block { cursor } => *cursor,
-            Self::Approval { .. } => None,
+            Self::Approval { .. } | Self::Fail { .. } => None,
         }
     }
 }
@@ -151,6 +155,15 @@ fn run_script(
                 thread::sleep(Duration::from_millis(10));
             }
             RunOutcome::Cancelled
+        }
+        FakeScript::Fail { message } => {
+            session.emit(AgentEventKind::Error {
+                run_id: Some(run_id.clone()),
+                code: ReceiptCode::ProviderError,
+                message: message.to_owned(),
+                retryable: false,
+            });
+            RunOutcome::Failed
         }
     };
     session.run_active.store(false, Ordering::Release);
