@@ -42,10 +42,11 @@ impl AgentAdapter for CliAdapter {
                 model: selection.model.clone(),
                 label: selection.model.clone(),
                 efforts: Vec::new(),
-                // No catalog evidence advertises this model.
+                // No catalog evidence advertises this model, and no
+                // model-specific readiness was verified.
                 advertised: false,
                 entitled: CapabilityState::Unknown,
-                availability,
+                availability: ExecutionAvailability::Unknown,
                 quota: None,
             });
         if let Some(effort) = selection.effort
@@ -158,7 +159,7 @@ impl AgentAdapter for CliAdapter {
         self.sessions
             .lock()
             .expect("sessions mutex")
-            .insert(session_id.as_str().to_owned(), session);
+            .insert(session_id.clone(), session);
         Ok(AgentSessionHandle {
             session_id,
             provider_session: resume_cursor,
@@ -204,14 +205,7 @@ impl AgentAdapter for CliAdapter {
     }
 
     fn events(&self, handle: &AgentSessionHandle) -> AgentEventStream {
-        let sessions = self.sessions.lock().expect("sessions mutex");
-        match sessions.get(handle.session_id.as_str()) {
-            Some(session) => session
-                .take_events()
-                .map(|events| Box::new(events.into_iter()) as AgentEventStream)
-                .unwrap_or_else(|| Box::new(std::iter::empty())),
-            None => Box::new(std::iter::empty()),
-        }
+        crate::local_adapter::event_stream(&self.sessions, &handle.session_id)
     }
 
     fn checkpoint(
@@ -220,7 +214,7 @@ impl AgentAdapter for CliAdapter {
         _run: RunId,
     ) -> Result<CheckpointId, AgentRuntimeError> {
         Err(AgentRuntimeError::unsupported(
-            "the CLI fallback does not record checkpoints",
+            "checkpoints are owned by the runtime, not this adapter",
         ))
     }
 
@@ -230,23 +224,11 @@ impl AgentAdapter for CliAdapter {
         _checkpoint: CheckpointId,
     ) -> Result<(), AgentRuntimeError> {
         Err(AgentRuntimeError::unsupported(
-            "the CLI fallback does not record checkpoints",
+            "checkpoints are owned by the runtime, not this adapter",
         ))
     }
 
     fn stop(&self, handle: AgentSessionHandle) -> Result<(), AgentRuntimeError> {
-        let session = self
-            .sessions
-            .lock()
-            .expect("sessions mutex")
-            .remove(handle.session_id.as_str())
-            .ok_or_else(|| {
-                AgentRuntimeError::new(
-                    ReceiptCode::UnknownSession,
-                    "the session id is not live in this adapter",
-                )
-            })?;
-        session.stop();
-        Ok(())
+        crate::local_adapter::stop(&self.sessions, &handle.session_id)
     }
 }

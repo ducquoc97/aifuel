@@ -5,9 +5,10 @@
 //! here, incoming lines are parsed to one typed [`Frame`], and the
 //! session driver only works on typed facts.
 
+use crate::local_adapter::approvals;
 use aifuel_core::{
-    AccessMode, AgentRuntimeError, ApprovalDecision, ApprovalKind, ApprovalOption, ApprovalRequest,
-    Effort, QuotaSummary, ReceiptCode, TokenUsage,
+    AccessMode, AgentRuntimeError, ApprovalDecision, ApprovalKind, ApprovalRequest, Effort,
+    PermissionApprovalDecision, QuotaSummary, TokenUsage,
 };
 use serde_json::{Value, json};
 
@@ -148,37 +149,26 @@ pub(super) enum ToolAnswer {
     Deny { cancel: bool, message: String },
 }
 
-/// Validate a decision against the options the request offered and
-/// map it to the wire answer. `Text` is never accepted on a permission
-/// request, and an unoffered option id is rejected, matching the CLI
-/// fallback's option policy.
+/// Validate a decision against the options the request offered under
+/// the shared [approval policy](crate::local_adapter::approvals) and map
+/// the verdict to the wire answer. `Text` is never accepted on a
+/// permission request, and an unoffered option id is rejected.
 pub(super) fn tool_answer(
     options: &[String],
     decision: &ApprovalDecision,
 ) -> Result<ToolAnswer, AgentRuntimeError> {
-    let ApprovalDecision::OptionId(id) = decision else {
-        return Err(invalid_state(
-            "permission approvals take a declared option, not free text",
-        ));
-    };
-    if !options.iter().any(|option| option == id) {
-        return Err(invalid_state(format!(
-            "{id:?} was not offered on this request"
-        )));
-    }
-    Ok(match id.as_str() {
-        "accept" => ToolAnswer::Allow,
-        "decline" => ToolAnswer::Deny {
+    Ok(match approvals::permission_verdict(options, decision)? {
+        PermissionApprovalDecision::Accept => ToolAnswer::Allow,
+        PermissionApprovalDecision::Decline => ToolAnswer::Deny {
             cancel: false,
             message: "declined by the host".to_owned(),
         },
-        // "cancel" denies the tool and interrupts the whole turn, the
+        // Cancel denies the tool and interrupts the whole turn, the
         // same semantics the CLI fallback's Cancel carries.
-        "cancel" => ToolAnswer::Deny {
+        PermissionApprovalDecision::Cancel => ToolAnswer::Deny {
             cancel: true,
             message: "cancelled by the host".to_owned(),
         },
-        _ => unreachable!("options only contain accept, decline, or cancel"),
     })
 }
 
@@ -208,21 +198,9 @@ pub(super) fn approval_request(request: &Value, access: AccessMode) -> ApprovalR
     if let Some(reason) = request.get("decision_reason").and_then(Value::as_str) {
         detail.push_str(&format!("\n{reason}"));
     }
-    let mut options = Vec::new();
-    if access != AccessMode::ReadOnly {
-        options.push(ApprovalOption {
-            id: "accept".to_owned(),
-            label: "Accept".to_owned(),
-        });
-    }
-    options.push(ApprovalOption {
-        id: "decline".to_owned(),
-        label: "Decline".to_owned(),
-    });
-    options.push(ApprovalOption {
-        id: "cancel".to_owned(),
-        label: "Cancel run".to_owned(),
-    });
+    // The wire carries no expansion flag, so `accept` is withheld only
+    // on read-only runs - the shared option rule.
+    let options = approvals::permission_options(access, false);
     ApprovalRequest {
         kind,
         title: truncate(&title),
@@ -510,34 +488,30 @@ pub(super) fn is_aborted(frame: &ResultFrame) -> bool {
 }
 
 /// Map a `rate_limit_event` payload to a Quota Pool observation. The
-/// most constrained unified window wins; a payload with no window and
-/// no reset time carries no usable observation and reports `None`.
+/// wire shape is flat (claude-code issues 41185 and 78476, and the
+/// Python agent SDK's typed `RateLimitInfo`): `status` is `allowed`,
+/// `allowed_warning`, or `rejected`; `resetsAt` is the reset of the
+/// window `rateLimitType` names, in epoch seconds; `utilization` is a
+/// 0.0-1.0 fraction of the allowance the CLI only populates on
+/// `allowed_warning` and `rejected`, so `remaining_pct` stays unknown
+/// on `allowed` beats. A payload with no reset time and no exhausted
+/// signal carries no usable observation and reports `None`.
 pub(super) fn quota_summary(info: &Value) -> Option<QuotaSummary> {
-    let depleted = info.get("status").and_then(Value::as_str) == Some("rejected");
-    if let Some(windows) = info.get("unifiedWindows").and_then(Value::as_object)
-        && let Some(worst) = windows
-            .values()
-            .filter_map(|window| {
-                let utilization = window.get("utilization").and_then(Value::as_f64)?;
-                Some((utilization, window.get("resetsAt").and_then(Value::as_f64)))
-            })
-            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
-    {
-        return Some(QuotaSummary {
-            remaining_pct: Some(((1.0 - worst.0).max(0.0)) * 100.0),
-            resets_at: worst.1,
-            depleted: depleted || worst.0 >= 1.0,
-        });
-    }
     let resets_at = info.get("resetsAt").and_then(Value::as_f64);
-    if resets_at.is_some() || depleted {
-        return Some(QuotaSummary {
-            remaining_pct: None,
-            resets_at,
-            depleted,
-        });
+    let utilization = info.get("utilization").and_then(Value::as_f64);
+    // A rejection, an overage in use, or a saturated window each mean
+    // the plan allowance is spent.
+    let depleted = info.get("status").and_then(Value::as_str) == Some("rejected")
+        || info.get("isUsingOverage").and_then(Value::as_bool) == Some(true)
+        || utilization.is_some_and(|used| used >= 1.0);
+    if resets_at.is_none() && utilization.is_none() && !depleted {
+        return None;
     }
-    None
+    Some(QuotaSummary {
+        remaining_pct: utilization.map(|used| (1.0 - used).max(0.0) * 100.0),
+        resets_at,
+        depleted,
+    })
 }
 
 /// A one-line summary of a tool call: the most identifying input field
@@ -583,8 +557,4 @@ fn truncate(text: &str) -> String {
     let mut summary: String = text.chars().take(SUMMARY_LIMIT - 1).collect();
     summary.push('…');
     summary
-}
-
-fn invalid_state(message: impl Into<String>) -> AgentRuntimeError {
-    AgentRuntimeError::new(ReceiptCode::InvalidState, message)
 }

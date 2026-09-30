@@ -238,15 +238,30 @@ fn result_frames_map_terminal_facts() {
 
 #[test]
 fn rate_limit_events_carry_quota_evidence() {
+    // The real payload is flat: `allowed_warning` carries the
+    // 0.0-1.0 utilization fraction for the window `rateLimitType`
+    // names.
     let frame = protocol::parse_frame(&parsed(
-        "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"unifiedWindows\":{\"five_hour\":{\"utilization\":0.5,\"resetsAt\":1700000000.0},\"seven_day\":{\"utilization\":0.75,\"resetsAt\":1700100000.0}}}}",
+        "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\",\"resetsAt\":1700100000.0,\"rateLimitType\":\"seven_day\",\"utilization\":0.75,\"isUsingOverage\":false}}",
     ));
     let Frame::Quota(quota) = frame else {
         panic!("expected a quota frame")
     };
-    // The most constrained window wins: 75% used leaves 25%.
+    // 75% used leaves 25%.
     assert_eq!(quota.remaining_pct, Some(25.0));
     assert_eq!(quota.resets_at, Some(1700100000.0));
+    assert!(!quota.depleted);
+
+    // `allowed` beats omit `utilization` until the window nears its
+    // limit; the reset time alone is still an observation.
+    let frame = protocol::parse_frame(&parsed(
+        "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1700000000.0,\"rateLimitType\":\"five_hour\",\"isUsingOverage\":false}}",
+    ));
+    let Frame::Quota(quota) = frame else {
+        panic!("expected a quota frame")
+    };
+    assert_eq!(quota.remaining_pct, None);
+    assert_eq!(quota.resets_at, Some(1700000000.0));
     assert!(!quota.depleted);
 }
 

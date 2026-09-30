@@ -155,7 +155,7 @@ async fn on_server_request(
     {
         let mut state = session.state.lock().expect("session state mutex");
         state.pending.insert(
-            request_id.as_str().to_owned(),
+            request_id.clone(),
             PendingApproval {
                 interaction: pending,
                 options: payload

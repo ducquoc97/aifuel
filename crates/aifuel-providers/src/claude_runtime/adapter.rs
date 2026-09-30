@@ -7,7 +7,8 @@
 //! `unsupported` receipts rather than silent no-ops.
 
 use super::session::ClaudeSession;
-use super::{ClaudeAdapter, descriptors, session};
+use super::{ClaudeAdapter, session};
+use crate::local_adapter::descriptors;
 use aifuel_core::{
     AdapterCapabilities, AgentAdapter, AgentEventStream, AgentRuntimeError, AgentSessionHandle,
     ApprovalDecision, CapabilityState, CheckpointId, Effort, ExecutionAvailability, Integration,
@@ -17,7 +18,6 @@ use aifuel_core::{
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
-use std::time::Duration;
 
 /// The effort levels `--effort` accepts on every Claude model. The
 /// contract's closed effort set maps one-to-one; the provider's extra
@@ -58,7 +58,9 @@ impl AgentAdapter for ClaudeAdapter {
                 // selection is ever advertised here.
                 advertised: false,
                 entitled: CapabilityState::Unknown,
-                availability,
+                // Nothing verified the provider serves this model, so
+                // the integration's readiness does not transfer to it.
+                availability: ExecutionAvailability::Unknown,
                 quota: None,
             });
         if let Some(effort) = selection.effort
@@ -147,7 +149,10 @@ impl AgentAdapter for ClaudeAdapter {
         );
         let (setup_tx, setup_rx) = mpsc::channel();
         session.start_driver(self.connector.clone(), setup, setup_tx)?;
-        let report = setup_rx.recv_timeout(session::SESSION_SETUP_TIMEOUT + Duration::from_secs(5));
+        // The driver's own handshake deadline fires well inside this
+        // bound, so a wedged spawn is what the wait covers; the same
+        // shape as the Codex adapter's `start`.
+        let report = setup_rx.recv_timeout(session::SESSION_SETUP_TIMEOUT);
         match report {
             Ok(Ok(())) => {
                 session.announce();
@@ -155,7 +160,7 @@ impl AgentAdapter for ClaudeAdapter {
                 self.sessions
                     .lock()
                     .expect("sessions mutex")
-                    .insert(session_id.as_str().to_owned(), session);
+                    .insert(session_id.clone(), session);
                 Ok(AgentSessionHandle {
                     session_id,
                     provider_session,
@@ -197,14 +202,7 @@ impl AgentAdapter for ClaudeAdapter {
     }
 
     fn events(&self, handle: &AgentSessionHandle) -> AgentEventStream {
-        let sessions = self.sessions.lock().expect("sessions mutex");
-        match sessions.get(handle.session_id.as_str()) {
-            Some(session) => session
-                .take_events()
-                .map(|events| Box::new(events.into_iter()) as AgentEventStream)
-                .unwrap_or_else(|| Box::new(std::iter::empty())),
-            None => Box::new(std::iter::empty()),
-        }
+        crate::local_adapter::event_stream(&self.sessions, &handle.session_id)
     }
 
     fn checkpoint(
@@ -213,7 +211,7 @@ impl AgentAdapter for ClaudeAdapter {
         _run: RunId,
     ) -> Result<CheckpointId, AgentRuntimeError> {
         Err(AgentRuntimeError::unsupported(
-            "the Claude adapter does not record checkpoints; the runtime owns that feature",
+            "checkpoints are owned by the runtime, not this adapter",
         ))
     }
 
@@ -223,23 +221,11 @@ impl AgentAdapter for ClaudeAdapter {
         _checkpoint: CheckpointId,
     ) -> Result<(), AgentRuntimeError> {
         Err(AgentRuntimeError::unsupported(
-            "the Claude adapter does not record checkpoints; the runtime owns that feature",
+            "checkpoints are owned by the runtime, not this adapter",
         ))
     }
 
     fn stop(&self, handle: AgentSessionHandle) -> Result<(), AgentRuntimeError> {
-        let session = self
-            .sessions
-            .lock()
-            .expect("sessions mutex")
-            .remove(handle.session_id.as_str())
-            .ok_or_else(|| {
-                AgentRuntimeError::new(
-                    ReceiptCode::UnknownSession,
-                    "the session id is not live in this adapter",
-                )
-            })?;
-        session.shutdown();
-        Ok(())
+        crate::local_adapter::stop(&self.sessions, &handle.session_id)
     }
 }

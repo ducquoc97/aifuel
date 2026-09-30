@@ -3,20 +3,18 @@
 //! When an execution adapter raises an [`AgentInteractionRequest`], the
 //! handler here turns it into an `approval.requested` event on the run,
 //! parks the provider call, and wakes it with the host's
-//! `approval.answer`. The event payload mirrors the run manager's
-//! permission policy: `accept` is never offered where it would widen a
-//! read-only run or grant access beyond the run policy, and a
-//! permission-profile request only offers `decline` because the profile
-//! response cannot be built from a boolean answer.
+//! `approval.answer`. The event payload and the answer validation follow
+//! the shared [approval policy](crate::local_adapter::approvals); what
+//! stays here is the run-scoped transport: parking the provider call on
+//! a channel inside the run's causal order.
 
-use super::session::{CliSession, invalid_state, unsupported};
+use super::session::CliSession;
+use crate::local_adapter::approvals;
 use aifuel_core::{
-    AccessMode, AgentEventKind, AgentInteractionHandler, AgentInteractionKind,
-    AgentInteractionRequest, AgentInteractionResponse, AgentRunError, AgentRuntimeError,
-    ApprovalDecision, ApprovalKind, ApprovalOption, ApprovalRequest, PermissionApprovalDecision,
+    AgentEventKind, AgentInteractionHandler, AgentInteractionKind, AgentInteractionRequest,
+    AgentInteractionResponse, AgentRunError, AgentRuntimeError, ApprovalDecision, RequestId,
     RunCancellationToken, RunId, SessionStatus,
 };
-use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -55,71 +53,13 @@ impl PendingInteraction {
         }
     }
 
-    /// Map the host's decision onto the provider-native response shape.
-    /// Options are enforced exactly as offered; free text fills a declared
-    /// question only when the request has a single answer slot.
+    /// Map the host's decision onto the provider-native response shape,
+    /// enforcing the shared approval policy exactly as offered.
     pub(super) fn response_for(
         &self,
         decision: &ApprovalDecision,
     ) -> Result<AgentInteractionResponse, AgentRuntimeError> {
-        match self.kind {
-            AgentInteractionKind::CommandApproval | AgentInteractionKind::FileChangeApproval => {
-                let ApprovalDecision::OptionId(id) = decision else {
-                    return Err(invalid_state(
-                        "permission approvals take a declared option, not free text",
-                    ));
-                };
-                if !self.options.iter().any(|option| option == id) {
-                    return Err(invalid_state(format!(
-                        "{id:?} was not offered on this request"
-                    )));
-                }
-                Ok(AgentInteractionResponse::Permission(match id.as_str() {
-                    "accept" => PermissionApprovalDecision::Accept,
-                    "decline" => PermissionApprovalDecision::Decline,
-                    "cancel" => PermissionApprovalDecision::Cancel,
-                    _ => unreachable!("options only contain accept, decline, or cancel"),
-                }))
-            }
-            AgentInteractionKind::PermissionProfileApproval => {
-                let ApprovalDecision::OptionId(id) = decision else {
-                    return Err(invalid_state(
-                        "permission profile approvals take a declared option",
-                    ));
-                };
-                if id != "decline" || !self.options.iter().any(|option| option == id) {
-                    return Err(invalid_state(format!(
-                        "{id:?} was not offered on this request"
-                    )));
-                }
-                // Matches the run manager: decline carries an empty profile
-                // scoped to this turn.
-                Ok(AgentInteractionResponse::PermissionProfile {
-                    permissions: json!({}),
-                    scope: "turn".to_owned(),
-                })
-            }
-            AgentInteractionKind::OrdinaryInput | AgentInteractionKind::McpElicitation => {
-                let ApprovalDecision::Text(text) = decision else {
-                    return Err(invalid_state(
-                        "input requests take free text, not a declared option",
-                    ));
-                };
-                let question = match self.question_ids.as_slice() {
-                    [] => "answer".to_owned(),
-                    [only] => only.clone(),
-                    _ => {
-                        return Err(unsupported(
-                            "a free-text decision cannot answer a multi-question request",
-                        ));
-                    }
-                };
-                Ok(AgentInteractionResponse::Answers(BTreeMap::from([(
-                    question,
-                    vec![text.clone()],
-                )])))
-            }
-        }
+        approvals::decision_response(self.kind, &self.options, &self.question_ids, decision)
     }
 }
 
@@ -128,14 +68,14 @@ impl PendingInteraction {
 pub(super) struct CliInteractionHandler {
     session: Arc<CliSession>,
     run_id: RunId,
-    pending: Arc<Mutex<BTreeMap<String, PendingInteraction>>>,
+    pending: Arc<Mutex<BTreeMap<RequestId, PendingInteraction>>>,
 }
 
 impl CliInteractionHandler {
     pub(super) fn new(
         session: Arc<CliSession>,
         run_id: RunId,
-        pending: Arc<Mutex<BTreeMap<String, PendingInteraction>>>,
+        pending: Arc<Mutex<BTreeMap<RequestId, PendingInteraction>>>,
     ) -> Self {
         Self {
             session,
@@ -158,13 +98,13 @@ impl AgentInteractionHandler for CliInteractionHandler {
         cancellation: &RunCancellationToken,
     ) -> Result<AgentInteractionResponse, AgentRunError> {
         let request_id = self.session.next_request_id();
-        let payload = approval_request(&request, self.session.access);
+        let payload = approvals::approval_request(&request, self.session.access);
         let (tx, rx) = mpsc::channel();
         self.pending
             .lock()
             .expect("pending approvals mutex")
             .insert(
-                request_id.as_str().to_owned(),
+                request_id.clone(),
                 PendingInteraction::new(
                     &request,
                     payload
@@ -188,7 +128,7 @@ impl AgentInteractionHandler for CliInteractionHandler {
                 self.pending
                     .lock()
                     .expect("pending approvals mutex")
-                    .remove(request_id.as_str());
+                    .remove(&request_id);
                 return Err(AgentRunError::Cancelled);
             }
             match rx.recv_timeout(INTERACTION_POLL) {
@@ -215,72 +155,7 @@ impl AgentInteractionHandler for CliInteractionHandler {
         self.pending
             .lock()
             .expect("pending approvals mutex")
-            .remove(request_id.as_str());
+            .remove(&request_id);
         response
-    }
-}
-
-/// The event payload shape for one provider interaction.
-fn approval_request(request: &AgentInteractionRequest, access: AccessMode) -> ApprovalRequest {
-    let detail = if request.questions.is_empty() {
-        request.description.clone()
-    } else {
-        let questions = request
-            .questions
-            .iter()
-            .map(|question| format!("- {}", question.text))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!("{}\n{questions}", request.description)
-    };
-    match request.kind {
-        AgentInteractionKind::OrdinaryInput => ApprovalRequest {
-            kind: ApprovalKind::Question,
-            title: request.description.clone(),
-            detail,
-            options: Vec::new(),
-            requires_confirm: false,
-        },
-        AgentInteractionKind::McpElicitation => ApprovalRequest {
-            kind: ApprovalKind::McpElicitation,
-            title: request.description.clone(),
-            detail,
-            options: Vec::new(),
-            requires_confirm: false,
-        },
-        AgentInteractionKind::CommandApproval | AgentInteractionKind::FileChangeApproval => {
-            let mut options = Vec::new();
-            if access != AccessMode::ReadOnly && !request.requires_expanded_access {
-                options.push(ApprovalOption {
-                    id: "accept".to_owned(),
-                    label: "Accept".to_owned(),
-                });
-            }
-            options.push(ApprovalOption {
-                id: "decline".to_owned(),
-                label: "Decline".to_owned(),
-            });
-            options.push(ApprovalOption {
-                id: "cancel".to_owned(),
-                label: "Cancel run".to_owned(),
-            });
-            ApprovalRequest {
-                kind: ApprovalKind::ToolPermission,
-                title: request.description.clone(),
-                detail,
-                options,
-                requires_confirm: false,
-            }
-        }
-        AgentInteractionKind::PermissionProfileApproval => ApprovalRequest {
-            kind: ApprovalKind::ToolPermission,
-            title: request.description.clone(),
-            detail,
-            options: vec![ApprovalOption {
-                id: "decline".to_owned(),
-                label: "Decline".to_owned(),
-            }],
-            requires_confirm: false,
-        },
     }
 }

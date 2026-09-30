@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(windows)]
 use process_wrap::std::JobObject;
@@ -38,10 +38,6 @@ const WRITE_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long `start` waits for the setup report; the driver's own
 /// handshake deadline fires first, so this covers a wedged spawn only.
 pub(super) const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(20);
-/// How long `stop` polls for the driver to exit after killing its
-/// process. The reader sees output EOF on a dead process, so a live
-/// driver exits well inside this bound.
-const THREAD_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The transport factory the driver asks for one `claude` I/O pair.
 /// Production spawns the process; tests inject a scripted duplex.
@@ -226,9 +222,9 @@ pub(super) struct SessionState {
     /// The in-flight run. The adapter reserves it before posting the
     /// command so a second `send` loses immediately.
     pub active_run: Option<RunId>,
-    /// Approval Requests offered to hosts, keyed by the provider's
-    /// control request id.
-    pub pending: BTreeMap<String, PendingApproval>,
+    /// Approval Requests offered to hosts, keyed by the contract
+    /// request id (which wraps the provider's control request id).
+    pub pending: BTreeMap<RequestId, PendingApproval>,
 }
 
 /// One `can_use_tool` request parked on a host answer.
@@ -377,7 +373,7 @@ impl ClaudeSession {
             return Err(invalid_state("the user input has no text"));
         }
         if !input.attachments.is_empty() {
-            return Err(unsupported("the Claude adapter does not carry attachments"));
+            return Err(unsupported("this adapter does not carry attachments"));
         }
         let run_id = RunId::new(format!(
             "claude-run-{}-{}",
@@ -450,7 +446,7 @@ impl ClaudeSession {
                     "the Approval Request is not pending",
                 ));
             }
-            let Some(entry) = state.pending.get(request.as_str()) else {
+            let Some(entry) = state.pending.get(request) else {
                 return Err(AgentRuntimeError::new(
                     ReceiptCode::AlreadyResolved,
                     "the Approval Request is not pending",
@@ -468,7 +464,7 @@ impl ClaudeSession {
             let interrupt = matches!(answer, protocol::ToolAnswer::Deny { cancel: true, .. });
             state
                 .pending
-                .remove(request.as_str())
+                .remove(request)
                 .expect("the entry was just inspected");
             (line, interrupt)
         };
@@ -592,8 +588,8 @@ impl ClaudeSession {
         self.kill_child();
         let driver = self.driver.lock().expect("driver mutex").take();
         let reader = self.reader.lock().expect("reader mutex").take();
-        join_bounded(driver);
-        join_bounded(reader);
+        crate::local_adapter::join_bounded(driver);
+        crate::local_adapter::join_bounded(reader);
         self.finish_close(None);
     }
 
@@ -629,15 +625,25 @@ impl Drop for ClaudeSession {
     }
 }
 
-fn join_bounded(handle: Option<JoinHandle<()>>) {
-    if let Some(handle) = handle {
-        let deadline = Instant::now() + THREAD_JOIN_TIMEOUT;
-        while !handle.is_finished() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
-        if handle.is_finished() {
-            let _ = handle.join();
-        }
+impl crate::local_adapter::LocalSession for ClaudeSession {
+    fn resume_cursor(&self) -> Option<String> {
+        self.resume_cursor()
+    }
+
+    fn set_selection(&self, selection: ModelSelection) -> Result<(), AgentRuntimeError> {
+        self.set_selection(selection)
+    }
+
+    fn take_events(&self) -> Option<mpsc::Receiver<AgentEventKind>> {
+        self.take_events()
+    }
+
+    fn shutdown(&self) {
+        self.shutdown();
+    }
+
+    fn close_transport(&self) {
+        self.close_transport();
     }
 }
 

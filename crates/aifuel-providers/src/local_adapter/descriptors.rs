@@ -1,12 +1,12 @@
-//! Descriptor assembly for the Codex adapter.
+//! Descriptor assembly shared by the local provider adapters.
 //!
-//! `models.list` and `resolve` merge the same evidence kinds the CLI
-//! adapter merges: native presence and authentication probes, local
-//! credential-source discovery, and the provider's Advertised Model
-//! catalog. The policy mirrors [`cli_adapter`](crate::cli_adapter)'s
-//! descriptor layer, duplicated here because that module's internals are
-//! private to it; unknown stays unknown, absent stays absent, and quota
-//! stays `None` without a real observation.
+//! `models.list` and `resolve` merge the same evidence kinds no matter
+//! which provider protocol serves the integration: native presence and
+//! authentication probes, local credential-source discovery, and the
+//! provider's Advertised Model catalog. The policy lives here once;
+//! adapters keep only their provider-specific evidence sources. Nothing
+//! here promotes evidence: unknown stays unknown, absent stays absent,
+//! and quota stays `None` without a real observation.
 
 use crate::model_catalog::ProviderCatalogModel;
 use aifuel_core::{
@@ -16,7 +16,7 @@ use aifuel_core::{
 };
 use std::collections::BTreeMap;
 
-/// Readiness to attempt a run through this integration, from the
+/// Readiness to attempt a run through one integration, from the
 /// strongest evidence first: a missing executable, a native
 /// authentication probe, then local credential-source discovery.
 ///
@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// evidence, which reads as `unknown`, never as absent. A presence
 /// probe that could not run also stays `unknown`: `ready` is claimed
 /// only on positive evidence.
-pub(super) fn availability_from(
+pub(crate) fn availability_from(
     info: &AgentIntegrationInfo,
     discovered: Option<Result<DiscoveryState, DiscoveryError>>,
 ) -> ExecutionAvailability {
@@ -33,7 +33,7 @@ pub(super) fn availability_from(
     }
     match info.native_authentication.state {
         // A successful auth probe implies the executable ran; it is the
-        // strongest readiness signal the CLI path has.
+        // strongest readiness signal the local path has.
         AgentAuthenticationState::Authenticated => return ExecutionAvailability::Ready,
         AgentAuthenticationState::Unauthenticated => return ExecutionAvailability::NeedsAuth,
         AgentAuthenticationState::Unknown => {}
@@ -50,7 +50,7 @@ pub(super) fn availability_from(
 
 /// One model descriptor for a catalog entry, merging entitlement and
 /// availability evidence the caller supplies.
-pub(super) fn catalog_descriptor(
+pub(crate) fn catalog_descriptor(
     provider: &ProviderId,
     model: &ProviderCatalogModel,
     entitled: CapabilityState,
@@ -80,7 +80,7 @@ pub(super) fn catalog_descriptor(
 /// without an entry stay `unknown`. `quota` attaches to every model only
 /// when a real monitoring observation supplies it. Unadvertised models
 /// never appear here: the catalog is the only advertisement evidence.
-pub(super) fn model_descriptors(
+pub(crate) fn model_descriptors(
     provider: ProviderId,
     advertised: &[ProviderCatalogModel],
     entitlements: &BTreeMap<String, CapabilityState>,
@@ -107,7 +107,7 @@ pub(super) fn model_descriptors(
 /// The effort spellings a catalog advertises, reduced to the contract's
 /// closed set in report order. Spellings outside the set are not
 /// selectable through `model.select`, so they are not offered.
-pub(super) fn selectable_efforts(supported: Option<&[String]>) -> Vec<Effort> {
+pub(crate) fn selectable_efforts(supported: Option<&[String]>) -> Vec<Effort> {
     let mut efforts = Vec::new();
     for spelling in supported.into_iter().flatten() {
         if let Some(effort) = Effort::parse(spelling)

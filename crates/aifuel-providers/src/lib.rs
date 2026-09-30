@@ -24,6 +24,7 @@ mod devin;
 mod discovery;
 mod gemini;
 mod integrations;
+mod local_adapter;
 mod model_catalog;
 mod monitoring;
 mod openrouter;

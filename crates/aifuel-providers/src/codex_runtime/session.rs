@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use tokio::sync::mpsc as tokio_mpsc;
 
@@ -36,10 +36,6 @@ const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long `start` waits for the setup report; the driver's own
 /// handshake deadline fires first, so this covers a wedged spawn only.
 pub(super) const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long `stop` polls for the driver to exit after killing its
-/// process. The reader sees output EOF on a dead process, so a live
-/// driver exits well inside this bound.
-const DRIVER_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The transport factory the driver asks for one app-server I/O pair.
 pub(super) type Connector =
@@ -161,7 +157,7 @@ pub(super) struct SessionState {
     /// The in-flight run, identified by the provider turn id.
     pub active_run: Option<RunId>,
     /// Approval Requests offered to hosts, keyed by contract request id.
-    pub pending: BTreeMap<String, PendingApproval>,
+    pub pending: BTreeMap<RequestId, PendingApproval>,
 }
 
 /// One server-initiated request parked on a host answer.
@@ -403,7 +399,7 @@ impl CodexSession {
                     "the Approval Request is not pending",
                 ));
             }
-            let Some(entry) = state.pending.get(request.as_str()) else {
+            let Some(entry) = state.pending.get(request) else {
                 return Err(AgentRuntimeError::new(
                     ReceiptCode::AlreadyResolved,
                     "the Approval Request is not pending",
@@ -412,7 +408,7 @@ impl CodexSession {
             let response = interactions::decision_response(entry, decision)?;
             let entry = state
                 .pending
-                .remove(request.as_str())
+                .remove(request)
                 .expect("the entry was just inspected");
             crate::codex::interaction::response_message(&entry.interaction, response)
                 .map_err(AgentRuntimeError::provider_error)?
@@ -499,16 +495,30 @@ impl CodexSession {
             self.kill_child();
             self.driver.lock().expect("driver mutex").take()
         };
-        if let Some(driver) = driver {
-            let deadline = Instant::now() + DRIVER_JOIN_TIMEOUT;
-            while !driver.is_finished() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
-            if driver.is_finished() {
-                let _ = driver.join();
-            }
-        }
+        crate::local_adapter::join_bounded(driver);
         self.finish_close(None);
+    }
+}
+
+impl crate::local_adapter::LocalSession for CodexSession {
+    fn resume_cursor(&self) -> Option<String> {
+        self.resume_cursor()
+    }
+
+    fn set_selection(&self, selection: ModelSelection) -> Result<(), AgentRuntimeError> {
+        self.set_selection(selection)
+    }
+
+    fn take_events(&self) -> Option<mpsc::Receiver<AgentEventKind>> {
+        self.take_events()
+    }
+
+    fn shutdown(&self) {
+        self.shutdown();
+    }
+
+    fn close_transport(&self) {
+        self.close_transport();
     }
 }
 

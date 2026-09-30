@@ -30,36 +30,26 @@
 //!   accepts.
 
 use aifuel_core::{
-    AdapterCapabilities, AgentAdapter, AgentExecutionAdapter, AgentIntegrationInfo,
-    AgentRuntimeError, DiscoveryError, DiscoveryState, ExecutionAvailability, IntegrationId,
-    ModelDescriptor, ModelSelection, ProviderId, ProviderKey, ReceiptCode, SessionId,
+    AdapterCapabilities, AgentExecutionAdapter, AgentIntegrationInfo, AgentRuntimeError,
+    ExecutionAvailability, IntegrationId, ModelDescriptor, ModelSelection, ProviderId, ProviderKey,
+    SessionId,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
+use std::sync::{Arc, OnceLock};
 
 mod adapter;
-mod descriptors;
 mod driver;
 mod protocol;
 mod session;
 #[cfg(test)]
 mod tests;
 
-use crate::cli_adapter::AdapterDiscovery;
-use crate::integrations::{EvidenceContext, EvidenceSource, builtin_integrations, inspect_any};
-use crate::model_catalog::{
-    ProviderCatalogDiscovery, ProviderCatalogModel, discover_model_catalog,
-};
+use crate::integrations::{EvidenceSource, builtin_integrations};
+use crate::local_adapter::descriptors;
+use crate::local_adapter::{self, AdapterDiscovery, AdapterEvidence, SessionMap};
+use crate::model_catalog::ProviderCatalogModel;
 use session::ClaudeSession;
-
-/// Local evidence attached to the adapter: the descriptor's declared
-/// sources plus the context to inspect them with.
-struct AdapterEvidence {
-    sources: Vec<EvidenceSource>,
-    context: AdapterDiscovery,
-}
 
 /// An honest [`AgentAdapter`](aifuel_core::AgentAdapter) over the
 /// Claude Code stream-json protocol.
@@ -78,7 +68,7 @@ pub struct ClaudeAdapter {
     /// first use. Discovery failures surface as no advertised models,
     /// never a guessed list.
     catalog: OnceLock<Vec<ProviderCatalogModel>>,
-    sessions: Mutex<BTreeMap<String, Arc<ClaudeSession>>>,
+    sessions: SessionMap<ClaudeSession>,
     next_id: AtomicU64,
     /// The transport factory the session driver asks for a `claude`
     /// I/O pair; production spawns the process, tests inject a scripted
@@ -112,7 +102,7 @@ impl ClaudeAdapter {
             evidence: None,
             agent_info: OnceLock::new(),
             catalog: OnceLock::new(),
-            sessions: Mutex::new(BTreeMap::new()),
+            sessions: SessionMap::new(BTreeMap::new()),
             next_id: AtomicU64::new(0),
             connector: session::default_connector(),
         }
@@ -125,7 +115,7 @@ impl ClaudeAdapter {
         sources: Vec<EvidenceSource>,
         context: AdapterDiscovery,
     ) -> Self {
-        self.evidence = Some(AdapterEvidence { sources, context });
+        self.evidence = Some(AdapterEvidence::new(sources, context));
         self
     }
 
@@ -143,7 +133,10 @@ impl ClaudeAdapter {
     /// from the probed native evidence plus attached discovery
     /// sources.
     pub fn availability(&self) -> ExecutionAvailability {
-        descriptors::availability_from(self.agent_info(), self.discovered())
+        descriptors::availability_from(
+            self.agent_info(),
+            local_adapter::discovered(self.evidence.as_ref(), &self.integration()),
+        )
     }
 
     /// The probed integration evidence, cached after the first
@@ -156,10 +149,7 @@ impl ClaudeAdapter {
     /// The resume cursor a live session continues from: the claude
     /// session id `system`/`init` reported at session start.
     pub fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
-        let sessions = self.sessions.lock().expect("sessions mutex");
-        sessions
-            .get(session_id.as_str())
-            .and_then(|session| session.resume_cursor())
+        local_adapter::resume_cursor(&self.sessions, session_id)
     }
 
     /// Apply a resolved `model.select` to one session. The selection
@@ -168,88 +158,31 @@ impl ClaudeAdapter {
     /// change. The wire `set_model` request must land before the
     /// selection stores.
     ///
-    /// This is an inherent method because [`AgentAdapter`] keeps
-    /// selection inside session state; the facade resolves then
+    /// This is an inherent method because [`AgentAdapter`](aifuel_core::AgentAdapter)
+    /// keeps selection inside session state; the facade resolves then
     /// applies it here.
     pub fn set_selection(
         &self,
         handle: &aifuel_core::AgentSessionHandle,
         selection: ModelSelection,
     ) -> Result<ModelDescriptor, AgentRuntimeError> {
-        let descriptor = self.resolve(&selection)?;
-        self.session(&handle.session_id)?.set_selection(selection)?;
-        Ok(descriptor)
-    }
-
-    /// Inspect the attached evidence sources for this integration.
-    /// `None` means no discovery context was attached, which reads as
-    /// `unknown` availability rather than absent evidence.
-    fn discovered(&self) -> Option<Result<DiscoveryState, DiscoveryError>> {
-        let evidence = self.evidence.as_ref()?;
-        let context = EvidenceContext {
-            discovery: &evidence.context.discovery,
-            credentials: &evidence.context.credentials,
-            configured: &evidence.context.configured,
-        };
-        Some(inspect_any(
-            &evidence.sources,
-            &self.integration(),
-            &context,
-        ))
+        local_adapter::set_selection(self, &self.sessions, handle, selection)
     }
 
     /// The advertised catalog, discovered once. Discovery failures
     /// are not retried and surface as no advertised models, never a
     /// guessed list.
     fn catalog_models(&self) -> &[ProviderCatalogModel] {
-        self.catalog.get_or_init(|| self.discover_catalog())
-    }
-
-    fn discover_catalog(&self) -> Vec<ProviderCatalogModel> {
-        // The catalog interface is async; run it on a short-lived
-        // runtime on a scoped thread, the same pattern the CLI
-        // adapter uses.
-        let discovery = thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_io()
-                        .enable_time()
-                        .build()
-                        .ok()?;
-                    Some(runtime.block_on(discover_model_catalog(ProviderKey::Claude)))
-                })
-                .join()
-        });
-        match discovery {
-            Ok(Some(ProviderCatalogDiscovery::Available { models, .. })) => models,
-            _ => Vec::new(),
-        }
+        self.catalog
+            .get_or_init(|| local_adapter::discover_catalog(ProviderKey::Claude))
     }
 
     fn ensure_serves(&self, integration: &IntegrationId) -> Result<(), AgentRuntimeError> {
-        if *integration == self.integration() {
-            Ok(())
-        } else {
-            Err(AgentRuntimeError::unsupported(format!(
-                "this adapter serves integration {} only",
-                self.integration()
-            )))
-        }
+        local_adapter::ensure_serves(&self.integration(), integration)
     }
 
     fn session(&self, session_id: &SessionId) -> Result<Arc<ClaudeSession>, AgentRuntimeError> {
-        self.sessions
-            .lock()
-            .expect("sessions mutex")
-            .get(session_id.as_str())
-            .cloned()
-            .ok_or_else(|| {
-                AgentRuntimeError::new(
-                    ReceiptCode::UnknownSession,
-                    "the session id is not live in this adapter",
-                )
-            })
+        local_adapter::live_session(&self.sessions, session_id)
     }
 
     /// The raw event receiver, for tests that need bounded reads the
@@ -259,11 +192,7 @@ impl ClaudeAdapter {
         &self,
         handle: &aifuel_core::AgentSessionHandle,
     ) -> Option<std::sync::mpsc::Receiver<aifuel_core::AgentEventKind>> {
-        self.sessions
-            .lock()
-            .expect("sessions mutex")
-            .get(handle.session_id.as_str())
-            .and_then(|session| session.take_events())
+        local_adapter::test_events(&self.sessions, &handle.session_id)
     }
 
     /// An adapter whose sessions speak over the given transport
@@ -293,10 +222,7 @@ impl Drop for ClaudeAdapter {
     /// exits when its `claude` process dies, and pending approval
     /// waiters release with the session state.
     fn drop(&mut self) {
-        let sessions = self.sessions.lock().expect("sessions mutex");
-        for session in sessions.values() {
-            session.close_transport();
-        }
+        local_adapter::close_all(&self.sessions);
     }
 }
 

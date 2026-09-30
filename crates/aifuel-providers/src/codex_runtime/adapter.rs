@@ -9,7 +9,8 @@
 //! `restore_checkpoint`) answer with explicit `unsupported` receipts
 //! rather than silent no-ops.
 
-use super::{CodexAdapter, descriptors, session};
+use super::{CodexAdapter, session};
+use crate::local_adapter::descriptors;
 use aifuel_core::{
     AdapterCapabilities, AgentAdapter, AgentEventStream, AgentRuntimeError, AgentSessionHandle,
     ApprovalDecision, CapabilityState, CheckpointId, ExecutionAvailability, Integration,
@@ -49,7 +50,9 @@ impl AgentAdapter for CodexAdapter {
                 // No catalog evidence advertises this model.
                 advertised: false,
                 entitled: CapabilityState::Unknown,
-                availability,
+                // Nothing verified the provider serves this model, so
+                // the integration's readiness does not transfer to it.
+                availability: ExecutionAvailability::Unknown,
                 quota: None,
             });
         if let Some(effort) = selection.effort
@@ -176,7 +179,7 @@ impl AgentAdapter for CodexAdapter {
         self.sessions
             .lock()
             .expect("sessions mutex")
-            .insert(session_id.as_str().to_owned(), session);
+            .insert(session_id.clone(), session);
         Ok(AgentSessionHandle {
             session_id,
             provider_session: Some(thread_id),
@@ -206,14 +209,7 @@ impl AgentAdapter for CodexAdapter {
     }
 
     fn events(&self, handle: &AgentSessionHandle) -> AgentEventStream {
-        let sessions = self.sessions.lock().expect("sessions mutex");
-        match sessions.get(handle.session_id.as_str()) {
-            Some(session) => session
-                .take_events()
-                .map(|events| Box::new(events.into_iter()) as AgentEventStream)
-                .unwrap_or_else(|| Box::new(std::iter::empty())),
-            None => Box::new(std::iter::empty()),
-        }
+        crate::local_adapter::event_stream(&self.sessions, &handle.session_id)
     }
 
     fn checkpoint(
@@ -237,18 +233,6 @@ impl AgentAdapter for CodexAdapter {
     }
 
     fn stop(&self, handle: AgentSessionHandle) -> Result<(), AgentRuntimeError> {
-        let session = self
-            .sessions
-            .lock()
-            .expect("sessions mutex")
-            .remove(handle.session_id.as_str())
-            .ok_or_else(|| {
-                AgentRuntimeError::new(
-                    ReceiptCode::UnknownSession,
-                    "the session id is not live in this adapter",
-                )
-            })?;
-        session.shutdown();
-        Ok(())
+        crate::local_adapter::stop(&self.sessions, &handle.session_id)
     }
 }
