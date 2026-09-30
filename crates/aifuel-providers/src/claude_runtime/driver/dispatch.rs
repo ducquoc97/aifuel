@@ -57,6 +57,10 @@ pub(super) fn on_line(
                 .pending
                 .remove(&aifuel_core::RequestId::new(request_id));
         }
+        // Answers to this adapter's own control requests (`interrupt`,
+        // `set_model`) carry nothing the contract needs; the
+        // wire-write acknowledgement already reported their outcome.
+        Frame::ControlResponse { .. } => {}
         Frame::Result(result) => finish_run(session, flow, result),
         Frame::Quota(quota) => session.emit(AgentEventKind::QuotaObserved {
             integration_id: session.integration.clone(),

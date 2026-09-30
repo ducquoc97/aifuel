@@ -14,8 +14,9 @@
 //! - `streaming` comes from `--include-partial-messages`
 //!   `stream_event` text and thinking deltas, with the completed
 //!   `assistant` frame as the fallback answer path.
-//! - `resume` is the provider's `--resume <session-id>`; the session id
-//!   `system`/`init` reports is the resume cursor persisted on the
+//! - `resume` is the provider's `--resume <session-id>`; the provider
+//!   session id the wire reports (SessionStart hook frames,
+//!   `system`/`init`, results) is the resume cursor persisted on the
 //!   session handle.
 //! - `approvals` answers `can_use_tool` control requests through
 //!   `--permission-prompt-tool stdio` and error-replies every other
@@ -146,8 +147,9 @@ impl ClaudeAdapter {
             .get_or_init(|| crate::claude::AGENT_RUN_ADAPTER.agent_info())
     }
 
-    /// The resume cursor a live session continues from: the claude
-    /// session id `system`/`init` reported at session start.
+    /// The resume cursor a live session continues from: the provider
+    /// session id the wire reported, or the cursor a `--resume`
+    /// session was seeded with.
     pub fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
         local_adapter::resume_cursor(&self.sessions, session_id)
     }

@@ -233,6 +233,17 @@ pub(super) enum Frame {
     ControlRequest { request_id: String, request: Value },
     /// The CLI withdrew one of its own requests.
     ControlCancel { request_id: String },
+    /// A `control_response` answering a control request this adapter
+    /// wrote. Only the startup handshake matches it (the `initialize`
+    /// answer); later replies such as `interrupt` acks need no
+    /// dispatch, so the frame carries no more than the outcome.
+    ControlResponse {
+        request_id: String,
+        /// `response.subtype` was `success`.
+        ok: bool,
+        /// The provider's message when `subtype` was `error`.
+        error: Option<String>,
+    },
     /// `result`: the terminal fact of the current turn.
     Result(ResultFrame),
     /// `rate_limit_event`: a live Quota Pool observation.
@@ -240,7 +251,7 @@ pub(super) enum Frame {
     /// A top-level `error` frame.
     Error(String),
     /// Frames the protocol carries that mean nothing to the contract:
-    /// `control_response`, `keep_alive`, `tool_progress`, and the rest.
+    /// `keep_alive`, `tool_progress`, and the rest.
     Ignored,
 }
 
@@ -314,6 +325,21 @@ pub(super) fn parse_frame(value: &Value) -> Frame {
                 .unwrap_or_default()
                 .to_owned(),
         },
+        Some("control_response") => {
+            let response = value.get("response").cloned().unwrap_or(Value::Null);
+            Frame::ControlResponse {
+                request_id: response
+                    .get("request_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                ok: response.get("subtype").and_then(Value::as_str) == Some("success"),
+                error: response
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            }
+        }
         Some("result") => Frame::Result(result_frame(value)),
         Some("rate_limit_event") => value
             .get("rate_limit_info")
@@ -334,6 +360,14 @@ pub(super) fn parse_frame(value: &Value) -> Frame {
         ),
         _ => Frame::Ignored,
     }
+}
+
+/// The provider session id any inbound frame may carry at top level.
+/// SessionStart hook frames report it before `system`/`init` exists;
+/// the handshake captures it opportunistically from whichever frame
+/// reports first so the resume cursor fills as early as it can.
+pub(super) fn frame_session_id(value: &Value) -> Option<String> {
+    non_empty(value.get("session_id"))
 }
 
 fn parse_block(block: &Value) -> Option<Block> {

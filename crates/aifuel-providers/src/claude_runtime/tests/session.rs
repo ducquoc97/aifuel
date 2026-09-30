@@ -1,7 +1,8 @@
 //! Session lifecycle coverage over the scripted duplex: ordering,
 //! streaming, approvals, cancellation, resume cursors, and teardown.
-//! The fake transport answers the `initialize` control request with
-//! the `system`/`init` frame a real `claude` sends.
+//! The fake transport answers the `initialize` control request; the
+//! fixture chooses whether `system`/`init` arrives at startup or only
+//! after the first user message, the way claude 2.1.284 behaves.
 
 use super::*;
 use aifuel_core::{
@@ -87,6 +88,97 @@ fn start_reports_the_provider_session_and_goes_idle() {
     // The initialize handshake reached the wire before init arrived.
     assert!(script.written_lines()[0].contains("\"initialize\""));
     adapter.stop(handle).expect("stop succeeds");
+}
+
+#[test]
+fn start_succeeds_when_init_only_follows_the_first_turn() {
+    // claude 2.1.284 emits `system`/`init` after the first user
+    // message, not at startup; the initialize answer is the startup
+    // signal. On a hookless machine no frame carries the provider
+    // session id yet, so the cursor stays unknown until the turn's
+    // init lands.
+    let (adapter, _script, handle, events) = running_session_with(late_init("sess-late", |push| {
+        push("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false}");
+    }));
+    assert_eq!(handle.provider_session, None);
+    assert_eq!(adapter.resume_cursor(&handle.session_id), None);
+    recv(&events); // session.created
+    recv(&events); // idle
+    send_and_wait(&adapter, &handle, "first turn");
+    through_idle(&events);
+    assert_eq!(
+        adapter.resume_cursor(&handle.session_id).as_deref(),
+        Some("sess-late")
+    );
+    adapter.stop(handle).expect("stop succeeds");
+}
+
+#[test]
+fn hook_frames_report_the_provider_session_before_the_answer() {
+    // SessionStart hook frames carry the provider session id ahead of
+    // the initialize answer; the handshake captures it from whichever
+    // frame reports first, so the cursor is known at create time even
+    // though `system`/`init` still waits for the first turn.
+    let (adapter, _script, handle, events) =
+        running_session_with(late_init_with_hooks("sess-hooks", |push| {
+            push("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false}");
+        }));
+    assert_eq!(handle.provider_session.as_deref(), Some("sess-hooks"));
+    assert_eq!(
+        adapter.resume_cursor(&handle.session_id).as_deref(),
+        Some("sess-hooks")
+    );
+    recv(&events); // session.created
+    recv(&events); // idle
+    send_and_wait(&adapter, &handle, "turn");
+    through_idle(&events);
+    assert_eq!(
+        adapter.resume_cursor(&handle.session_id).as_deref(),
+        Some("sess-hooks")
+    );
+    adapter.stop(handle).expect("stop succeeds");
+}
+
+#[test]
+fn a_resumed_session_reports_its_cursor_before_any_frame() {
+    // `--resume` already names the provider session, so the session
+    // reports the cursor from construction instead of waiting on wire
+    // evidence - which on 2.1.284 only lands with the first turn.
+    let (_script, connector) = scripted(late_init("sess-persisted", |push| {
+        push("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false}");
+    }));
+    let adapter = adapter_with(connector);
+    let mut options = options(AccessMode::WorkspaceWrite);
+    options.resume_cursor = Some("sess-persisted".to_owned());
+    let handle = adapter
+        .start(&integration(), options)
+        .expect("the scripted session starts");
+    assert_eq!(handle.provider_session.as_deref(), Some("sess-persisted"));
+    assert_eq!(
+        adapter.resume_cursor(&handle.session_id).as_deref(),
+        Some("sess-persisted")
+    );
+    adapter.stop(handle).expect("stop succeeds");
+}
+
+#[test]
+fn an_error_control_response_fails_create() {
+    // The provider refused initialize: create surfaces its message
+    // instead of waiting out the handshake timeout.
+    let (_script, connector) = scripted(|line, tx| {
+        if line.contains("\"initialize\"") {
+            let request_id = request_id_of(line);
+            let _ = tx.send(format!(
+                "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"error\",\"request_id\":\"{request_id}\",\"error\":\"initialize refused\"}}}}"
+            ));
+        }
+    });
+    let adapter = adapter_with(connector);
+    let error = adapter
+        .start(&integration(), options(AccessMode::WorkspaceWrite))
+        .expect_err("the provider's refusal fails create");
+    assert_eq!(error.code, ReceiptCode::ProviderError);
+    assert!(error.message.contains("initialize refused"));
 }
 
 #[test]

@@ -130,7 +130,7 @@ pub(super) struct SessionSetup {
 }
 
 /// The report `start` waits on after launching the driver: `Ok` once
-/// the provider's `system`/`init` frame reported the session id.
+/// the provider answered the `initialize` control request.
 pub(super) type SetupReport = Result<(), String>;
 
 /// One stdout line the reader forwards to the driver. `Eof` and
@@ -216,8 +216,10 @@ pub(super) struct SessionState {
     /// `session.closed` was emitted; teardown paths must not repeat it.
     pub close_emitted: bool,
     pub selection: ModelSelection,
-    /// The claude session id `system`/`init` reported; the provider
-    /// resume cursor for this session.
+    /// The provider session id, this session's resume cursor. A
+    /// `--resume` start seeds it from the persisted cursor; every
+    /// frame that reports a session id (SessionStart hooks,
+    /// `system`/`init`, results) keeps it current.
     pub claude_session_id: Option<String>,
     /// The in-flight run. The adapter reserves it before posting the
     /// command so a second `send` loses immediately.
@@ -241,6 +243,7 @@ impl ClaudeSession {
         cwd: PathBuf,
         access: AccessMode,
         selection: ModelSelection,
+        resume_cursor: Option<String>,
     ) -> Arc<Self> {
         let (emit, events) = mpsc::channel();
         let (inbox, inbox_rx) = mpsc::channel();
@@ -258,7 +261,9 @@ impl ClaudeSession {
                 announced: false,
                 close_emitted: false,
                 selection,
-                claude_session_id: None,
+                // A resumed session's provider id is already known:
+                // it IS the resume cursor `--resume` carries.
+                claude_session_id: resume_cursor,
                 active_run: None,
                 pending: BTreeMap::new(),
             }),
@@ -296,8 +301,8 @@ impl ClaudeSession {
             .clone()
     }
 
-    /// Emit the fresh-session prelude once, after the handshake reports
-    /// the provider session id. Held under the state lock so
+    /// Emit the fresh-session prelude once, after the provider answered
+    /// the `initialize` handshake. Held under the state lock so
     /// `session.closed` can never precede `session.created` when a
     /// teardown races the announcement.
     pub fn announce(&self) {

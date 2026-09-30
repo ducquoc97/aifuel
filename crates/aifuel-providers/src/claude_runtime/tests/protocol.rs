@@ -266,10 +266,59 @@ fn rate_limit_events_carry_quota_evidence() {
 }
 
 #[test]
+fn control_responses_parse_with_their_outcome() {
+    let frame = protocol::parse_frame(&parsed(
+        "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"req-1\"}}",
+    ));
+    let Frame::ControlResponse {
+        request_id,
+        ok,
+        error,
+    } = frame
+    else {
+        panic!("expected a control response, got {frame:?}")
+    };
+    assert_eq!(request_id, "req-1");
+    assert!(ok);
+    assert_eq!(error, None);
+
+    let frame = protocol::parse_frame(&parsed(
+        "{\"type\":\"control_response\",\"response\":{\"subtype\":\"error\",\"request_id\":\"req-2\",\"error\":\"refused\"}}",
+    ));
+    let Frame::ControlResponse {
+        request_id,
+        ok,
+        error,
+    } = frame
+    else {
+        panic!("expected a control response, got {frame:?}")
+    };
+    assert_eq!(request_id, "req-2");
+    assert!(!ok);
+    assert_eq!(error.as_deref(), Some("refused"));
+}
+
+#[test]
+fn any_frame_can_report_the_session_id() {
+    // Hook frames and housekeeping subtypes stay Ignored, but the
+    // handshake still reads the top-level session id they carry.
+    let hook =
+        parsed("{\"type\":\"system\",\"subtype\":\"hook_started\",\"session_id\":\"sess-hook\"}");
+    assert!(matches!(protocol::parse_frame(&hook), Frame::Ignored));
+    assert_eq!(
+        protocol::frame_session_id(&hook).as_deref(),
+        Some("sess-hook")
+    );
+    assert_eq!(
+        protocol::frame_session_id(&parsed("{\"type\":\"keep_alive\"}")),
+        None
+    );
+}
+
+#[test]
 fn unknown_frames_are_ignored_not_failures() {
     for line in [
         "{\"type\":\"keep_alive\"}",
-        "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"x\"}}",
         "{\"type\":\"system\",\"subtype\":\"commands_changed\"}",
         "{\"type\":\"tool_progress\"}",
         "{\"not\":\"a frame\"}",

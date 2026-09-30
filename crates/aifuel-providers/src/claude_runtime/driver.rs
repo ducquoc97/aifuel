@@ -22,9 +22,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-/// How long the handshake waits for `system`/`init`. A local spawn
-/// reports in well under a second; the bound covers provider startup
-/// work only.
+/// How long the handshake waits for the `initialize` answer. A local
+/// spawn answers in about a second; the bound covers a wedged spawn
+/// only.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 /// The stderr tail kept for diagnostics on unexpected process exit.
 const STDERR_TAIL_BYTES: usize = 64 * 1024;

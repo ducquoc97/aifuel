@@ -141,11 +141,15 @@ impl AgentAdapter for ClaudeAdapter {
             effort: options.selection.effort,
             resume_cursor: options.resume_cursor,
         };
+        // A `--resume` session's provider id is the persisted cursor
+        // itself, so the session reports it from construction rather
+        // than waiting on a frame that may lag until the first turn.
         let session = ClaudeSession::new(
             integration.id.clone(),
             cwd,
             options.access,
             options.selection,
+            setup.resume_cursor.clone(),
         );
         let (setup_tx, setup_rx) = mpsc::channel();
         session.start_driver(self.connector.clone(), setup, setup_tx)?;

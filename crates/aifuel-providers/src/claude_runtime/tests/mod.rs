@@ -195,17 +195,49 @@ impl BufRead for ChannelReader {
     }
 }
 
+/// The `request_id` the driver stamped on a control request line it
+/// wrote; the scripted provider echoes it back in its answer.
+fn request_id_of(line: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("request_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+/// The `control_response` success answer a control request gets.
+fn control_ok(request_id: &str) -> String {
+    format!(
+        "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"{request_id}\"}}}}"
+    )
+}
+
+/// The `system`/`init` frame carrying the provider session id.
+fn init_frame(session_id: &str) -> String {
+    format!(
+        "{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"{session_id}\",\"model\":\"claude-test\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}}"
+    )
+}
+
+/// A SessionStart `system`/`hook_*` frame, which carries the provider
+/// session id before `system`/`init` exists.
+fn hook_frame(subtype: &str, session_id: &str) -> String {
+    format!(
+        "{{\"type\":\"system\",\"subtype\":\"{subtype}\",\"session_id\":\"{session_id}\",\"hook_name\":\"SessionStart hook\",\"hook_event\":\"SessionStart\"}}"
+    )
+}
+
 /// The scripted initialize handshake every session needs before
 /// `start` returns: on the driver's `initialize` control request,
-/// answer it and report the `system`/`init` frame carrying the
-/// provider session id.
-pub(super) fn init_replies(session_id: &'static str) -> Vec<String> {
-    vec![
-        "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"init-1\"}}".to_owned(),
-        format!(
-            "{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"{session_id}\",\"model\":\"claude-test\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}}"
-        ),
-    ]
+/// report the `system`/`init` frame carrying the provider session id
+/// and answer the request - the order versions that emit init at
+/// startup produce.
+pub(super) fn init_replies(request_id: &str, session_id: &str) -> Vec<String> {
+    vec![init_frame(session_id), control_ok(request_id)]
 }
 
 /// A `respond` closure that always plays the initialize handshake,
@@ -231,13 +263,68 @@ pub(super) fn with_init_then(
             let _ = tx.send(line.to_owned());
         };
         if line.contains("\"initialize\"") {
-            for reply in init_replies(session_id) {
+            for reply in init_replies(&request_id_of(line), session_id) {
                 push(&reply);
             }
         } else if line.contains("\"type\":\"user\"") {
             on_user(&push);
         } else if line.contains("\"control_response\"") {
             on_response(&push);
+        }
+    }
+}
+
+/// The claude 2.1.284 startup shape on a hookless machine: only the
+/// `initialize` answer arrives up front, and `system`/`init` follows
+/// the first user message rather than completing the handshake.
+pub(super) fn late_init(
+    session_id: &'static str,
+    on_user: impl Fn(&dyn Fn(&str)) + Send + 'static,
+) -> impl FnMut(&str, &mpsc::Sender<String>) + Send {
+    late_init_with_prelude(session_id, Vec::new(), on_user)
+}
+
+/// `late_init` on a machine with SessionStart hooks: `hook_started`
+/// and `hook_response` frames, which carry the provider session id,
+/// precede the initialize answer.
+pub(super) fn late_init_with_hooks(
+    session_id: &'static str,
+    on_user: impl Fn(&dyn Fn(&str)) + Send + 'static,
+) -> impl FnMut(&str, &mpsc::Sender<String>) + Send {
+    late_init_with_prelude(
+        session_id,
+        vec![
+            hook_frame("hook_started", session_id),
+            hook_frame("hook_response", session_id),
+        ],
+        on_user,
+    )
+}
+
+/// The shared body of the late-init fixtures: `prelude` plays the
+/// frames a real CLI emits ahead of the initialize answer, then the
+/// answer lands; `system`/`init` waits for the first `user` write.
+fn late_init_with_prelude(
+    session_id: &'static str,
+    prelude: Vec<String>,
+    on_user: impl Fn(&dyn Fn(&str)) + Send + 'static,
+) -> impl FnMut(&str, &mpsc::Sender<String>) + Send {
+    let mut init_sent = false;
+    move |line, tx| {
+        let push = |line: &str| {
+            let _ = tx.send(line.to_owned());
+        };
+        if line.contains("\"initialize\"") {
+            for frame in &prelude {
+                push(frame);
+            }
+            push(&control_ok(&request_id_of(line)));
+        } else if line.contains("\"type\":\"user\"") {
+            if !init_sent {
+                init_sent = true;
+                push(&init_frame(session_id));
+            }
+            on_user(&push);
         }
     }
 }
