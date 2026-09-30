@@ -32,8 +32,7 @@ mod wire;
 
 pub use agent_run_registry::agent_run_adapters;
 pub use cli_adapter::{
-    AdapterDiscovery, CliAdapter, auth_binding_kind, availability_from, cli_fallback_adapters,
-    execution_capabilities, integration_summary, model_descriptors, quota_summary,
+    AdapterDiscovery, CliAdapter, cli_fallback_adapters, integration_summary, quota_summary,
 };
 pub use credentials::{
     CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore, CredentialStoreError,

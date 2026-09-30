@@ -159,6 +159,7 @@ where
     let sandbox = match request.access {
         AccessMode::ReadOnly => "read-only",
         AccessMode::WorkspaceWrite => "workspace-write",
+        AccessMode::Full => "danger-full-access",
     };
     let config = app_server_config(request)?;
     let thread_method = if request.resume.is_some() {
@@ -228,19 +229,28 @@ where
         .await?;
     }
 
-    send(stdin, json!({
-        "id":2,
-        "method":"turn/start",
-        "params":{
-            "threadId":thread_id,
-            "input":[{"type":"text","text":request.prompt}],
-            "model":request.model,
-            "effort":request.effort,
-            "approvalPolicy":"on-request",
-            "sandboxPolicy": if request.access == AccessMode::ReadOnly { json!({"type":"readOnly"}) } else { json!({"type":"workspaceWrite"}) },
-            "cwd":cwd
-        }
-    }), Some(setup_deadline)).await?;
+    send(
+        stdin,
+        json!({
+            "id":2,
+            "method":"turn/start",
+            "params":{
+                "threadId":thread_id,
+                "input":[{"type":"text","text":request.prompt}],
+                "model":request.model,
+                "effort":request.effort,
+                "approvalPolicy":"on-request",
+                "sandboxPolicy": match request.access {
+                    AccessMode::ReadOnly => json!({"type":"readOnly"}),
+                    AccessMode::WorkspaceWrite => json!({"type":"workspaceWrite"}),
+                    AccessMode::Full => json!({"type":"dangerFullAccess"}),
+                },
+                "cwd":cwd
+            }
+        }),
+        Some(setup_deadline),
+    )
+    .await?;
     expect_successful_response(stdout, 2, setup_deadline, cancellation).await?;
 
     let mut answer = String::new();

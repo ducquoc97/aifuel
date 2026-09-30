@@ -146,6 +146,14 @@ impl CliExecutionAdapter {
                 self.provider
             )));
         }
+        // Full access subsumes workspace-write: an adapter that cannot
+        // enforce the narrower boundary cannot claim the wider one either.
+        if request.access == AccessMode::Full && !self.capabilities.supports_workspace_write {
+            return Err(AgentRunError::InvalidRequest(format!(
+                "{} cannot enforce full access",
+                self.provider
+            )));
+        }
         if request.output == OutputFormat::Jsonl && !self.capabilities.supports_jsonl {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} cannot provide verified JSONL output",

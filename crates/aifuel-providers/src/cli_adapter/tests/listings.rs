@@ -49,7 +49,7 @@ fn model_descriptors_merge_without_promotion() {
         resets_at: Some(1_700_000_000.0),
         depleted: false,
     });
-    let models = model_descriptors(
+    let models = descriptors::model_descriptors(
         ProviderId::new("codex"),
         &advertised,
         &entitlements,

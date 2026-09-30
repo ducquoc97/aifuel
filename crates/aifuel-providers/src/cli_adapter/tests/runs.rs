@@ -273,8 +273,48 @@ fn reported_provider_session_feeds_resume() {
     );
     drop(requests);
     assert_eq!(
-        adapter.provider_session(&handle.session_id).as_deref(),
+        adapter.resume_cursor(&handle.session_id).as_deref(),
         Some("native-2"),
         "the facade can persist the newest provider session id"
+    );
+}
+
+/// A persisted resume cursor seeds a restarted session: the first run
+/// continues the provider session it names, and the cursor stays readable
+/// for shutdown persistence.
+#[test]
+fn seeded_resume_cursor_continues_the_provider_session() {
+    let execution = Arc::new(
+        FakeExecution::declaring(ProviderKey::Claude, &[AgentCapability::Resume]).with_runs(vec![
+            FakeRun::Complete {
+                status: RunStatus::Succeeded,
+                output: "resumed",
+                session_id: Some("native-2"),
+            },
+        ]),
+    );
+    let adapter = CliAdapter::new(execution.clone());
+    let mut options = options(ProviderKey::Claude, AccessMode::ReadOnly);
+    options.resume_cursor = Some("native-1".to_owned());
+    let handle = adapter
+        .start(&integration(ProviderKey::Claude), options)
+        .expect("session starts");
+    let events = test_events(&adapter, &handle);
+    adapter
+        .send(&handle, input("continue"))
+        .expect("send is accepted");
+    through_run_completed(&events);
+
+    let requests = execution.requests.lock().expect("requests mutex");
+    assert_eq!(
+        requests[0].resume.as_deref(),
+        Some("native-1"),
+        "the seeded cursor resumes the persisted provider session"
+    );
+    drop(requests);
+    assert_eq!(
+        adapter.resume_cursor(&handle.session_id).as_deref(),
+        Some("native-2"),
+        "a run-reported provider session replaces the seeded cursor"
     );
 }

@@ -140,11 +140,13 @@ impl AgentAdapter for CliAdapter {
             .map_err(session::execution_error)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let session_id = SessionId::new(format!("cli-session-{}-{id}", std::process::id()));
+        let resume_cursor = options.resume_cursor;
         let session = session::CliSession::new(
             integration.id.clone(),
             cwd.clone(),
             options.selection,
             options.access,
+            resume_cursor.clone(),
         );
         session.emit(AgentEventKind::SessionCreated {
             integration_id: integration.id.clone(),
@@ -159,7 +161,7 @@ impl AgentAdapter for CliAdapter {
             .insert(session_id.as_str().to_owned(), session);
         Ok(AgentSessionHandle {
             session_id,
-            provider_session: None,
+            provider_session: resume_cursor,
         })
     }
 

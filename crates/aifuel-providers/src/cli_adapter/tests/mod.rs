@@ -305,6 +305,7 @@ pub(super) fn options(provider: ProviderKey, access: AccessMode) -> StartOptions
             effort: None,
         },
         access,
+        resume_cursor: None,
     }
 }
 

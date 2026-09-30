@@ -33,6 +33,7 @@ fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
         match request.access {
             aifuel_core::AccessMode::ReadOnly => "plan".to_owned(),
             aifuel_core::AccessMode::WorkspaceWrite => "acceptEdits".to_owned(),
+            aifuel_core::AccessMode::Full => "bypassPermissions".to_owned(),
         },
         "--output-format".to_owned(),
         output_format(request.output).to_owned(),

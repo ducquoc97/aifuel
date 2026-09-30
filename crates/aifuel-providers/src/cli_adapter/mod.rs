@@ -40,10 +40,8 @@ mod session;
 #[cfg(test)]
 mod tests;
 
-pub use descriptors::{
-    auth_binding_kind, availability_from, execution_capabilities, integration_summary,
-    model_descriptors, quota_summary,
-};
+use descriptors::{availability_from, execution_capabilities};
+pub use descriptors::{integration_summary, quota_summary};
 
 use crate::agent_run_adapters;
 use crate::credentials::CredentialStore;
@@ -188,18 +186,18 @@ impl CliAdapter {
             .get_or_init(|| self.execution.adapter().agent_info())
     }
 
-    /// The provider-native session id the last run reported for a session,
-    /// when the provider protocol exposes one. The facade persists it so a
-    /// runtime restart can attempt provider-side continuation where
-    /// `resume` is declared.
-    pub fn provider_session(&self, session_id: &SessionId) -> Option<String> {
+    /// The resume cursor a live session continues from: the provider-native
+    /// session id the last run reported, or the persisted cursor startup
+    /// reconcile seeded. The facade persists it so a runtime restart can
+    /// attempt provider-side continuation where `resume` is declared.
+    pub fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
         let sessions = self.sessions.lock().expect("sessions mutex");
         sessions.get(session_id.as_str()).and_then(|session| {
             session
                 .state
                 .lock()
                 .expect("session state mutex")
-                .provider_session
+                .resume_cursor
                 .clone()
         })
     }

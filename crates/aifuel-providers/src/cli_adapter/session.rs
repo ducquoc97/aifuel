@@ -39,9 +39,11 @@ pub(super) struct CliSession {
 pub(super) struct SessionState {
     pub closed: bool,
     pub selection: ModelSelection,
-    /// The provider-native session id the last run reported, used as the
-    /// resume cursor where the adapter declares `resume`.
-    pub provider_session: Option<String>,
+    /// The resume cursor the session continues from: the provider-native
+    /// session id the last run reported, or the persisted cursor startup
+    /// reconcile seeded. Used as `RunRequest::resume` where the adapter
+    /// declares `resume`.
+    pub resume_cursor: Option<String>,
     pub active_run: Option<ActiveRun>,
 }
 
@@ -60,6 +62,7 @@ impl CliSession {
         cwd: PathBuf,
         selection: ModelSelection,
         access: AccessMode,
+        resume_cursor: Option<String>,
     ) -> Arc<Self> {
         let (emit, events) = mpsc::channel();
         Arc::new(Self {
@@ -71,7 +74,7 @@ impl CliSession {
             state: Mutex::new(SessionState {
                 closed: false,
                 selection,
-                provider_session: None,
+                resume_cursor,
                 active_run: None,
             }),
             next_id: AtomicU64::new(0),
@@ -170,7 +173,7 @@ impl CliSession {
             working_directory: Some(self.cwd.clone()),
             access: self.access,
             resume: if supports_resume {
-                state.provider_session.clone()
+                state.resume_cursor.clone()
             } else {
                 None
             },
@@ -273,7 +276,7 @@ impl CliSession {
             }
             match &result {
                 Ok(result) if result.session_id.is_some() => {
-                    state.provider_session = result.session_id.clone();
+                    state.resume_cursor = result.session_id.clone();
                 }
                 _ => {}
             }

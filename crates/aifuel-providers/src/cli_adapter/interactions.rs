@@ -195,11 +195,13 @@ impl AgentInteractionHandler for CliInteractionHandler {
                 Ok((decision, response)) => {
                     // The resolved fact and the resumption are emitted here,
                     // inside the run's causal order, rather than by the
-                    // answering thread.
+                    // answering thread. `answered_by` is a placeholder the
+                    // runtime pump rewrites with the answering consumer id;
+                    // the adapter never invents a consumer identity.
                     self.session.emit(AgentEventKind::ApprovalResolved {
                         request_id: request_id.clone(),
                         decision,
-                        answered_by: "cli".to_owned(),
+                        answered_by: "adapter".to_owned(),
                     });
                     self.session.emit(AgentEventKind::SessionStatus {
                         status: SessionStatus::Working,
@@ -248,7 +250,7 @@ fn approval_request(request: &AgentInteractionRequest, access: AccessMode) -> Ap
         },
         AgentInteractionKind::CommandApproval | AgentInteractionKind::FileChangeApproval => {
             let mut options = Vec::new();
-            if access == AccessMode::WorkspaceWrite && !request.requires_expanded_access {
+            if access != AccessMode::ReadOnly && !request.requires_expanded_access {
                 options.push(ApprovalOption {
                     id: "accept".to_owned(),
                     label: "Accept".to_owned(),
