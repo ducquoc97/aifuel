@@ -9,6 +9,7 @@ mod support;
 fn a_silent_agent_can_complete_after_thirty_seconds_without_an_explicit_deadline() {
     let directory = support::TestDirectory::new("no-default-deadline");
     let log_path = support::install_fake_codex_app_server(directory.path());
+    support::seed_codex_authentication(directory.path());
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([
             "run",

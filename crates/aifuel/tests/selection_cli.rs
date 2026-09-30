@@ -4,7 +4,10 @@ use std::process::Command;
 #[allow(dead_code)]
 mod support;
 
-use support::{TestDirectory, ai_fuel_config_dir, install_fake_codex_app_server, path_with};
+use support::{
+    TestDirectory, ai_fuel_config_dir, install_fake_codex_app_server, path_with,
+    seed_codex_authentication,
+};
 
 #[test]
 fn run_applies_a_named_profile_to_omitted_model_and_access_values() {
@@ -26,6 +29,7 @@ fn run_applies_a_named_profile_to_omitted_model_and_access_values() {
     )
     .expect("selection config should be writable");
     let log_path = install_fake_codex_app_server(directory.path());
+    seed_codex_authentication(directory.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([
@@ -72,7 +76,7 @@ fn resume_uses_stored_model_and_effort_instead_of_changed_global_defaults() {
             "defaults": {
                 "provider": "codex",
                 "model": "new-global-model",
-                "effort": "new-global-effort"
+                "effort": "low"
             },
             "policy": {
                 "allowed_roots": [directory.path()],
@@ -90,7 +94,7 @@ fn resume_uses_stored_model_and_effort_instead_of_changed_global_defaults() {
                 "session-77": {
                     "provider": "codex",
                     "model": "stored-session-model",
-                    "effort": "stored-session-effort",
+                    "effort": "high",
                     "working_directory": directory.path()
                 }
             }
@@ -99,6 +103,7 @@ fn resume_uses_stored_model_and_effort_instead_of_changed_global_defaults() {
     )
     .expect("managed session metadata should be writable");
     let log_path = install_fake_codex_app_server(directory.path());
+    seed_codex_authentication(directory.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([
@@ -116,6 +121,13 @@ fn resume_uses_stored_model_and_effort_instead_of_changed_global_defaults() {
         .env("APPDATA", directory.path())
         .env("XDG_CONFIG_HOME", directory.path().join(".config"))
         .env("AIFUEL_CODEX_FIXTURE_LOG", &log_path)
+        // The runtime resolves effort against the provider's Advertised
+        // Model catalog, so the fixture advertises the stored model's
+        // effort set for the resume to stay selectable.
+        .env(
+            "AIFUEL_CODEX_FIXTURE_CATALOG",
+            r#"{"models":[{"slug":"stored-session-model","supported_reasoning_levels":[{"effort":"high"}]}]}"#,
+        )
         .output()
         .expect("aifuel should start");
 
@@ -132,5 +144,5 @@ fn resume_uses_stored_model_and_effort_instead_of_changed_global_defaults() {
     assert_eq!(requests[2]["method"], "thread/resume");
     assert_eq!(requests[2]["params"]["model"], "stored-session-model");
     assert_eq!(requests[3]["params"]["model"], "stored-session-model");
-    assert_eq!(requests[3]["params"]["effort"], "stored-session-effort");
+    assert_eq!(requests[3]["params"]["effort"], "high");
 }

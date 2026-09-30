@@ -46,7 +46,7 @@ pub fn monitoring_facade() -> Result<MonitoringFacade<ProviderMonitoring>, Strin
 
 /// Compose the shared Agent Run facade over the runtime Integration set.
 pub fn agent_run_facade() -> Result<AgentRunFacade, String> {
-    Ok(AgentRunFacade::new(runtime_adapters()?))
+    Ok(AgentRunFacade::new(execution_adapters()?))
 }
 
 /// The user-level AI Fuel configuration directory (`credentials.json`,
@@ -165,6 +165,50 @@ impl AgentExecutionAdapter for StaticAdapter {
     }
 }
 
+/// Build the owned execution adapter set over one shared `AgentRuntime`:
+/// `Cli` descriptors resolve to the adapter the runtime registered for
+/// their Integration Identity behind a `RuntimeExecutionAdapter` shim, and
+/// `Http` descriptors to wire adapters. A `Cli` descriptor the runtime does
+/// not serve stays a valid registry entry for listing and auth, and simply
+/// has no adapter on this execution surface. Every shim in the set shares
+/// the one `AgentRuntime`, so sessions, resume cursors, and the durable
+/// session event log have a single owner per constructed adapter set.
+fn execution_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
+    let runtime = Arc::new(agent_runtime()?);
+    let registry = integration_registry()?;
+    let credentials = aifuel_providers::CredentialStore::new(aifuel_config_dir()?);
+    let mut adapters: Vec<Arc<dyn AgentExecutionAdapter>> = Vec::new();
+    for descriptor in registry.list() {
+        match &descriptor.integration.execution {
+            ExecutionConfig::Cli { adapter } => {
+                match aifuel_runtime::RuntimeExecutionAdapter::resolve(&runtime, descriptor.id()) {
+                    Some(shim) => adapters.push(Arc::new(shim)),
+                    None => eprintln!(
+                        "aifuel: {adapter} has no adapter registered in the agent runtime"
+                    ),
+                }
+            }
+            ExecutionConfig::Http { .. } => {
+                match aifuel_providers::WireExecutionAdapter::from_integration(
+                    &descriptor.integration,
+                    credentials.clone(),
+                ) {
+                    Ok(adapter) => adapters.push(Arc::new(adapter)),
+                    // A descriptor for a Wire Api with no compiled engine is
+                    // still a valid registry entry for listing and auth, but
+                    // has no execution adapter - selection reports it
+                    // unsupported instead of failing the whole run surface.
+                    Err(aifuel_providers::WireAdapterError::IncompatibleExecution(detail)) => {
+                        eprintln!("aifuel: {detail}");
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
+        }
+    }
+    Ok(adapters)
+}
+
 /// Open the portable agent runtime over the per-user run store for the
 /// `aifuel runtime` stdio bridge. The store directory is hardened the same
 /// way `execution_run_manager` does it, since WAL sidecar files inherit
@@ -192,7 +236,7 @@ pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
     }
     let config = aifuel_app::selection::SelectionStore::load(execution_config_path()?)
         .map_err(|error| error.to_string())?;
-    let manager = aifuel_app::RunManager::new(runtime_adapters()?)
+    let manager = aifuel_app::RunManager::new(execution_adapters()?)
         .with_execution_policy(&config.policy)
         .with_session_store(session_store_path()?)?;
     let db_path = run_store_path()?;

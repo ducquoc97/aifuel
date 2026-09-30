@@ -8,12 +8,14 @@ mod codex_resume {
 
     use super::support::{
         TestDirectory, ai_fuel_config_dir, install_fake_codex_app_server, path_with,
+        seed_codex_authentication,
     };
 
     #[test]
     fn codex_resume_uses_the_managed_native_session_with_read_only_sandbox() {
         let directory = TestDirectory::new("codex-resume");
         let log_path = install_fake_codex_app_server(directory.path());
+        seed_codex_authentication(directory.path());
         let config = ai_fuel_config_dir(directory.path());
         fs::create_dir_all(&config).expect("AI Fuel config directory should exist");
         fs::write(

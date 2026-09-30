@@ -19,12 +19,14 @@ pub mod bridge;
 mod checkpoints;
 mod commands;
 mod dispatch;
+mod execution_adapter;
 mod pump;
 mod registry;
 mod runtime;
 
 pub use adapter::RuntimeAdapter;
 pub use dispatch::{CommandOutcome, CommandPayload};
+pub use execution_adapter::RuntimeExecutionAdapter;
 pub use runtime::AgentRuntime;
 
 /// The largest number of log events one `session.subscribe` replays before
