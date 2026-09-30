@@ -64,41 +64,12 @@ pub(super) async fn handshake(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    // 2. authenticate, only when the agent advertised methods. A single
-    // advertised method is used; several require explicit configuration
-    // rather than a guess. Agents that advertise none are presumed not
-    // to need an interactive login.
-    let auth_methods: Vec<&str> = initialize
-        .get("authMethods")
-        .and_then(Value::as_array)
-        .map(|methods| {
-            methods
-                .iter()
-                .filter_map(|method| method.get("id").and_then(Value::as_str))
-                .collect()
-        })
-        .unwrap_or_default();
-    if auth_methods.len() == 1 {
-        let method = auth_methods[0].to_owned();
-        let message = json!({
-            "id": 2,
-            "method": "authenticate",
-            "params": {"methodId": method},
-        });
-        send(stdin, message, deadline)
-            .await
-            .map_err(|error| error.to_string())?;
-        match await_response(stdin, messages, &json!(2), deadline).await? {
-            Response::Value(_) => {}
-            Response::Error(error) => {
-                return Err(format!("authenticate({method}) failed: {error}"));
-            }
-        }
-    } else if auth_methods.len() > 1 {
-        // Several methods need an explicit policy choice this adapter
-        // does not yet model; proceed unauthenticated so an agent that
-        // accepts it still works.
-    }
+    // 2. authenticate is never sent eagerly. `authMethods` are offers the
+    // host may pick up interactively, not a mandate: a real agent that
+    // needs login still answers initialize, then fails `session/new` or
+    // the first prompt with an explicit error. Auto-calling a method like
+    // `cursor_login` parks the handshake on an interactive flow that can
+    // never finish inside a library session.
 
     // 3. initialized - some agents gate session calls on it.
     let message = json!({"method": "initialized", "params": {}});

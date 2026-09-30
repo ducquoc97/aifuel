@@ -59,7 +59,11 @@ fn start_runs_the_handshake_and_reports_the_provider_session() {
 }
 
 #[test]
-fn a_single_advertised_auth_method_authenticates() {
+fn advertised_auth_methods_are_never_called_eagerly() {
+    // `authMethods` are offers a host may take up interactively, not a
+    // mandate. An agent whose only method parks on an interactive login
+    // (cursor_login) must not block the handshake: session/new proceeds
+    // and any auth requirement surfaces as an explicit error instead.
     let (adapter, agents) = duplex_adapter();
     let script = serve(agents, |mut agent| async move {
         agent
@@ -69,51 +73,17 @@ fn a_single_advertised_auth_method_authenticates() {
                 "authMethods": [{"id": "cursor_login", "name": "Cursor login"}],
             }))
             .await;
-        let auth = agent.next_method("authenticate").await;
-        assert_eq!(auth["params"]["methodId"], "cursor_login");
-        agent.respond(&auth, Value::Null).await;
         let _ready = agent.next_method("initialized").await;
         let session = agent.next_method("session/new").await;
         agent
-            .respond(&session, json!({"sessionId": "sess-auth"}))
+            .respond(&session, json!({"sessionId": "sess-auth-skipped"}))
             .await;
         agent.park().await;
     });
     let handle = adapter
         .start(&integration(), options(AccessMode::WorkspaceWrite))
-        .expect("the session starts");
+        .expect("the session starts without an authenticate call");
     adapter.stop(handle).expect("stop");
-    script.join().expect("the agent script completes");
-}
-
-#[test]
-fn a_failed_authenticate_fails_start() {
-    let (adapter, agents) = duplex_adapter();
-    let script = serve(agents, |mut agent| async move {
-        agent
-            .initialize(json!({
-                "protocolVersion": 1,
-                "agentCapabilities": {},
-                "authMethods": [{"id": "cursor_login", "name": "Cursor login"}],
-            }))
-            .await;
-        let auth = agent.next_method("authenticate").await;
-        agent
-            .write(json!({
-                "id": auth["id"],
-                "error": {"code": -32000, "message": "auth rejected"},
-            }))
-            .await;
-        agent.park().await;
-    });
-    let error = adapter
-        .start(&integration(), options(AccessMode::WorkspaceWrite))
-        .expect_err("a rejected authenticate fails start");
-    assert!(
-        error.message.contains("authenticate"),
-        "the failure names the step: {}",
-        error.message
-    );
     script.join().expect("the agent script completes");
 }
 
