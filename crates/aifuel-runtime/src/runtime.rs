@@ -20,8 +20,8 @@ use aifuel_core::{
 };
 use aifuel_providers::{
     AdapterDiscovery, CredentialStore, DiscoveryContext, IntegrationDescriptor,
-    IntegrationRegistry, PROVIDERS_FILE_NAME, ProvidersConfig, builtin_integrations,
-    claude_adapter, cli_fallback_adapters, codex_adapter,
+    IntegrationRegistry, PROVIDERS_FILE_NAME, ProvidersConfig, acp_adapter, builtin_integrations,
+    claude_adapter, cli_fallback_adapters, codex_adapter, opencode_adapter,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -133,6 +133,8 @@ impl AgentRuntime {
         let adapters = [
             Arc::new(codex_adapter(&discovery_context)) as Arc<dyn RuntimeAdapter>,
             Arc::new(claude_adapter(&discovery_context)),
+            Arc::new(acp_adapter(&discovery_context)),
+            Arc::new(opencode_adapter(&discovery_context)),
         ]
         .into_iter()
         .chain(
