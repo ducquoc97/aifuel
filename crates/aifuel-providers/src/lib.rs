@@ -13,15 +13,18 @@ mod agent_run_registry;
 mod antigravity;
 mod catalog;
 mod claude;
+pub mod claude_runtime;
 mod cli_adapter;
 mod code_assist;
 mod codex;
+pub mod codex_runtime;
 mod copilot;
 mod credentials;
 mod devin;
 mod discovery;
 mod gemini;
 mod integrations;
+mod local_adapter;
 mod model_catalog;
 mod monitoring;
 mod openrouter;
@@ -31,9 +34,11 @@ mod usage_helpers;
 mod wire;
 
 pub use agent_run_registry::agent_run_adapters;
+pub use claude_runtime::{ClaudeAdapter, claude_adapter};
 pub use cli_adapter::{
     AdapterDiscovery, CliAdapter, cli_fallback_adapters, integration_summary, quota_summary,
 };
+pub use codex_runtime::{CodexAdapter, codex_adapter};
 pub use credentials::{
     CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore, CredentialStoreError,
     ManagedCredential, OAuthTokens, ResolvedAuth, env_override, valid_env_var_name,

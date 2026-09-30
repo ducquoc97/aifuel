@@ -50,9 +50,9 @@ pub(super) struct SessionState {
 pub(super) struct ActiveRun {
     pub run_id: RunId,
     pub cancellation: RunCancellationToken,
-    /// Interactions the worker is waiting on, keyed by the request id the
-    /// `approval.requested` event carried.
-    pub pending: Arc<Mutex<BTreeMap<String, PendingInteraction>>>,
+    /// Interactions the worker is waiting on, keyed by the contract
+    /// request id the `approval.requested` event carried.
+    pub pending: Arc<Mutex<BTreeMap<RequestId, PendingInteraction>>>,
     pub worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -129,7 +129,7 @@ impl CliSession {
             return Err(invalid_state("input text must not be empty"));
         }
         if !input.attachments.is_empty() {
-            return Err(unsupported("the CLI fallback does not carry attachments"));
+            return Err(unsupported("this adapter does not carry attachments"));
         }
         let mut state = self.state.lock().expect("session state mutex");
         if state.closed {
@@ -238,7 +238,7 @@ impl CliSession {
             }
         };
         let mut pending = pending_map.lock().expect("pending approvals mutex");
-        let Some(entry) = pending.get(request.as_str()) else {
+        let Some(entry) = pending.get(request) else {
             return Err(AgentRuntimeError::new(
                 ReceiptCode::AlreadyResolved,
                 "the Approval Request is not pending",
@@ -246,7 +246,7 @@ impl CliSession {
         };
         let response = entry.response_for(decision)?;
         let entry = pending
-            .remove(request.as_str())
+            .remove(request)
             .expect("the entry was just inspected");
         if entry.response.send((decision.clone(), response)).is_err() {
             // The run ended between the lookup and the send; the request is
@@ -356,9 +356,31 @@ impl CliSession {
         }
     }
 
+    /// The resume cursor the last run reported, or the persisted cursor
+    /// startup reconcile seeded - the provider-native session id a
+    /// `resume` run continues from.
+    pub fn resume_cursor(&self) -> Option<String> {
+        self.state
+            .lock()
+            .expect("session state mutex")
+            .resume_cursor
+            .clone()
+    }
+
+    /// Best-effort teardown kick used by adapter drop: mark closed and
+    /// cancel the in-flight run so the worker unwinds as the provider
+    /// process exits.
+    pub fn close_transport(&self) {
+        let mut state = self.state.lock().expect("session state mutex");
+        state.closed = true;
+        if let Some(active) = &state.active_run {
+            active.cancellation.cancel();
+        }
+    }
+
     /// Close the session: cancel any in-flight run, wait for its worker,
     /// then emit `session.closed` last.
-    pub fn stop(&self) {
+    pub fn shutdown(&self) {
         let worker = {
             let mut state = self.state.lock().expect("session state mutex");
             state.closed = true;
@@ -448,6 +470,28 @@ pub(super) fn execution_error(error: AgentRunError) -> AgentRuntimeError {
         )),
         AgentRunError::InvalidRequest(message) => unsupported(message),
         error => AgentRuntimeError::provider_error(error.to_string()),
+    }
+}
+
+impl crate::local_adapter::LocalSession for CliSession {
+    fn resume_cursor(&self) -> Option<String> {
+        self.resume_cursor()
+    }
+
+    fn set_selection(&self, selection: ModelSelection) -> Result<(), AgentRuntimeError> {
+        self.set_selection(selection)
+    }
+
+    fn take_events(&self) -> Option<mpsc::Receiver<AgentEventKind>> {
+        self.take_events()
+    }
+
+    fn shutdown(&self) {
+        self.shutdown();
+    }
+
+    fn close_transport(&self) {
+        self.close_transport();
     }
 }
 

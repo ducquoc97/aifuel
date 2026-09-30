@@ -9,8 +9,8 @@
 
 use aifuel_app::RunStore;
 use aifuel_core::{
-    AdapterCapabilities, CliAdapterId, ExecutionConfig, Integration, IntegrationId,
-    ModelDescriptor, ProviderId,
+    AdapterCapabilities, CliAdapterId, CollectorId, ExecutionConfig, Integration, IntegrationId,
+    ModelDescriptor, MonitoringConfig, ProviderId,
 };
 use aifuel_providers::{AdapterDiscovery, CliAdapter, IntegrationDescriptor};
 use aifuel_runtime::{AgentRuntime, RuntimeAdapter};
@@ -26,8 +26,9 @@ mod harness;
 pub use execution::{ExecScript, ScriptedExecution};
 pub use fake::{FakeAdapter, FakeScript};
 pub use harness::{
-    collect_run, collect_until, consumer, create, created_session, is_completed, next_id,
-    receipt_code, receipt_seq, receipt_snapshot, run_start, selection, subscribe,
+    collect_run, collect_until, consumer, create, create_with_access, created_session,
+    is_completed, next_id, receipt_code, receipt_seq, receipt_snapshot, run_start, selection,
+    subscribe,
 };
 
 /// The Integration Identity the test adapter serves.
@@ -62,6 +63,19 @@ pub fn fake_descriptor() -> IntegrationDescriptor {
         },
         Vec::new(),
     )
+}
+
+/// The fake descriptor carrying a Monitoring Collection Contract, so the
+/// pump resolves the session's integration to a contract and asks its
+/// adapter for a post-run Quota Pool observation.
+pub fn fake_descriptor_with_monitoring() -> IntegrationDescriptor {
+    let mut descriptor = fake_descriptor();
+    descriptor.integration.monitoring = Some(MonitoringConfig {
+        collector: CollectorId::new("fake-collector"),
+        credential: None,
+        endpoint: None,
+    });
+    descriptor
 }
 
 /// A discovery context rooted at a throwaway directory.

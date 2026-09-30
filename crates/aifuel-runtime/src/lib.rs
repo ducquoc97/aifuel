@@ -15,6 +15,8 @@
 //! the `SessionSnapshot` read model stay honest for every consumer.
 
 mod adapter;
+pub mod bridge;
+mod checkpoints;
 mod commands;
 mod dispatch;
 mod pump;

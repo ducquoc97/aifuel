@@ -3,19 +3,24 @@
 //! `integrations.list` and `models.list` merge the same evidence kinds here:
 //! provider-declared capabilities, native presence and authentication
 //! probes, local credential-source discovery, and monitoring observations.
+//! The model-side merge the local adapters share lives in
+//! [`local_adapter::descriptors`](crate::local_adapter::descriptors), which
+//! this module re-exports; the integration-side summary below is CLI-only.
 //! Nothing here promotes evidence: unknown stays unknown, absent stays
 //! absent, and quota stays `None` without a real observation.
 
 use crate::integrations::{EvidenceContext, IntegrationDescriptor, inspect_any};
-use crate::model_catalog::ProviderCatalogModel;
 use aifuel_core::{
-    AdapterCapabilities, AgentAuthenticationState, AgentCapability, AgentExecutionAdapter,
-    AgentIntegrationInfo, AgentPresenceState, AuthBinding, CapabilityState, DiscoveryError,
-    DiscoveryState, Effort, ExecutionAvailability, ExecutionConfig, IntegrationAuthKind,
-    IntegrationStatus, IntegrationSummary, ModelDescriptor, ObservationState, ProviderId,
-    QuotaSummary, StatusObservation,
+    AdapterCapabilities, AgentCapability, AgentExecutionAdapter, AgentIntegrationInfo, AuthBinding,
+    CapabilityState, DiscoveryState, ExecutionAvailability, ExecutionConfig, IntegrationAuthKind,
+    IntegrationStatus, IntegrationSummary, ObservationState, QuotaSummary, StatusObservation,
 };
-use std::collections::BTreeMap;
+
+#[cfg(test)]
+pub(crate) use crate::local_adapter::descriptors::selectable_efforts;
+pub(crate) use crate::local_adapter::descriptors::{
+    availability_from, catalog_descriptor, model_descriptors,
+};
 
 /// The honest [`AdapterCapabilities`] one execution adapter can surface,
 /// mapped from its declared AgentCapability evidence.
@@ -58,38 +63,6 @@ pub fn auth_binding_kind(execution: &ExecutionConfig) -> IntegrationAuthKind {
             AuthBinding::None => IntegrationAuthKind::None,
             AuthBinding::ApiKey { .. } | AuthBinding::OAuth { .. } => IntegrationAuthKind::Managed,
         },
-    }
-}
-
-/// Readiness to attempt a run through one integration, from the strongest
-/// evidence first: a missing executable, a native authentication probe,
-/// then local credential-source discovery.
-///
-/// `discovered` is `None` when the caller attached no discovery evidence,
-/// which reads as `unknown`, never as absent. A presence probe that could
-/// not run also stays `unknown`: `ready` is only claimed on positive
-/// evidence.
-pub fn availability_from(
-    info: &AgentIntegrationInfo,
-    discovered: Option<Result<DiscoveryState, DiscoveryError>>,
-) -> ExecutionAvailability {
-    if info.native_presence.state == AgentPresenceState::Absent {
-        return ExecutionAvailability::Unsupported;
-    }
-    match info.native_authentication.state {
-        // A successful auth probe implies the executable ran; it is the
-        // strongest readiness signal the CLI path has.
-        AgentAuthenticationState::Authenticated => return ExecutionAvailability::Ready,
-        AgentAuthenticationState::Unauthenticated => return ExecutionAvailability::NeedsAuth,
-        AgentAuthenticationState::Unknown => {}
-    }
-    if info.native_presence.state == AgentPresenceState::Unknown {
-        return ExecutionAvailability::Unknown;
-    }
-    match discovered {
-        Some(Ok(DiscoveryState::Present)) => ExecutionAvailability::Ready,
-        Some(Ok(DiscoveryState::Absent)) => ExecutionAvailability::NeedsAuth,
-        Some(Err(_)) | None => ExecutionAvailability::Unknown,
     }
 }
 
@@ -154,62 +127,6 @@ fn integration_status(
     }
 }
 
-/// One model descriptor for a catalog entry, merging entitlement and
-/// availability evidence the caller supplies.
-pub(crate) fn catalog_descriptor(
-    provider: &ProviderId,
-    model: &ProviderCatalogModel,
-    entitled: CapabilityState,
-    availability: ExecutionAvailability,
-    quota: Option<QuotaSummary>,
-) -> ModelDescriptor {
-    ModelDescriptor {
-        provider: provider.clone(),
-        model: model.model_id.clone(),
-        label: model
-            .display_label
-            .clone()
-            .unwrap_or_else(|| model.model_id.clone()),
-        efforts: selectable_efforts(model.supported_efforts.as_deref()),
-        advertised: true,
-        entitled,
-        availability,
-        quota,
-    }
-}
-
-/// Merge Advertised Model catalog entries with Account Entitlement,
-/// Execution Availability, and one integration-level Quota Pool observation
-/// into `models.list` descriptors.
-///
-/// `entitlements` keys model ids to their observed entitlement; models
-/// without an entry stay `unknown`. `quota` attaches to every model only
-/// when a real monitoring observation supplies it. Unadvertised models never
-/// appear here: the catalog is the only advertisement evidence.
-pub fn model_descriptors(
-    provider: ProviderId,
-    advertised: &[ProviderCatalogModel],
-    entitlements: &BTreeMap<String, CapabilityState>,
-    availability: ExecutionAvailability,
-    quota: Option<QuotaSummary>,
-) -> Vec<ModelDescriptor> {
-    advertised
-        .iter()
-        .map(|model| {
-            catalog_descriptor(
-                &provider,
-                model,
-                entitlements
-                    .get(&model.model_id)
-                    .copied()
-                    .unwrap_or(CapabilityState::Unknown),
-                availability,
-                quota,
-            )
-        })
-        .collect()
-}
-
 /// The compact Quota Pool summary a monitoring observation reports, or
 /// `None` when the observation holds no usable values. Missing headroom
 /// stays `None`; it is never reported as zero.
@@ -228,19 +145,4 @@ pub fn quota_summary(observation: &StatusObservation) -> Option<QuotaSummary> {
         depleted: observation.remaining_percent == Some(0.0)
             || observation.used_percent == Some(100.0),
     })
-}
-
-/// The effort spellings a catalog advertises, reduced to the contract's
-/// closed set in report order. Spellings outside the set are not selectable
-/// through `model.select`, so they are not offered.
-pub(super) fn selectable_efforts(supported: Option<&[String]>) -> Vec<Effort> {
-    let mut efforts = Vec::new();
-    for spelling in supported.into_iter().flatten() {
-        if let Some(effort) = Effort::parse(spelling)
-            && !efforts.contains(&effort)
-        {
-            efforts.push(effort);
-        }
-    }
-    efforts
 }

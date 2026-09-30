@@ -10,6 +10,7 @@ dependencies = [
  "aifuel-core",
  "aifuel-mcp",
  "aifuel-providers",
+ "aifuel-runtime",
  "chrono",
  "serde",
  "serde_json",

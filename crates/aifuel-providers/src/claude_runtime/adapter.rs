@@ -1,22 +1,31 @@
-//! The [`AgentAdapter`] contract implementation for [`CliAdapter`].
+//! The [`AgentAdapter`] contract implementation for [`ClaudeAdapter`].
 //!
 //! Every method enforces the serving integration identity first, maps
 //! request-side failures onto receipt codes, and reports only what the
-//! wrapped execution adapter's evidence supports. Unsupported surfaces
+//! provider's wire evidence supports. Unsupported surfaces
 //! (`checkpoint`, `restore_checkpoint`) answer with explicit
 //! `unsupported` receipts rather than silent no-ops.
 
-use super::{CliAdapter, descriptors, session};
+use super::session::ClaudeSession;
+use super::{ClaudeAdapter, session};
+use crate::local_adapter::descriptors;
 use aifuel_core::{
-    AdapterCapabilities, AgentAdapter, AgentEventKind, AgentEventStream, AgentRuntimeError,
-    AgentSessionHandle, ApprovalDecision, CapabilityState, CheckpointId, ExecutionAvailability,
-    Integration, ModelDescriptor, ModelSelection, OutputFormat, ReceiptCode, RequestId, RunId,
-    RunRequest, SessionId, SessionStatus, StartOptions, UserInput,
+    AdapterCapabilities, AgentAdapter, AgentEventStream, AgentRuntimeError, AgentSessionHandle,
+    ApprovalDecision, CapabilityState, CheckpointId, Effort, ExecutionAvailability, Integration,
+    ModelDescriptor, ModelSelection, ReceiptCode, RequestId, RunId, SessionId, StartOptions,
+    UserInput,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 
-impl AgentAdapter for CliAdapter {
+/// The effort levels `--effort` accepts on every Claude model. The
+/// contract's closed effort set maps one-to-one; the provider's extra
+/// `xhigh` rung is not selectable through the contract and is never
+/// offered.
+const SELECTABLE_EFFORTS: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High, Effort::Max];
+
+impl AgentAdapter for ClaudeAdapter {
     fn capabilities(&self) -> AdapterCapabilities {
         self.capabilities
     }
@@ -41,11 +50,16 @@ impl AgentAdapter for CliAdapter {
                 provider: self.provider(),
                 model: selection.model.clone(),
                 label: selection.model.clone(),
-                efforts: Vec::new(),
-                // No catalog evidence advertises this model, and no
-                // model-specific readiness was verified.
+                // The `--effort` flag accepts these spellings for every
+                // model; that is the only effort evidence the provider
+                // exposes.
+                efforts: SELECTABLE_EFFORTS.to_vec(),
+                // Claude exposes no model catalog interface, so no
+                // selection is ever advertised here.
                 advertised: false,
                 entitled: CapabilityState::Unknown,
+                // Nothing verified the provider serves this model, so
+                // the integration's readiness does not transfer to it.
                 availability: ExecutionAvailability::Unknown,
                 quota: None,
             });
@@ -69,8 +83,9 @@ impl AgentAdapter for CliAdapter {
         integration: &Integration,
     ) -> Result<Vec<ModelDescriptor>, AgentRuntimeError> {
         self.ensure_serves(&integration.id)?;
-        // The CLI path carries no per-model entitlement evidence and no
-        // monitoring contract, so entitlement stays `unknown` and quota `None`.
+        // Claude exposes no catalog interface and no per-model
+        // entitlement evidence, so the advertised list stays empty
+        // rather than fabricating model ids.
         Ok(descriptors::model_descriptors(
             self.provider(),
             self.catalog_models(),
@@ -100,8 +115,9 @@ impl AgentAdapter for CliAdapter {
             ));
         }
         match self.availability() {
-            // `unknown` does not block: no evidence claimed the integration
-            // could not run, and the run itself reports the outcome.
+            // `unknown` does not block: no evidence claimed the
+            // integration could not run, and the run itself reports
+            // the outcome.
             ExecutionAvailability::Ready | ExecutionAvailability::Unknown => {}
             ExecutionAvailability::NeedsAuth => {
                 return Err(AgentRuntimeError::new(
@@ -116,54 +132,55 @@ impl AgentAdapter for CliAdapter {
                 ));
             }
         }
-        // Validate access enforcement up front with the same request shape
-        // a run carries; an unenforceable session fails before it exists.
-        let probe = RunRequest {
-            integration: self.integration(),
-            model: (!options.selection.model.is_empty()).then(|| options.selection.model.clone()),
-            effort: options
-                .selection
-                .effort
-                .map(|effort| effort.as_str().to_owned()),
-            external_tools: None,
-            account: None,
-            prompt: "capability check".to_owned(),
-            output: OutputFormat::Text,
-            working_directory: Some(cwd.clone()),
-            access: options.access,
-            resume: None,
-            timeout: None,
-            interaction_handler: None,
-        };
-        self.execution
-            .adapter()
-            .validate(&probe)
-            .map_err(session::execution_error)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let session_id = SessionId::new(format!("cli-session-{}-{id}", std::process::id()));
-        let resume_cursor = options.resume_cursor;
-        let session = session::CliSession::new(
+        let session_id = SessionId::new(format!("claude-session-{}-{id}", std::process::id()));
+        let setup = session::SessionSetup {
+            cwd: cwd.clone(),
+            access: options.access,
+            model: (!options.selection.model.is_empty()).then(|| options.selection.model.clone()),
+            effort: options.selection.effort,
+            resume_cursor: options.resume_cursor,
+        };
+        // A `--resume` session's provider id is the persisted cursor
+        // itself, so the session reports it from construction rather
+        // than waiting on a frame that may lag until the first turn.
+        let session = ClaudeSession::new(
             integration.id.clone(),
-            cwd.clone(),
-            options.selection,
-            options.access,
-            resume_cursor.clone(),
-        );
-        session.emit(AgentEventKind::SessionCreated {
-            integration_id: integration.id.clone(),
             cwd,
-        });
-        session.emit(AgentEventKind::SessionStatus {
-            status: SessionStatus::Idle,
-        });
-        self.sessions
-            .lock()
-            .expect("sessions mutex")
-            .insert(session_id.clone(), session);
-        Ok(AgentSessionHandle {
-            session_id,
-            provider_session: resume_cursor,
-        })
+            options.access,
+            options.selection,
+            setup.resume_cursor.clone(),
+        );
+        let (setup_tx, setup_rx) = mpsc::channel();
+        session.start_driver(self.connector.clone(), setup, setup_tx)?;
+        // The driver's own handshake deadline fires well inside this
+        // bound, so a wedged spawn is what the wait covers; the same
+        // shape as the Codex adapter's `start`.
+        let report = setup_rx.recv_timeout(session::SESSION_SETUP_TIMEOUT);
+        match report {
+            Ok(Ok(())) => {
+                session.announce();
+                let provider_session = session.resume_cursor();
+                self.sessions
+                    .lock()
+                    .expect("sessions mutex")
+                    .insert(session_id.clone(), session);
+                Ok(AgentSessionHandle {
+                    session_id,
+                    provider_session,
+                })
+            }
+            Ok(Err(message)) => {
+                session.close_transport();
+                Err(AgentRuntimeError::provider_error(message))
+            }
+            Err(_) => {
+                session.close_transport();
+                Err(AgentRuntimeError::provider_error(
+                    "the session driver did not report setup",
+                ))
+            }
+        }
     }
 
     fn send(
@@ -171,27 +188,11 @@ impl AgentAdapter for CliAdapter {
         handle: &AgentSessionHandle,
         input: UserInput,
     ) -> Result<RunId, AgentRuntimeError> {
-        self.session(&handle.session_id)?.send_run(
-            &self.execution,
-            self.supports_jsonl,
-            self.supports_resume,
-            self.supports_interaction,
-            input,
-        )
+        self.session(&handle.session_id)?.send_turn(input)
     }
 
     fn cancel(&self, handle: &AgentSessionHandle, run: RunId) -> Result<(), AgentRuntimeError> {
-        let session = self.session(&handle.session_id)?;
-        let state = session.state.lock().expect("session state mutex");
-        match &state.active_run {
-            Some(active) if active.run_id == run => {
-                active.cancellation.cancel();
-                Ok(())
-            }
-            _ => Err(session::invalid_state(
-                "no in-flight Agent Run with that id exists for this session",
-            )),
-        }
+        self.session(&handle.session_id)?.cancel(&run)
     }
 
     fn answer(

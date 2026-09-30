@@ -160,6 +160,24 @@ impl AgentExecutionAdapter for StaticAdapter {
     }
 }
 
+/// Open the portable agent runtime over the per-user run store for the
+/// `aifuel runtime` stdio bridge. The store directory is hardened the same
+/// way `execution_run_manager` does it, since WAL sidecar files inherit
+/// directory permissions.
+pub fn agent_runtime() -> Result<aifuel_runtime::AgentRuntime, String> {
+    let db_path = run_store_path()?;
+    #[cfg(unix)]
+    if let Some(directory) = db_path.parent() {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) = std::fs::create_dir_all(directory).and_then(|()| {
+            std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))
+        }) {
+            eprintln!("aifuel: could not restrict the run history directory: {error}");
+        }
+    }
+    aifuel_runtime::AgentRuntime::open(db_path).map_err(|error| error.to_string())
+}
+
 /// Compose a run owner with the local user's execution MCP admission policy.
 pub fn execution_run_manager() -> Result<aifuel_app::RunManager, String> {
     if env::var_os("AIFUEL_MANAGED_RUN").is_some() {

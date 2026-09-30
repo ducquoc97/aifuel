@@ -1,4 +1,4 @@
-//! The CLI fallback [`AgentAdapter`].
+//! The CLI fallback [`AgentAdapter`](aifuel_core::AgentAdapter).
 //!
 //! One [`CliAdapter`] wraps one compiled [`AgentExecutionAdapter`] - the
 //! one-shot CLI or App Server machinery a provider already declares. A
@@ -23,15 +23,13 @@
 //!   missing headroom is never fabricated as zero.
 
 use aifuel_core::{
-    AdapterCapabilities, AgentAdapter, AgentCapability, AgentExecutionAdapter,
-    AgentIntegrationInfo, AgentRuntimeError, AgentSessionHandle, CapabilityState, DiscoveryError,
-    DiscoveryState, ExecutionAvailability, IntegrationId, ModelDescriptor, ModelSelection,
-    ProviderId, ProviderKey, ReceiptCode, SessionId,
+    AdapterCapabilities, AgentCapability, AgentExecutionAdapter, AgentIntegrationInfo,
+    AgentRuntimeError, AgentSessionHandle, CapabilityState, ExecutionAvailability, IntegrationId,
+    ModelDescriptor, ModelSelection, ProviderId, ProviderKey, SessionId,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
+use std::sync::{Arc, OnceLock};
 
 mod adapter;
 mod descriptors;
@@ -44,31 +42,22 @@ use descriptors::{availability_from, execution_capabilities};
 pub use descriptors::{integration_summary, quota_summary};
 
 use crate::agent_run_adapters;
-use crate::credentials::CredentialStore;
-use crate::discovery::DiscoveryContext;
-use crate::integrations::{EvidenceContext, EvidenceSource, builtin_integrations, inspect_any};
-use crate::model_catalog::{
-    ProviderCatalogDiscovery, ProviderCatalogModel, discover_model_catalog,
-};
+use crate::integrations::{EvidenceSource, builtin_integrations};
+pub use crate::local_adapter::AdapterDiscovery;
+use crate::local_adapter::{self, AdapterEvidence, SessionMap};
+use crate::model_catalog::ProviderCatalogModel;
 use session::CliSession;
 
-/// The local facts discovery evidence inspection may consult.
-///
-/// Constructed by the caller at the runtime boundary; the adapter stores an
-/// owned copy and inspects it lazily on the first availability question.
-/// Every read is metadata-only: marker paths, environment variable
-/// presence, and Credential Store metadata - never secret material.
-#[derive(Debug, Clone)]
-pub struct AdapterDiscovery {
-    /// Home-relative filesystem checks, shared with catalog discovery.
-    pub discovery: DiscoveryContext,
-    /// The Credential Store rooted at the AI Fuel config directory. Only the
-    /// metadata read is used for evidence.
-    pub credentials: CredentialStore,
-    /// Integration Identities carrying a `providers.json` entry, one arm of
-    /// [`EvidenceSource::ConfiguredEndpoint`].
-    pub configured: BTreeSet<IntegrationId>,
-}
+// Test fakes glob-import this module's surface; these names keep their
+// construction paths stable without weighing down the shipped imports.
+#[cfg(test)]
+use crate::credentials::CredentialStore;
+#[cfg(test)]
+use crate::discovery::DiscoveryContext;
+#[cfg(test)]
+use crate::integrations::EvidenceContext;
+#[cfg(test)]
+use aifuel_core::AgentAdapter;
 
 /// The execution adapter a `CliAdapter` serves. Built-in adapters are
 /// `'static` table entries; tests and embedders wrap owned implementations.
@@ -87,14 +76,8 @@ impl Execution {
     }
 }
 
-/// Local evidence attached to an adapter: the descriptor's declared sources
-/// plus the context to inspect them with.
-struct AdapterEvidence {
-    sources: Vec<EvidenceSource>,
-    context: AdapterDiscovery,
-}
-
-/// An honest [`AgentAdapter`] over one compiled CLI execution adapter.
+/// An honest [`AgentAdapter`](aifuel_core::AgentAdapter) over one compiled
+/// CLI execution adapter.
 ///
 /// The adapter serves exactly the integration its execution adapter names:
 /// requests for any other Integration Identity fail, never silently route
@@ -113,7 +96,7 @@ pub struct CliAdapter {
     /// The provider's Advertised Model catalog, discovered once on first
     /// use. Providers that declare no catalog keep an empty list.
     catalog: OnceLock<Vec<ProviderCatalogModel>>,
-    sessions: Mutex<BTreeMap<String, Arc<CliSession>>>,
+    sessions: SessionMap<CliSession>,
     next_id: AtomicU64,
 }
 
@@ -147,7 +130,7 @@ impl CliAdapter {
             evidence: None,
             agent_info: OnceLock::new(),
             catalog: OnceLock::new(),
-            sessions: Mutex::new(BTreeMap::new()),
+            sessions: SessionMap::new(BTreeMap::new()),
             next_id: AtomicU64::new(0),
         }
     }
@@ -159,7 +142,7 @@ impl CliAdapter {
         sources: Vec<EvidenceSource>,
         context: AdapterDiscovery,
     ) -> Self {
-        self.evidence = Some(AdapterEvidence { sources, context });
+        self.evidence = Some(AdapterEvidence::new(sources, context));
         self
     }
 
@@ -176,7 +159,10 @@ impl CliAdapter {
     /// Readiness to attempt a run through this integration, derived from
     /// the adapter's probed evidence plus attached discovery sources.
     pub fn availability(&self) -> ExecutionAvailability {
-        availability_from(self.agent_info(), self.discovered())
+        availability_from(
+            self.agent_info(),
+            local_adapter::discovered(self.evidence.as_ref(), &self.integration()),
+        )
     }
 
     /// The adapter's probed integration evidence, cached after the first
@@ -191,48 +177,22 @@ impl CliAdapter {
     /// reconcile seeded. The facade persists it so a runtime restart can
     /// attempt provider-side continuation where `resume` is declared.
     pub fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
-        let sessions = self.sessions.lock().expect("sessions mutex");
-        sessions.get(session_id.as_str()).and_then(|session| {
-            session
-                .state
-                .lock()
-                .expect("session state mutex")
-                .resume_cursor
-                .clone()
-        })
+        local_adapter::resume_cursor(&self.sessions, session_id)
     }
 
     /// Apply a resolved `model.select` to one session. The selection is
     /// resolved first; only a resolvable selection replaces the stored one,
     /// and a session with a run in flight rejects the change.
     ///
-    /// This is an inherent method because [`AgentAdapter`] keeps selection
+    /// This is an inherent method because [`AgentAdapter`](aifuel_core::AgentAdapter)
+    /// keeps selection
     /// inside session state; the facade resolves then applies it here.
     pub fn set_selection(
         &self,
         handle: &AgentSessionHandle,
         selection: ModelSelection,
     ) -> Result<ModelDescriptor, AgentRuntimeError> {
-        let descriptor = self.resolve(&selection)?;
-        self.session(&handle.session_id)?.set_selection(selection)?;
-        Ok(descriptor)
-    }
-
-    /// Inspect the attached evidence sources for this integration.
-    /// `None` means no discovery context was attached, which reads as
-    /// `unknown` availability rather than absent evidence.
-    fn discovered(&self) -> Option<Result<DiscoveryState, DiscoveryError>> {
-        let evidence = self.evidence.as_ref()?;
-        let context = EvidenceContext {
-            discovery: &evidence.context.discovery,
-            credentials: &evidence.context.credentials,
-            configured: &evidence.context.configured,
-        };
-        Some(inspect_any(
-            &evidence.sources,
-            &self.integration(),
-            &context,
-        ))
+        local_adapter::set_selection(self, &self.sessions, handle, selection)
     }
 
     /// The advertised catalog, discovered once. Providers that declare no
@@ -249,49 +209,15 @@ impl CliAdapter {
         let Ok(provider) = self.provider().as_str().parse::<ProviderKey>() else {
             return Vec::new();
         };
-        // The catalog interface is async; run it on a short-lived runtime
-        // on a scoped thread, the same pattern the execution adapter uses.
-        let discovery = thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_io()
-                        .enable_time()
-                        .build()
-                        .ok()?;
-                    Some(runtime.block_on(discover_model_catalog(provider)))
-                })
-                .join()
-        });
-        match discovery {
-            Ok(Some(ProviderCatalogDiscovery::Available { models, .. })) => models,
-            _ => Vec::new(),
-        }
+        local_adapter::discover_catalog(provider)
     }
 
     fn ensure_serves(&self, integration: &IntegrationId) -> Result<(), AgentRuntimeError> {
-        if *integration == self.integration() {
-            Ok(())
-        } else {
-            Err(AgentRuntimeError::unsupported(format!(
-                "this adapter serves integration {} only",
-                self.integration()
-            )))
-        }
+        local_adapter::ensure_serves(&self.integration(), integration)
     }
 
     fn session(&self, session_id: &SessionId) -> Result<Arc<CliSession>, AgentRuntimeError> {
-        self.sessions
-            .lock()
-            .expect("sessions mutex")
-            .get(session_id.as_str())
-            .cloned()
-            .ok_or_else(|| {
-                AgentRuntimeError::new(
-                    ReceiptCode::UnknownSession,
-                    "the session id is not live in this adapter",
-                )
-            })
+        local_adapter::live_session(&self.sessions, session_id)
     }
 
     /// The raw event receiver, for tests that need bounded reads the boxed
@@ -301,11 +227,7 @@ impl CliAdapter {
         &self,
         handle: &AgentSessionHandle,
     ) -> Option<std::sync::mpsc::Receiver<aifuel_core::AgentEventKind>> {
-        self.sessions
-            .lock()
-            .expect("sessions mutex")
-            .get(handle.session_id.as_str())
-            .and_then(|session| session.take_events())
+        local_adapter::test_events(&self.sessions, &handle.session_id)
     }
 }
 
@@ -313,14 +235,7 @@ impl Drop for CliAdapter {
     /// Dropping the adapter cancels in-flight runs. Workers keep their own
     /// session reference and unwind as the provider process exits.
     fn drop(&mut self) {
-        let sessions = self.sessions.lock().expect("sessions mutex");
-        for session in sessions.values() {
-            let mut state = session.state.lock().expect("session state mutex");
-            state.closed = true;
-            if let Some(active) = &state.active_run {
-                active.cancellation.cancel();
-            }
-        }
+        local_adapter::close_all(&self.sessions);
     }
 }
 

@@ -1,22 +1,27 @@
-//! The [`AgentAdapter`] contract implementation for [`CliAdapter`].
+//! The [`AgentAdapter`] contract implementation for [`CodexAdapter`].
 //!
 //! Every method enforces the serving integration identity first, maps
 //! request-side failures onto receipt codes, and reports only what the
-//! wrapped execution adapter's evidence supports. Unsupported surfaces
-//! (`checkpoint`, `restore_checkpoint`) answer with explicit
-//! `unsupported` receipts rather than silent no-ops.
+//! provider's evidence supports. `start` spawns the app-server process
+//! and runs the setup handshake on the session's driver thread before
+//! announcing the session; a rejected handshake fails `start` and the
+//! process is reaped. Unsupported surfaces (`checkpoint`,
+//! `restore_checkpoint`) answer with explicit `unsupported` receipts
+//! rather than silent no-ops.
 
-use super::{CliAdapter, descriptors, session};
+use super::{CodexAdapter, session};
+use crate::local_adapter::descriptors;
 use aifuel_core::{
-    AdapterCapabilities, AgentAdapter, AgentEventKind, AgentEventStream, AgentRuntimeError,
-    AgentSessionHandle, ApprovalDecision, CapabilityState, CheckpointId, ExecutionAvailability,
-    Integration, ModelDescriptor, ModelSelection, OutputFormat, ReceiptCode, RequestId, RunId,
-    RunRequest, SessionId, SessionStatus, StartOptions, UserInput,
+    AdapterCapabilities, AgentAdapter, AgentEventStream, AgentRuntimeError, AgentSessionHandle,
+    ApprovalDecision, CapabilityState, CheckpointId, ExecutionAvailability, Integration,
+    ModelDescriptor, ModelSelection, ReceiptCode, RequestId, RunId, SessionId, StartOptions,
+    UserInput,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 
-impl AgentAdapter for CliAdapter {
+impl AgentAdapter for CodexAdapter {
     fn capabilities(&self) -> AdapterCapabilities {
         self.capabilities
     }
@@ -42,10 +47,11 @@ impl AgentAdapter for CliAdapter {
                 model: selection.model.clone(),
                 label: selection.model.clone(),
                 efforts: Vec::new(),
-                // No catalog evidence advertises this model, and no
-                // model-specific readiness was verified.
+                // No catalog evidence advertises this model.
                 advertised: false,
                 entitled: CapabilityState::Unknown,
+                // Nothing verified the provider serves this model, so
+                // the integration's readiness does not transfer to it.
                 availability: ExecutionAvailability::Unknown,
                 quota: None,
             });
@@ -69,8 +75,9 @@ impl AgentAdapter for CliAdapter {
         integration: &Integration,
     ) -> Result<Vec<ModelDescriptor>, AgentRuntimeError> {
         self.ensure_serves(&integration.id)?;
-        // The CLI path carries no per-model entitlement evidence and no
-        // monitoring contract, so entitlement stays `unknown` and quota `None`.
+        // The app-server session carries no per-model entitlement
+        // evidence and no monitoring contract, so entitlement stays
+        // `unknown` and quota `None`.
         Ok(descriptors::model_descriptors(
             self.provider(),
             self.catalog_models(),
@@ -100,8 +107,9 @@ impl AgentAdapter for CliAdapter {
             ));
         }
         match self.availability() {
-            // `unknown` does not block: no evidence claimed the integration
-            // could not run, and the run itself reports the outcome.
+            // `unknown` does not block: no evidence claimed the
+            // integration could not run, and the session itself reports
+            // the outcome.
             ExecutionAvailability::Ready | ExecutionAvailability::Unknown => {}
             ExecutionAvailability::NeedsAuth => {
                 return Err(AgentRuntimeError::new(
@@ -116,53 +124,65 @@ impl AgentAdapter for CliAdapter {
                 ));
             }
         }
-        // Validate access enforcement up front with the same request shape
-        // a run carries; an unenforceable session fails before it exists.
-        let probe = RunRequest {
-            integration: self.integration(),
-            model: (!options.selection.model.is_empty()).then(|| options.selection.model.clone()),
-            effort: options
-                .selection
-                .effort
-                .map(|effort| effort.as_str().to_owned()),
-            external_tools: None,
-            account: None,
-            prompt: "capability check".to_owned(),
-            output: OutputFormat::Text,
-            working_directory: Some(cwd.clone()),
-            access: options.access,
-            resume: None,
-            timeout: None,
-            interaction_handler: None,
-        };
-        self.execution
-            .adapter()
-            .validate(&probe)
-            .map_err(session::execution_error)?;
+        // Resolve before spawn so an unselectable effort or an
+        // unadvertised model fails before any process exists. An
+        // unadvertised model still resolves: the catalog is the only
+        // advertisement evidence, and the provider validates the model
+        // at `thread/start` itself.
+        self.resolve(&options.selection)?;
+
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let session_id = SessionId::new(format!("cli-session-{}-{id}", std::process::id()));
-        let resume_cursor = options.resume_cursor;
-        let session = session::CliSession::new(
+        let session_id = SessionId::new(format!("codex-session-{}-{id}", std::process::id()));
+        let session = session::CodexSession::new(
             integration.id.clone(),
             cwd.clone(),
-            options.selection,
             options.access,
-            resume_cursor.clone(),
+            options.selection.clone(),
         );
-        session.emit(AgentEventKind::SessionCreated {
-            integration_id: integration.id.clone(),
-            cwd,
-        });
-        session.emit(AgentEventKind::SessionStatus {
-            status: SessionStatus::Idle,
-        });
+        let (setup_tx, setup_rx) = mpsc::channel();
+        session.start_driver(
+            self.connector.clone(),
+            session::SessionSetup {
+                cwd,
+                access: options.access,
+                model: (!options.selection.model.is_empty())
+                    .then(|| options.selection.model.clone()),
+                resume_cursor: options.resume_cursor,
+            },
+            setup_tx,
+        )?;
+        let thread_id = match setup_rx.recv_timeout(session::SESSION_SETUP_TIMEOUT) {
+            Ok(Ok(thread_id)) => thread_id,
+            Ok(Err(reason)) => {
+                session.shutdown();
+                return Err(AgentRuntimeError::provider_error(reason));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                session.kill_child();
+                session.shutdown();
+                return Err(AgentRuntimeError::provider_error(
+                    "the app-server setup handshake did not complete",
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                session.shutdown();
+                return Err(AgentRuntimeError::provider_error(
+                    "the session driver ended before setup completed",
+                ));
+            }
+        };
+        {
+            let mut state = session.state.lock().expect("session state mutex");
+            state.thread_id = Some(thread_id.clone());
+        }
+        session.announce();
         self.sessions
             .lock()
             .expect("sessions mutex")
             .insert(session_id.clone(), session);
         Ok(AgentSessionHandle {
             session_id,
-            provider_session: resume_cursor,
+            provider_session: Some(thread_id),
         })
     }
 
@@ -171,27 +191,11 @@ impl AgentAdapter for CliAdapter {
         handle: &AgentSessionHandle,
         input: UserInput,
     ) -> Result<RunId, AgentRuntimeError> {
-        self.session(&handle.session_id)?.send_run(
-            &self.execution,
-            self.supports_jsonl,
-            self.supports_resume,
-            self.supports_interaction,
-            input,
-        )
+        self.session(&handle.session_id)?.send_turn(input)
     }
 
     fn cancel(&self, handle: &AgentSessionHandle, run: RunId) -> Result<(), AgentRuntimeError> {
-        let session = self.session(&handle.session_id)?;
-        let state = session.state.lock().expect("session state mutex");
-        match &state.active_run {
-            Some(active) if active.run_id == run => {
-                active.cancellation.cancel();
-                Ok(())
-            }
-            _ => Err(session::invalid_state(
-                "no in-flight Agent Run with that id exists for this session",
-            )),
-        }
+        self.session(&handle.session_id)?.cancel(&run)
     }
 
     fn answer(

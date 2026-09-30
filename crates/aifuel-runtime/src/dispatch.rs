@@ -13,11 +13,12 @@
 use crate::runtime::AgentRuntime;
 use aifuel_app::{StoredAgentSession, warn_store_write};
 use aifuel_core::{
-    AgentCommand, AgentRuntimeError, CommandId, ConsumerId, IntegrationSummary, ModelDescriptor,
-    Receipt, ReceiptCode, Seq, SessionId,
+    AgentCommand, AgentRuntimeError, CommandId, ConsumerId, Effort, IntegrationId,
+    IntegrationSummary, ModelDescriptor, Receipt, ReceiptCode, Seq, SessionId, SessionStatus,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::Path;
 
 /// The `seq` a receipt carries when the command authored no Session Event
 /// Log position: `0` means exactly that - listing and lookup commands
@@ -27,7 +28,8 @@ const NO_SESSION_SEQ: Seq = 0;
 
 /// The in-process result of dispatching one command: the contract
 /// [`Receipt`] plus the command's payload where it produces one. The
-/// future stdio bridge serializes the payload beside the receipt.
+/// stdio bridge serializes the payload beside the receipt.
+#[derive(Serialize)]
 pub struct CommandOutcome {
     pub receipt: Receipt,
     pub payload: CommandPayload,
@@ -44,6 +46,67 @@ pub enum CommandPayload {
     Models(Vec<ModelDescriptor>),
     /// `session.list` result: the persisted Agent Session read model.
     Sessions(Vec<StoredAgentSession>),
+}
+
+/// The `session.list` wire entry. `StoredAgentSession` is the store's
+/// internal read model and deliberately has no `Serialize` impl, so the
+/// payload projects its public fields through this mirror.
+#[derive(Serialize)]
+struct SessionEntry<'a> {
+    session_id: &'a SessionId,
+    integration: &'a IntegrationId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<Effort>,
+    cwd: &'a Path,
+    status: SessionStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resume_cursor: Option<&'a str>,
+}
+
+impl<'a> From<&'a StoredAgentSession> for SessionEntry<'a> {
+    fn from(session: &'a StoredAgentSession) -> Self {
+        Self {
+            session_id: &session.session_id,
+            integration: &session.integration,
+            model: session.model.as_deref(),
+            effort: session.effort,
+            cwd: session.cwd.as_path(),
+            status: session.status,
+            resume_cursor: session.resume_cursor.as_deref(),
+        }
+    }
+}
+
+/// The payload's wire shape: `null` when the command carries no payload,
+/// otherwise a one-field object naming its collection -
+/// `{"integrations": [...]}`, `{"models": [...]}`, or
+/// `{"sessions": [...]}`.
+impl Serialize for CommandPayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        match self {
+            Self::None => serializer.serialize_none(),
+            Self::Integrations(payload) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("integrations", payload)?;
+                map.end()
+            }
+            Self::Models(payload) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("models", payload)?;
+                map.end()
+            }
+            Self::Sessions(payload) => {
+                let sessions: Vec<SessionEntry<'_>> =
+                    payload.iter().map(SessionEntry::from).collect();
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("sessions", &sessions)?;
+                map.end()
+            }
+        }
+    }
 }
 
 impl CommandOutcome {
@@ -218,10 +281,14 @@ impl AgentRuntime {
                 session_id,
                 selection,
             } => self.model_select(command_id.clone(), session_id.clone(), selection.clone()),
-            AgentCommand::CheckpointRestore { command_id, .. } => CommandOutcome::rejected(
+            AgentCommand::CheckpointRestore {
+                command_id,
+                session_id,
+                checkpoint_id,
+            } => self.checkpoint_restore(
                 command_id.clone(),
-                ReceiptCode::Unsupported,
-                "checkpoints are not implemented at this delivery level",
+                session_id.clone(),
+                checkpoint_id.clone(),
             ),
             AgentCommand::IntegrationsList { command_id } => CommandOutcome::with_payload(
                 Receipt::ok(command_id.clone(), NO_SESSION_SEQ, None, None),
