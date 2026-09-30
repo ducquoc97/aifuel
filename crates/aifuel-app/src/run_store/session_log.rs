@@ -16,8 +16,8 @@ use super::records::{ReplayPage, StoredAgentSession};
 use super::{RunStore, RunStoreError};
 use crate::run_management::now;
 use aifuel_core::{
-    AGENT_RUNTIME_SCHEMA_VERSION, AgentEvent, AgentEventKind, Effort, IntegrationId,
-    ModelSelection, PendingApproval, Seq, SessionId, SessionSnapshot, SessionStatus,
+    AGENT_RUNTIME_SCHEMA_VERSION, AgentEvent, AgentEventKind, CheckpointDescriptor, Effort,
+    IntegrationId, ModelSelection, PendingApproval, Seq, SessionId, SessionSnapshot, SessionStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use std::collections::BTreeSet;
@@ -228,6 +228,17 @@ impl RunStore {
         head_seq(&connection, session_id)
     }
 
+    /// The Checkpoints the session recorded, oldest first: every
+    /// `checkpoint.created` fact as a read-model descriptor. Feeds the
+    /// `SessionSnapshot` and the `checkpoint.restore` membership check.
+    pub fn session_checkpoints(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<CheckpointDescriptor>, RunStoreError> {
+        let connection = self.connection.lock().expect("run store mutex");
+        session_checkpoints(&connection, session_id)
+    }
+
     /// Read back the events after `after_seq`, oldest first, bounded by both
     /// `max_events` and `max_bytes` of serialized payload. A page always
     /// carries at least one event when one exists; `truncated` marks lag
@@ -292,8 +303,7 @@ impl RunStore {
             },
             cwd: session.cwd,
             pending_approvals: pending_approvals(&connection, session_id)?,
-            // Checkpoints land with the P1 delivery; none are recorded yet.
-            checkpoints: Vec::new(),
+            checkpoints: session_checkpoints(&connection, session_id)?,
             head_seq: head_seq(&connection, session_id)?,
             tail: last_run_tail(&connection, session_id)?,
         }))
@@ -489,6 +499,37 @@ fn pending_approvals(
     }
     pending.retain(|approval| !resolved.contains(&approval.request_id));
     Ok(pending)
+}
+
+/// The session's recorded Checkpoints, oldest first: the
+/// `checkpoint.created` facts decoded into the snapshot's read-model
+/// descriptors.
+fn session_checkpoints(
+    connection: &Connection,
+    session_id: &SessionId,
+) -> Result<Vec<CheckpointDescriptor>, RunStoreError> {
+    let mut statement = connection.prepare(
+        "SELECT data FROM session_events
+        WHERE session_id = ?1 AND kind = 'checkpoint.created' ORDER BY seq",
+    )?;
+    let mut rows = statement.query(params![session_id.as_str()])?;
+    let mut checkpoints = Vec::new();
+    while let Some(row) = rows.next()? {
+        let data: String = row.get(0)?;
+        if let AgentEventKind::CheckpointCreated {
+            run_id,
+            checkpoint_id,
+            diffstat,
+        } = serde_json::from_str(&data).map_err(|_| invalid_text(0))?
+        {
+            checkpoints.push(CheckpointDescriptor {
+                checkpoint_id,
+                run_id,
+                diffstat,
+            });
+        }
+    }
+    Ok(checkpoints)
 }
 
 /// The transcript of the most recent Agent Run: every run-scoped event of

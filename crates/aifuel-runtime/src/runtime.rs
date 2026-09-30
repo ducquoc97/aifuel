@@ -3,9 +3,12 @@
 //!
 //! `open` composes the production seam: the run store at the given path,
 //! the `providers.json`/credential context from the surrounding config
-//! directory, and one [`CliAdapter`] per compiled execution adapter via
-//! `cli_fallback_adapters`. `with_adapters` is the same seam over an
-//! explicit adapter set, for embedders and tests.
+//! directory, and the adapter set: the deep protocol adapters
+//! (`CodexAdapter`, `ClaudeAdapter`) ahead of one [`CliAdapter`] per
+//! compiled execution adapter via `cli_fallback_adapters`. Registry
+//! resolution is first-match, so registration order is protocol priority.
+//! `with_adapters` is the same seam over an explicit adapter set, for
+//! embedders and tests.
 
 use crate::adapter::RuntimeAdapter;
 use crate::pump;
@@ -18,10 +21,10 @@ use aifuel_core::{
 use aifuel_providers::{
     AdapterDiscovery, CredentialStore, DiscoveryContext, IntegrationDescriptor,
     IntegrationRegistry, PROVIDERS_FILE_NAME, ProvidersConfig, builtin_integrations,
-    cli_fallback_adapters,
+    claude_adapter, cli_fallback_adapters, codex_adapter,
 };
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -50,6 +53,15 @@ pub(crate) struct LiveSession {
     pub(crate) pump: Option<JoinHandle<()>>,
     /// `session.closed` is already in the log, facade- or adapter-authored.
     pub(crate) closed: bool,
+    /// The access mode the host declared for the session. `read_only`
+    /// sessions take no Checkpoint because they produce no diff.
+    pub(crate) access: AccessMode,
+    /// The working directory Checkpoints capture for this session.
+    pub(crate) cwd: PathBuf,
+    /// The session's Integration declares a Monitoring Collection
+    /// Contract, so a completed run asks its adapter for a Quota Pool
+    /// observation. Contract-free integrations are never asked.
+    pub(crate) monitoring: bool,
 }
 
 /// One consumer's live event channel. `receiver` is handed out once by
@@ -115,10 +127,20 @@ impl AgentRuntime {
             credentials,
             configured: registry.configured_ids().clone(),
         };
-        let adapters = cli_fallback_adapters(&discovery_context)
-            .into_iter()
-            .map(|adapter| Arc::new(adapter) as Arc<dyn RuntimeAdapter>)
-            .collect();
+        // Protocol adapters first: a provider with a deeper runtime
+        // protocol (codex app-server, claude stream-json) is served by it
+        // instead of the CLI fallback for the same Integration Identity.
+        let adapters = [
+            Arc::new(codex_adapter(&discovery_context)) as Arc<dyn RuntimeAdapter>,
+            Arc::new(claude_adapter(&discovery_context)),
+        ]
+        .into_iter()
+        .chain(
+            cli_fallback_adapters(&discovery_context)
+                .into_iter()
+                .map(|adapter| Arc::new(adapter) as Arc<dyn RuntimeAdapter>),
+        )
+        .collect();
         let descriptors = registry.list().cloned().collect();
         Self::assemble(store, adapters, descriptors, discovery_context)
     }
@@ -256,6 +278,11 @@ impl AgentRuntime {
                             subscribers: BTreeSet::new(),
                             pump: Some(join),
                             closed: false,
+                            // A reconciled continuation runs at least
+                            // privilege, so it records no Checkpoints.
+                            access: AccessMode::ReadOnly,
+                            cwd: session.cwd.clone(),
+                            monitoring: descriptor.integration.monitoring.is_some(),
                         },
                     );
                 }

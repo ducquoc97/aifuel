@@ -89,7 +89,7 @@ impl AgentRuntime {
             &handle.session_id,
             AgentEventKind::SessionCreated {
                 integration_id: selection.integration_id.clone(),
-                cwd,
+                cwd: cwd.clone(),
             },
         ) {
             Ok(event) => event,
@@ -128,6 +128,9 @@ impl AgentRuntime {
                 subscribers: BTreeSet::new(),
                 pump: Some(join),
                 closed: false,
+                access,
+                cwd,
+                monitoring: descriptor.integration.monitoring.is_some(),
             },
         );
         CommandOutcome::ok(Receipt::ok(

@@ -36,11 +36,16 @@ pub fn selection(model: &str) -> ModelSelection {
 
 /// `session.create` against the fake integration.
 pub fn create(dir: &Path, model: &str) -> AgentCommand {
+    create_with_access(dir, model, AccessMode::WorkspaceWrite)
+}
+
+/// `session.create` with an explicit access mode.
+pub fn create_with_access(dir: &Path, model: &str, access: AccessMode) -> AgentCommand {
     AgentCommand::SessionCreate {
         command_id: next_id(),
         cwd: dir.to_path_buf(),
         selection: selection(model),
-        access: AccessMode::WorkspaceWrite,
+        access,
     }
 }
 

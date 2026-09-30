@@ -6,14 +6,14 @@
 //! adapter serves, the probed evidence behind `integrations.list`, the
 //! provider resume cursor recorded at shutdown, and applying a resolved
 //! `model.select`. [`RuntimeAdapter`] adds exactly those, so the facade and
-//! its registry stay typed over the object-safe contract while P0 ships
-//! only [`CliAdapter`] behind it.
+//! its registry stay typed over the object-safe contract while the
+//! concrete adapter set grows behind it.
 
 use aifuel_core::{
     AgentAdapter, AgentIntegrationInfo, AgentRuntimeError, AgentSessionHandle, IntegrationId,
-    ModelDescriptor, ModelSelection, ProviderId, SessionId,
+    ModelDescriptor, ModelSelection, ProviderId, QuotaSummary, SessionId,
 };
-use aifuel_providers::CliAdapter;
+use aifuel_providers::{ClaudeAdapter, CliAdapter, CodexAdapter};
 
 /// One serving adapter behind the facade: the contract [`AgentAdapter`]
 /// plus the session-state operations the facade needs for P0.
@@ -46,6 +46,18 @@ pub trait RuntimeAdapter: AgentAdapter {
         handle: &AgentSessionHandle,
         selection: ModelSelection,
     ) -> Result<ModelDescriptor, AgentRuntimeError>;
+
+    /// Collect one Quota Pool observation through the integration's
+    /// Monitoring Collection Contract, called once per completed Agent Run
+    /// on a session whose Integration declares a contract - the pump
+    /// resolves that from the registry, so this never fires contract-free.
+    /// `None` means the collection produced no usable observation;
+    /// collection failures stay adapter-side diagnostics and never fail
+    /// the run. The default reports no observation, which is correct for
+    /// the CLI adapters: their integrations declare no contract.
+    fn quota_observation(&self) -> Option<QuotaSummary> {
+        None
+    }
 }
 
 impl RuntimeAdapter for CliAdapter {
@@ -71,5 +83,57 @@ impl RuntimeAdapter for CliAdapter {
         selection: ModelSelection,
     ) -> Result<ModelDescriptor, AgentRuntimeError> {
         CliAdapter::set_selection(self, handle, selection)
+    }
+}
+
+impl RuntimeAdapter for CodexAdapter {
+    fn integration(&self) -> IntegrationId {
+        CodexAdapter::integration(self)
+    }
+
+    fn provider(&self) -> ProviderId {
+        CodexAdapter::provider(self)
+    }
+
+    fn agent_info(&self) -> AgentIntegrationInfo {
+        CodexAdapter::agent_info(self).clone()
+    }
+
+    fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
+        CodexAdapter::resume_cursor(self, session_id)
+    }
+
+    fn set_selection(
+        &self,
+        handle: &AgentSessionHandle,
+        selection: ModelSelection,
+    ) -> Result<ModelDescriptor, AgentRuntimeError> {
+        CodexAdapter::set_selection(self, handle, selection)
+    }
+}
+
+impl RuntimeAdapter for ClaudeAdapter {
+    fn integration(&self) -> IntegrationId {
+        ClaudeAdapter::integration(self)
+    }
+
+    fn provider(&self) -> ProviderId {
+        ClaudeAdapter::provider(self)
+    }
+
+    fn agent_info(&self) -> AgentIntegrationInfo {
+        ClaudeAdapter::agent_info(self).clone()
+    }
+
+    fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
+        ClaudeAdapter::resume_cursor(self, session_id)
+    }
+
+    fn set_selection(
+        &self,
+        handle: &AgentSessionHandle,
+        selection: ModelSelection,
+    ) -> Result<ModelDescriptor, AgentRuntimeError> {
+        ClaudeAdapter::set_selection(self, handle, selection)
     }
 }

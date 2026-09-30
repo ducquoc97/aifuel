@@ -7,8 +7,8 @@ use aifuel_core::{
     AdapterCapabilities, AgentAdapter, AgentAuthenticationEvidence, AgentAuthenticationState,
     AgentEventKind, AgentEventStream, AgentIntegrationInfo, AgentPresenceState, AgentRuntimeError,
     AgentSessionHandle, AgentVersionEvidence, ApprovalDecision, CheckpointId, Integration,
-    IntegrationId, ModelDescriptor, ModelSelection, ProviderId, ReceiptCode, RequestId, RunId,
-    SessionId, SessionStatus, StartOptions, UserInput,
+    IntegrationId, ModelDescriptor, ModelSelection, ProviderId, QuotaSummary, ReceiptCode,
+    RequestId, RunId, SessionId, SessionStatus, StartOptions, UserInput,
 };
 use aifuel_runtime::RuntimeAdapter;
 use std::collections::{BTreeMap, VecDeque};
@@ -26,6 +26,9 @@ pub struct FakeAdapter {
     next_id: AtomicU64,
     /// When set, every `start` fails: the resume reconcile's failure path.
     fail_start: bool,
+    /// The Quota Pool observation `quota_observation` reports, when the
+    /// fake's integration carries a Monitoring Collection Contract.
+    quota: Option<QuotaSummary>,
 }
 
 impl FakeAdapter {
@@ -39,12 +42,20 @@ impl FakeAdapter {
             sessions: Mutex::new(BTreeMap::new()),
             next_id: AtomicU64::new(0),
             fail_start: false,
+            quota: None,
         }
     }
 
     /// Queue the run scripts `send` calls consume in order.
     pub fn with_scripts(mut self, scripts: Vec<FakeScript>) -> Self {
         self.scripts = Mutex::new(scripts.into());
+        self
+    }
+
+    /// Report `quota` from `quota_observation`, as though the fake's
+    /// integration carried a Monitoring Collection Contract.
+    pub fn with_quota(mut self, quota: QuotaSummary) -> Self {
+        self.quota = Some(quota);
         self
     }
 
@@ -394,5 +405,9 @@ impl RuntimeAdapter for FakeAdapter {
         }
         *session.selection.lock().expect("selection mutex") = selection;
         Ok(descriptor)
+    }
+
+    fn quota_observation(&self) -> Option<QuotaSummary> {
+        self.quota
     }
 }
