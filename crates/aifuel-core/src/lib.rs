@@ -25,11 +25,11 @@ pub use agent_runtime::{
     AGENT_RUNTIME_SCHEMA_VERSION, AdapterCapabilities, AgentAdapter, AgentCommand, AgentEvent,
     AgentEventKind, AgentEventStream, AgentRuntimeError, AgentSessionHandle, ApprovalDecision,
     ApprovalKind, ApprovalOption, ApprovalRequest, Attachment, AttachmentKind,
-    CheckpointDescriptor, CheckpointId, CommandId, Effort, ExecutionAvailability, FileDiff,
-    IntegrationAuthKind, IntegrationStatus, IntegrationSummary, MessageStream, ModelDescriptor,
-    ModelSelection, PendingApproval, QuotaSummary, Receipt, ReceiptCode, ReceiptOutcome, RequestId,
-    RunId, RunOutcome, Seq, SessionId, SessionSnapshot, SessionStatus, StartOptions, TodoItem,
-    TodoItemStatus, UserInput,
+    CheckpointDescriptor, CheckpointId, CommandId, ConsumerId, Effort, ExecutionAvailability,
+    FileDiff, IntegrationAuthKind, IntegrationStatus, IntegrationSummary, MessageStream,
+    ModelDescriptor, ModelSelection, PendingApproval, QuotaSummary, Receipt, ReceiptCode,
+    ReceiptOutcome, RequestId, RunId, RunOutcome, Seq, SessionId, SessionSnapshot, SessionStatus,
+    StartOptions, TodoItem, TodoItemStatus, UserInput,
 };
 pub use execution::{
     AccessMode, AgentExecutionAdapter, AgentInputQuestion, AgentInteractionHandler,

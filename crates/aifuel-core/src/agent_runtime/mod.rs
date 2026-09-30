@@ -24,7 +24,7 @@ pub use events::{
     AgentEvent, AgentEventKind, FileDiff, MessageStream, RunOutcome, SessionStatus, TodoItem,
     TodoItemStatus,
 };
-pub use ids::{CheckpointId, CommandId, RequestId, RunId, Seq, SessionId};
+pub use ids::{CheckpointId, CommandId, ConsumerId, RequestId, RunId, Seq, SessionId};
 pub use input::{
     ApprovalDecision, ApprovalKind, ApprovalOption, ApprovalRequest, Attachment, AttachmentKind,
     UserInput,

@@ -130,3 +130,28 @@ impl fmt::Display for CommandId {
         f.write_str(self.as_str())
     }
 }
+
+/// The opaque identity of one consumer channel attached to the runtime,
+/// stamped onto `approval.resolved` as `answered_by` so every consumer's
+/// UI stays honest about who answered.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ConsumerId(String);
+
+impl ConsumerId {
+    /// Construct an opaque consumer identity.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// The opaque identity string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ConsumerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}

@@ -17,6 +17,9 @@ pub enum AccessMode {
     ReadOnly,
     #[serde(rename = "workspace-write")]
     WorkspaceWrite,
+    /// Unrestricted access: the provider auto-approves every action.
+    #[serde(rename = "full")]
+    Full,
 }
 
 impl AccessMode {
@@ -25,6 +28,7 @@ impl AccessMode {
         match self {
             Self::ReadOnly => "read-only",
             Self::WorkspaceWrite => "workspace-write",
+            Self::Full => "full",
         }
     }
 
@@ -32,8 +36,9 @@ impl AccessMode {
         match value {
             "read-only" => Ok(Self::ReadOnly),
             "workspace-write" => Ok(Self::WorkspaceWrite),
+            "full" => Ok(Self::Full),
             _ => Err(format!(
-                "invalid access mode {value:?}; expected read-only or workspace-write"
+                "invalid access mode {value:?}; expected read-only, workspace-write, or full"
             )),
         }
     }

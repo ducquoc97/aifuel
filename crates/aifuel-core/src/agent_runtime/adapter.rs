@@ -39,6 +39,12 @@ pub struct StartOptions {
     /// The access policy the Host Application declared for the session. The
     /// runtime enforces it but does not invent authorization.
     pub access: AccessMode,
+    /// The persisted provider resume cursor when startup reconcile
+    /// reattaches a session that survived a runtime restart. `None` opens a
+    /// fresh provider session. Adapters that do not declare `resume` ignore
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_cursor: Option<String>,
 }
 
 /// An adapter-owned handle to one live Agent Session.
