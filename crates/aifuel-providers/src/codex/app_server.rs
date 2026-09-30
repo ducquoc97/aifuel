@@ -14,6 +14,10 @@ use aifuel_core::{
 use mcp::{app_server_config, wait_for_mcp_tools};
 use process_wrap::tokio::TokioChildWrapper;
 use protocol::{expect_successful_response, protocol_error, read_message, send};
+// The session driver shares the app-server framing seam instead of
+// growing a parallel client.
+pub(crate) use protocol::read_message as protocol_read_message;
+pub(crate) use protocol::send as protocol_send;
 use serde_json::{Value, json};
 use settings::reported_run_settings;
 use std::fs;
@@ -102,7 +106,7 @@ pub(crate) async fn execute(
     })
 }
 
-fn spawn_app_server(cwd: &Path) -> Result<Box<dyn TokioChildWrapper>, AgentRunError> {
+pub(crate) fn spawn_app_server(cwd: &Path) -> Result<Box<dyn TokioChildWrapper>, AgentRunError> {
     for candidate in program_candidates("codex") {
         let mut command = owned_command(&candidate, |command| {
             command

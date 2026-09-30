@@ -1,0 +1,354 @@
+//! The Codex App Server [`AgentAdapter`].
+//!
+//! One [`CodexAdapter`] speaks the persistent `codex app-server` JSON-RPC
+//! protocol directly. Each Agent Session owns one app-server process
+//! holding one Codex thread; each [`send`](aifuel_core::AgentAdapter::send)
+//! starts one `turn/*` on it. A per-session driver thread owns the
+//! transport, the process lifetime, and every run-scoped emission, so
+//! event order follows the run's causal order exactly as the protocol
+//! reports it.
+//!
+//! Declarations never exceed observed evidence:
+//!
+//! - `streaming` comes from `item/agentMessage/delta` and the reasoning
+//!   and plan delta notifications.
+//! - `resume` is the provider's `thread/resume`; the thread id is the
+//!   resume cursor persisted on the session handle.
+//! - `approvals` answers every request kind the existing interaction
+//!   normalization covers and rejects anything else at the protocol
+//!   layer, never silently approving.
+//! - `effort` and `images` map onto native `turn/start` fields (`effort`,
+//!   `localImage` inputs); `todos` maps `turn/plan/updated`.
+//! - `checkpoints` stays `false`: the runtime owns the git-ref feature.
+//! - Quota stays `None`: token accounting feeds `run.completed` usage
+//!   only; Quota Pool observations come from the monitoring contract,
+//!   not this adapter.
+
+use aifuel_core::{
+    AdapterCapabilities, AgentAdapter, AgentExecutionAdapter, AgentIntegrationInfo,
+    AgentRuntimeError, DiscoveryError, DiscoveryState, ExecutionAvailability, IntegrationId,
+    ModelDescriptor, ModelSelection, ProviderId, ProviderKey, ReceiptCode, SessionId,
+};
+use std::collections::BTreeMap;
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+
+mod adapter;
+mod descriptors;
+mod driver;
+mod interactions;
+mod mapping;
+mod session;
+#[cfg(test)]
+mod tests;
+
+use crate::cli_adapter::AdapterDiscovery;
+use crate::integrations::{EvidenceContext, EvidenceSource, builtin_integrations, inspect_any};
+use crate::model_catalog::{
+    ProviderCatalogDiscovery, ProviderCatalogModel, discover_model_catalog,
+};
+use session::CodexSession;
+
+/// Local evidence attached to the adapter: the descriptor's declared
+/// sources plus the context to inspect them with.
+struct AdapterEvidence {
+    sources: Vec<EvidenceSource>,
+    context: AdapterDiscovery,
+}
+
+/// An honest [`AgentAdapter`](aifuel_core::AgentAdapter) over the Codex
+/// App Server protocol.
+///
+/// The adapter serves exactly the integration it is built for: requests
+/// for any other Integration Identity fail, never silently route to
+/// another provider, model, or credential.
+pub struct CodexAdapter {
+    integration: IntegrationId,
+    capabilities: AdapterCapabilities,
+    evidence: Option<AdapterEvidence>,
+    /// Probed once: native inspection spawns bounded provider commands
+    /// and must not repeat per call.
+    agent_info: OnceLock<AgentIntegrationInfo>,
+    /// The provider's Advertised Model catalog, discovered once on first
+    /// use. Discovery failures surface as no advertised models, never a
+    /// guessed list.
+    catalog: OnceLock<Vec<ProviderCatalogModel>>,
+    sessions: Mutex<BTreeMap<String, Arc<CodexSession>>>,
+    next_id: AtomicU64,
+    /// The transport factory the session driver asks for an app-server
+    /// I/O pair; production spawns the process, tests inject a duplex.
+    connector: session::Connector,
+}
+
+impl Default for CodexAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CodexAdapter {
+    /// An adapter serving the built-in `codex` integration.
+    pub fn new() -> Self {
+        Self::build(IntegrationId::from(ProviderKey::Codex))
+    }
+
+    /// Serve a different Integration Identity bound to the Codex
+    /// executable, for configured integrations the host registers.
+    pub fn with_integration(mut self, integration: IntegrationId) -> Self {
+        self.integration = integration;
+        self
+    }
+
+    fn build(integration: IntegrationId) -> Self {
+        Self {
+            integration,
+            capabilities: CAPABILITIES,
+            evidence: None,
+            agent_info: OnceLock::new(),
+            catalog: OnceLock::new(),
+            sessions: Mutex::new(BTreeMap::new()),
+            next_id: AtomicU64::new(0),
+            connector: session::default_connector(),
+        }
+    }
+
+    /// Attach the integration descriptor's discovery evidence sources and
+    /// the local context they inspect.
+    pub fn with_discovery(
+        mut self,
+        sources: Vec<EvidenceSource>,
+        context: AdapterDiscovery,
+    ) -> Self {
+        self.evidence = Some(AdapterEvidence { sources, context });
+        self
+    }
+
+    /// The configured integration this adapter serves.
+    pub fn integration(&self) -> IntegrationId {
+        self.integration.clone()
+    }
+
+    /// The upstream provider this integration executes against.
+    pub fn provider(&self) -> ProviderId {
+        ProviderId::from(ProviderKey::Codex)
+    }
+
+    /// Readiness to attempt a run through this integration, derived from
+    /// the probed native evidence plus attached discovery sources.
+    pub fn availability(&self) -> ExecutionAvailability {
+        descriptors::availability_from(self.agent_info(), self.discovered())
+    }
+
+    /// The probed integration evidence, cached after the first
+    /// inspection because probing spawns bounded provider commands.
+    pub fn agent_info(&self) -> &AgentIntegrationInfo {
+        self.agent_info
+            .get_or_init(|| crate::codex::AGENT_RUN_ADAPTER.agent_info())
+    }
+
+    /// The resume cursor a live session continues from: the Codex thread
+    /// id `thread/start` or `thread/resume` reported at session start.
+    pub fn resume_cursor(&self, session_id: &SessionId) -> Option<String> {
+        let sessions = self.sessions.lock().expect("sessions mutex");
+        sessions
+            .get(session_id.as_str())
+            .and_then(|session| session.resume_cursor())
+    }
+
+    /// Apply a resolved `model.select` to one session. The selection is
+    /// resolved first; only a resolvable selection replaces the stored
+    /// one, and a session with a run in flight rejects the change.
+    ///
+    /// This is an inherent method because [`AgentAdapter`] keeps
+    /// selection inside session state; the facade resolves then applies
+    /// it here.
+    pub fn set_selection(
+        &self,
+        handle: &aifuel_core::AgentSessionHandle,
+        selection: ModelSelection,
+    ) -> Result<ModelDescriptor, AgentRuntimeError> {
+        let descriptor = self.resolve(&selection)?;
+        self.session(&handle.session_id)?.set_selection(selection)?;
+        Ok(descriptor)
+    }
+
+    /// Inspect the attached evidence sources for this integration.
+    /// `None` means no discovery context was attached, which reads as
+    /// `unknown` availability rather than absent evidence.
+    fn discovered(&self) -> Option<Result<DiscoveryState, DiscoveryError>> {
+        let evidence = self.evidence.as_ref()?;
+        let context = EvidenceContext {
+            discovery: &evidence.context.discovery,
+            credentials: &evidence.context.credentials,
+            configured: &evidence.context.configured,
+        };
+        Some(inspect_any(
+            &evidence.sources,
+            &self.integration(),
+            &context,
+        ))
+    }
+
+    /// The advertised catalog, discovered once. Discovery failures are
+    /// not retried and surface as no advertised models, never a
+    /// guessed list.
+    fn catalog_models(&self) -> &[ProviderCatalogModel] {
+        self.catalog.get_or_init(|| self.discover_catalog())
+    }
+
+    fn discover_catalog(&self) -> Vec<ProviderCatalogModel> {
+        // The catalog interface is async; run it on a short-lived runtime
+        // on a scoped thread, the same pattern the CLI adapter uses.
+        let discovery = thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_io()
+                        .enable_time()
+                        .build()
+                        .ok()?;
+                    Some(runtime.block_on(discover_model_catalog(ProviderKey::Codex)))
+                })
+                .join()
+        });
+        match discovery {
+            Ok(Some(ProviderCatalogDiscovery::Available { models, .. })) => models,
+            _ => Vec::new(),
+        }
+    }
+
+    fn ensure_serves(&self, integration: &IntegrationId) -> Result<(), AgentRuntimeError> {
+        if *integration == self.integration() {
+            Ok(())
+        } else {
+            Err(AgentRuntimeError::unsupported(format!(
+                "this adapter serves integration {} only",
+                self.integration()
+            )))
+        }
+    }
+
+    fn session(&self, session_id: &SessionId) -> Result<Arc<CodexSession>, AgentRuntimeError> {
+        self.sessions
+            .lock()
+            .expect("sessions mutex")
+            .get(session_id.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                AgentRuntimeError::new(
+                    ReceiptCode::UnknownSession,
+                    "the session id is not live in this adapter",
+                )
+            })
+    }
+
+    /// The raw event receiver, for tests that need bounded reads the
+    /// boxed iterator cannot express.
+    #[cfg(test)]
+    pub(super) fn test_events(
+        &self,
+        handle: &aifuel_core::AgentSessionHandle,
+    ) -> Option<std::sync::mpsc::Receiver<aifuel_core::AgentEventKind>> {
+        self.sessions
+            .lock()
+            .expect("sessions mutex")
+            .get(handle.session_id.as_str())
+            .and_then(|session| session.take_events())
+    }
+
+    /// An adapter whose sessions speak over the given transport factory
+    /// instead of spawning `codex app-server`. Tests inject a duplex
+    /// endpoint here and play the server side of the protocol.
+    #[cfg(test)]
+    pub(in crate::codex_runtime) fn with_connector(
+        mut self,
+        connector: session::Connector,
+    ) -> Self {
+        self.connector = connector;
+        self
+    }
+
+    /// Pre-seed the probed integration evidence so tests never spawn
+    /// provider binaries.
+    #[cfg(test)]
+    pub(super) fn with_agent_info(self, info: AgentIntegrationInfo) -> Self {
+        let _ = self.agent_info.set(info);
+        self
+    }
+
+    /// Pre-seed the advertised catalog so tests never spawn provider
+    /// binaries.
+    #[cfg(test)]
+    pub(super) fn with_catalog(self, models: Vec<ProviderCatalogModel>) -> Self {
+        let _ = self.catalog.set(models);
+        self
+    }
+}
+
+impl Drop for CodexAdapter {
+    /// Dropping the adapter closes every live session: the driver exits
+    /// when its app-server process dies, and pending approval waiters
+    /// release with the session state.
+    fn drop(&mut self) {
+        let sessions = self.sessions.lock().expect("sessions mutex");
+        for session in sessions.values() {
+            session.close_transport();
+        }
+    }
+}
+
+/// One [`CodexAdapter`] for the built-in `codex` integration descriptor,
+/// paired with its declared discovery evidence, mirroring
+/// [`cli_fallback_adapters`](crate::cli_adapter::cli_fallback_adapters).
+/// The runtime registration itself lands with the parent wiring.
+pub fn codex_adapter(context: &AdapterDiscovery) -> CodexAdapter {
+    let adapter = CodexAdapter::new();
+    match builtin_integrations()
+        .iter()
+        .find(|descriptor| descriptor.integration.id == adapter.integration())
+    {
+        Some(descriptor) => adapter.with_discovery(descriptor.sources.clone(), context.clone()),
+        None => adapter,
+    }
+}
+
+/// The honest declarations this adapter can surface. Sessions stream
+/// message deltas, resume provider threads, answer every supported
+/// approval kind, and report todos and effort the protocol carries.
+/// Checkpoints stay unimplemented: the runtime owns that feature.
+pub const CAPABILITIES: AdapterCapabilities = AdapterCapabilities {
+    streaming: true,
+    resume: true,
+    approvals: true,
+    checkpoints: false,
+    effort: true,
+    images: true,
+    todos: true,
+};
+
+/// The access spellings `turn/start` carries per turn: the Codex
+/// `SandboxPolicy` object and the approval policy the host declared.
+pub(crate) fn sandbox_policy(access: aifuel_core::AccessMode) -> serde_json::Value {
+    let policy = match access {
+        aifuel_core::AccessMode::ReadOnly => "readOnly",
+        aifuel_core::AccessMode::WorkspaceWrite => "workspaceWrite",
+        aifuel_core::AccessMode::Full => "dangerFullAccess",
+    };
+    serde_json::json!({"type": policy})
+}
+
+/// The thread-level sandbox spelling `thread/start` and `thread/resume`
+/// carry, matching the existing app-server run path.
+pub(crate) fn thread_sandbox(access: aifuel_core::AccessMode) -> &'static str {
+    match access {
+        aifuel_core::AccessMode::ReadOnly => "read-only",
+        aifuel_core::AccessMode::WorkspaceWrite => "workspace-write",
+        aifuel_core::AccessMode::Full => "danger-full-access",
+    }
+}
+
+/// Approval Requests stay opt-in at every access level: the provider
+/// asks, the host answers, and `Full`'s danger-full-access sandbox makes
+/// the provider auto-approve rather than this adapter.
+pub(crate) const APPROVAL_POLICY: &str = "on-request";
