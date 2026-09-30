@@ -1,7 +1,9 @@
 //! Host-supplied inputs: run text and attachments, approval options,
 //! decisions, and the Approval Request payload.
 
+use crate::{AgentInputQuestion, AgentInteractionKind};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// One unit of user input sent to an Agent Session as one Agent Run.
@@ -56,14 +58,22 @@ pub struct ApprovalOption {
 }
 
 /// A consumer's answer to an Approval Request: the id of one declared option,
-/// or free text where the request accepts it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// free text where the request accepts it, one answer per question for
+/// multi-question asks, or the raw MCP elicitation JSON.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     /// The id of one declared option on the request.
     OptionId(String),
     /// Free-form text.
     Text(String),
+    /// One answer per question for multi-question input asks: each key is a
+    /// `questions` entry's `id`, each value the answer list the provider
+    /// contract expects.
+    Answers(BTreeMap<String, Vec<String>>),
+    /// The MCP elicitation JSON an `interaction_kind` `mcp_elicitation`
+    /// request asked the host to return verbatim.
+    Elicitation(serde_json::Value),
 }
 
 /// The category of a blocking Approval Request.
@@ -106,7 +116,7 @@ impl ApprovalKind {
 /// PIN, or a confirm dialog). The runtime cannot verify device biometrics; it
 /// records which consumer answered on the `approval.resolved` event.
 /// Answering is never implicit: the runtime never auto-approves.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub kind: ApprovalKind,
     pub title: String,
@@ -116,4 +126,23 @@ pub struct ApprovalRequest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<ApprovalOption>,
     pub requires_confirm: bool,
+    /// The provider-native interaction kind behind the request. Adapters
+    /// that translate a typed provider interaction into an Approval Request
+    /// carry it through so hosts can answer natively; protocol-level asks
+    /// leave it `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interaction_kind: Option<AgentInteractionKind>,
+    /// The provider's input questions for `OrdinaryInput` and
+    /// `McpElicitation` requests. Empty for asks that only offer contract
+    /// options.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<AgentInputQuestion>,
+    /// The provider-native request parameters for `McpElicitation` asks so
+    /// a host can rebuild the elicitation exactly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
+    /// The provider-native method for `McpElicitation` asks, so a legacy
+    /// `PendingRunInput` can be rebuilt from the event alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_method: Option<String>,
 }

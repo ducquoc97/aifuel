@@ -178,6 +178,10 @@ pub struct StoredAgentSession {
     /// The provider resume cursor persisted where the adapter supports
     /// resume, read back by the startup reconcile.
     pub resume_cursor: Option<String>,
+    /// The process-instance owner id that created the row, or `None` for
+    /// rows written before owner scoping. Internal ownership marker; the
+    /// wire payload never carries it.
+    pub owner: Option<String>,
 }
 
 /// One bounded page from a session's event log plus the log's head.

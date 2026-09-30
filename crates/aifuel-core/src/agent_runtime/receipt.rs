@@ -1,6 +1,6 @@
 //! The single response returned for each command.
 
-use crate::{AGENT_RUNTIME_SCHEMA_VERSION, CommandId, Seq, SessionId, SessionSnapshot};
+use crate::{AGENT_RUNTIME_SCHEMA_VERSION, CommandId, RunId, Seq, SessionId, SessionSnapshot};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
@@ -78,6 +78,10 @@ pub enum ReceiptOutcome {
         seq: Seq,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session_id: Option<SessionId>,
+        /// The accepted Agent Run, present only on a `run.start` receipt so
+        /// the host can issue `run.cancel` without racing `run.started`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<RunId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         snapshot: Option<Box<SessionSnapshot>>,
     },
@@ -104,9 +108,18 @@ impl Receipt {
             outcome: ReceiptOutcome::Ok {
                 seq,
                 session_id,
+                run_id: None,
                 snapshot: snapshot.map(Box::new),
             },
         }
+    }
+
+    /// Attach the accepted run id to a successful `run.start` receipt.
+    pub fn with_run_id(mut self, run_id: RunId) -> Self {
+        if let ReceiptOutcome::Ok { run_id: slot, .. } = &mut self.outcome {
+            *slot = Some(run_id);
+        }
+        self
     }
 
     /// A failed answer with one closed [`ReceiptCode`].

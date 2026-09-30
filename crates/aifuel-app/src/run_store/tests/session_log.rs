@@ -267,6 +267,152 @@ fn shutdown_marks_in_flight_sessions_interrupted() {
     let _ = std::fs::remove_file(path);
 }
 
+fn mark_working(store: &RunStore, session_id: &SessionId) {
+    store
+        .append(
+            session_id,
+            AgentEventKind::SessionStatus {
+                status: SessionStatus::Working,
+            },
+        )
+        .expect("event appends");
+}
+
+#[test]
+fn shutdown_marks_only_this_owners_in_flight_sessions() {
+    // Two stores in one process own disjoint session sets: one's shutdown
+    // leaves the other's in-flight session alone.
+    let path = store_path("owner-shutdown");
+    let store_a = RunStore::open(&path).expect("store opens");
+    let _owner_a = store_a.register_owner();
+    let foreign = register_agent_session(&store_a, "s-foreign");
+    mark_working(&store_a, &foreign);
+
+    let store_b = RunStore::open(&path).expect("second store opens");
+    let _owner_b = store_b.register_owner();
+    let own = register_agent_session(&store_b, "s-own");
+    mark_working(&store_b, &own);
+
+    let marked = store_b
+        .mark_interrupted_on_shutdown()
+        .expect("shutdown reconcile runs");
+    assert_eq!(marked, vec![own.clone()]);
+    assert_eq!(
+        store_b
+            .agent_session(&foreign)
+            .expect("session reads")
+            .map(|session| session.status),
+        Some(SessionStatus::Working),
+        "a live foreign owner's session stays untouched"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn orphaned_sessions_adopt_only_dead_owners() {
+    // The startup sweep reconciles in-flight sessions whose owner is gone:
+    // a live owner's session keeps its driver while rows owned by nothing
+    // or by a dead pid are marked, then become adoptable when the owner
+    // drops.
+    let path = store_path("owner-orphans");
+    let store_a = RunStore::open(&path).expect("store opens");
+    let owner_a = store_a.register_owner();
+    let live = register_agent_session(&store_a, "s-live");
+    mark_working(&store_a, &live);
+    // A row written before owner scoping carries no owner id.
+    let legacy = register_agent_session(&store_a, "s-legacy");
+    mark_working(&store_a, &legacy);
+    store_a
+        .connection
+        .lock()
+        .expect("run store mutex")
+        .execute(
+            "UPDATE agent_sessions SET owner = NULL WHERE session_id = ?1",
+            params![legacy.as_str()],
+        )
+        .expect("owner clears");
+    // A session whose owner pid already exited.
+    let dead = register_agent_session(&store_a, "s-dead");
+    mark_working(&store_a, &dead);
+    let dead_pid = {
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("probe process spawns");
+        let pid = child.id();
+        child.wait().expect("probe process exits");
+        pid
+    };
+    store_a
+        .connection
+        .lock()
+        .expect("run store mutex")
+        .execute(
+            "UPDATE agent_sessions SET owner = ?1 WHERE session_id = ?2",
+            params![format!("{dead_pid}:1:1"), dead.as_str()],
+        )
+        .expect("owner stamps");
+
+    let store_b = RunStore::open(&path).expect("second store opens");
+    let owner_b = store_b.register_owner();
+
+    // Only orphaned rows are sweep candidates; the live owner's session
+    // is never one.
+    let orphan_ids: Vec<SessionId> = store_b
+        .orphaned_agent_sessions()
+        .expect("orphans list")
+        .iter()
+        .map(|session| session.session_id.clone())
+        .collect();
+    assert!(orphan_ids.contains(&legacy));
+    assert!(orphan_ids.contains(&dead));
+    assert!(
+        !orphan_ids.contains(&live),
+        "a live owner's session is not adoptable"
+    );
+
+    let marked = store_b
+        .reconcile_orphaned_sessions()
+        .expect("startup reconcile runs");
+    assert_eq!(marked, vec![dead.clone(), legacy.clone()]);
+    assert_eq!(
+        store_b
+            .agent_session(&live)
+            .expect("session reads")
+            .expect("session exists")
+            .status,
+        SessionStatus::Working,
+        "a live owner's in-flight session keeps working"
+    );
+    assert_eq!(
+        store_b
+            .agent_session(&dead)
+            .expect("session reads")
+            .expect("session exists")
+            .status,
+        SessionStatus::Interrupted
+    );
+
+    // Once the live owner's registration drops, its session reconciles
+    // too, and the sweep's claim re-stamps the adopted row.
+    drop(owner_a);
+    let marked = store_b
+        .reconcile_orphaned_sessions()
+        .expect("reconcile reruns");
+    assert_eq!(marked, vec![live.clone()]);
+    store_b.claim_agent_session(&live).expect("claim writes");
+    assert_eq!(
+        store_b
+            .agent_session(&live)
+            .expect("session reads")
+            .expect("session exists")
+            .owner
+            .as_deref(),
+        Some(owner_b.id()),
+        "the adopted session re-stamps to the claiming owner"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
 #[test]
 fn pending_approvals_survive_in_the_log_until_resolved() {
     let path = store_path("session-approvals");
@@ -284,6 +430,10 @@ fn pending_approvals_survive_in_the_log_until_resolved() {
             label: "Allow".to_owned(),
         }],
         requires_confirm: false,
+        interaction_kind: None,
+        questions: Vec::new(),
+        parameters: None,
+        native_method: None,
     };
     for request_id in ["req-1", "req-2"] {
         store
@@ -405,5 +555,85 @@ fn version_three_databases_gain_the_session_log_tables() {
         .append(&session_id, run_started("run-a"))
         .expect("event appends on migrated db");
     assert_eq!(event.seq, 1);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn version_five_databases_gain_the_owner_column() {
+    let path = store_path("migrate-v5");
+    // Seed the version-5 shape: the meta marker plus an `agent_sessions`
+    // table that predates the owner column, with one in-flight row.
+    {
+        let connection = rusqlite::Connection::open(&path).expect("seed db opens");
+        connection
+            .execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO meta (key, value) VALUES ('schema_version', '5');
+                CREATE TABLE agent_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    integration TEXT NOT NULL,
+                    model TEXT,
+                    effort TEXT,
+                    cwd TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    resume_cursor TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                INSERT INTO agent_sessions
+                    (session_id, integration, cwd, status, created_at, updated_at)
+                VALUES ('s-old', 'claude', '/repo', 'working', 1, 1);",
+            )
+            .expect("seed schema applies");
+    }
+
+    let store = RunStore::open(&path).expect("store opens");
+    let version: String = store
+        .connection
+        .lock()
+        .expect("run store mutex")
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("schema version reads");
+    assert_eq!(
+        version,
+        SCHEMA_VERSION.to_string(),
+        "the migration advances the schema version"
+    );
+
+    // Rows written before owner scoping keep a NULL owner: they reconcile
+    // as orphaned, so a dead host's in-flight work is still swept by the
+    // next opener.
+    let session = store
+        .agent_session(&SessionId::new("s-old"))
+        .expect("session reads")
+        .expect("session exists");
+    assert_eq!(session.owner, None);
+    assert_eq!(session.status, SessionStatus::Working);
+
+    // New writes stamp this store's owner once it registers; a registered
+    // owner's rows are not orphans to itself.
+    let _guard = store.register_owner();
+    let session_id = register_agent_session(&store, "s-new");
+    let session = store
+        .agent_session(&session_id)
+        .expect("session reads")
+        .expect("session exists");
+    assert_eq!(
+        session.owner.as_deref(),
+        Some(_guard.id()),
+        "new sessions record their owner"
+    );
+    let orphan_ids: Vec<SessionId> = store
+        .orphaned_agent_sessions()
+        .expect("orphans list")
+        .iter()
+        .map(|session| session.session_id.clone())
+        .collect();
+    assert!(orphan_ids.contains(&SessionId::new("s-old")));
+    assert!(!orphan_ids.contains(&session_id));
     let _ = std::fs::remove_file(path);
 }

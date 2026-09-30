@@ -19,12 +19,21 @@ use std::path::PathBuf;
 #[serde(tag = "type")]
 pub enum AgentCommand {
     /// Create an Agent Session bound to one Provider Integration.
+    ///
+    /// `resume_cursor` asks the adapter to continue a provider session the
+    /// host already holds a cursor for; `external_tools` names the exact AI
+    /// Fuel Gateway tools the session must enforce, empty when the host
+    /// requests none.
     #[serde(rename = "session.create")]
     SessionCreate {
         command_id: CommandId,
         cwd: PathBuf,
         selection: ModelSelection,
         access: AccessMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_cursor: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        external_tools: Vec<String>,
     },
     /// Attach to an existing session and replay events after `last_seen_seq`.
     #[serde(rename = "session.subscribe")]

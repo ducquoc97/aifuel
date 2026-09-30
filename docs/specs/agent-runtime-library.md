@@ -72,7 +72,8 @@ Host to runtime. Every command carries a `commandId`; the runtime returns exactl
 
 ```ts
 type AgentCommand =
-  | { type: "session.create";     commandId; cwd; selection: ModelSelection; access: AccessMode }
+  | { type: "session.create";     commandId; cwd; selection: ModelSelection; access: AccessMode;
+                                  resumeCursor?: string; externalTools?: string[] }
   | { type: "session.subscribe";  commandId; sessionId; lastSeenSeq: Seq }   // attach + replay
   | { type: "session.list";       commandId }
   | { type: "session.close";      commandId; sessionId }
@@ -92,7 +93,7 @@ interface UserInput {
 }
 
 type Receipt =
-  | { commandId; ok: true;  seq: Seq; sessionId?: SessionId; snapshot?: SessionSnapshot }
+  | { commandId; ok: true;  seq: Seq; sessionId?: SessionId; runId?: RunId; snapshot?: SessionSnapshot }
   | { commandId; ok: false; code: string; message: string };
 ```
 
@@ -141,13 +142,14 @@ type SessionStatus =
 
 ### Host restart and resume
 
-- On graceful shutdown the runtime marks in-flight Agent Runs `interrupted` and persists each session's provider resume cursor where the adapter supports it.
-- On startup it reconciles persisted sessions, mirroring T3 Code's `reconcileProviderSessions`: where the adapter declares `resume`, the runtime attempts provider-side continuation and emits `session.status` (`working` on success, `interrupted` on failure). Sessions on adapters without `resume` stay `interrupted` permanently; continuing work means a new session.
+- On graceful shutdown the runtime marks its own in-flight Agent Sessions `interrupted` and persists each session's provider resume cursor where the adapter supports it. Each Agent Session row records a process-instance owner so two runtimes sharing one store never mark or adopt each other's live sessions.
+- On startup it reconciles only persisted sessions whose recorded owner is gone, mirroring T3 Code's `reconcileProviderSessions`: where the adapter declares `resume`, the runtime attempts provider-side continuation, claims the session's owner, and emits `session.status` (`working` on success, `interrupted` on failure). Sessions on adapters without `resume` stay `interrupted` permanently; continuing work means a new session.
 - Interruption is recorded as a fact in the Session Event Log and continuation is attempted, never assumed.
 
 ## Approvals
 
-- Approval Request kinds: `tool_permission`, `plan_approval`, `question`, `mcp_elicitation`. Each carries `title`, `detail`, explicit `options`, and `requiresConfirm`.
+- Approval Request kinds: `tool_permission`, `plan_approval`, `question`, `mcp_elicitation`. Each carries `title`, `detail`, explicit `options`, and `requiresConfirm`. Requests translated from a typed provider interaction also retain its `interactionKind`, normalized `questions`, native `parameters`, and `nativeMethod`, so a host can reconstruct the provider-native ask and answer it directly.
+- `ApprovalDecision` is a union: `optionId` for declared options, `text` for free-form input, `answers` carrying one answer list per question id for multi-question asks, and `elicitation` carrying the raw MCP elicitation JSON.
 - `requiresConfirm` means the Host Application should re-authenticate the user (biometric, PIN, confirm dialog). The runtime cannot verify device biometrics; it records which consumer answered.
 - Pending Approval Requests are durable in the event log: they survive consumer disconnects and appear in `SessionSnapshot` until resolved.
 - Answering is never implicit. The runtime never auto-approves, consistent with the existing rule that permission requests are never auto-approved. A consumer that disappears leaves the request pending, not granted.

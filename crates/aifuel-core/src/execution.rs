@@ -137,7 +137,7 @@ pub struct RunRequest {
     pub interaction_handler: Option<Arc<dyn AgentInteractionHandler>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentInteractionKind {
     OrdinaryInput,
@@ -148,7 +148,7 @@ pub enum AgentInteractionKind {
 }
 
 /// One normalized question for an Agent Run owner to present to a user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentInputQuestion {
     pub id: String,
     pub text: String,
