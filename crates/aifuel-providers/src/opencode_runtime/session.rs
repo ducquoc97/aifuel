@@ -35,7 +35,9 @@ const PROMPT_DISPATCH_TIMEOUT: Duration = Duration::from_secs(15);
 const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long `start` waits for the setup report; the driver's own
 /// handshake deadline fires first, so this covers a wedged spawn only.
-pub(super) const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(20);
+/// It must exceed the driver's `SETUP_TIMEOUT` with room for spawn and
+/// teardown.
+pub(super) const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// What a session start asks the driver to open.
 pub(super) struct SessionSetup {

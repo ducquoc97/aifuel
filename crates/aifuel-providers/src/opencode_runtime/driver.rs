@@ -25,8 +25,11 @@ use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 /// The setup handshake deadline: readiness polling, the event-stream
-/// connect, and session create or reattach share one bound.
-const SETUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// connect, and session create or reattach share one bound. The serve
+/// process is a full HTTP server with plugin init - cold starts measured
+/// at 6-13s on modest hardware - so the bound is generous, unlike the
+/// lightweight stdio servers other adapters drive.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(45);
 /// How long teardown waits on stderr capture after the process dies.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 /// Control-request bound (`session` create/get, `abort`,
