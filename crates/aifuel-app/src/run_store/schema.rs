@@ -6,7 +6,7 @@
 //! only for `events.data`, which stays `NULL` unless the owning manager
 //! enables content retention.
 
-pub(super) const SCHEMA_VERSION: u32 = 4;
+pub(super) const SCHEMA_VERSION: u32 = 5;
 
 /// The `meta` table is created before any versioned migration so the schema
 /// version can be read even on a database that predates the migration.
@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS session_events (
     PRIMARY KEY (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS session_events_run ON session_events(session_id, run_id, seq);
+CREATE TABLE IF NOT EXISTS commands (
+    command_id TEXT PRIMARY KEY,
+    receipt_json TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
 ";
 
 /// Schema version 1 stored only the provider key on runs and used it as the
@@ -137,6 +142,14 @@ UPDATE meta SET value = '3' WHERE key = 'schema_version';
 /// creates the tables.
 pub(super) const MIGRATION_V3: &str = "
 UPDATE meta SET value = '4' WHERE key = 'schema_version';
+";
+
+/// Schema version 4 predates the command receipt log: `commands` holds the
+/// serialized Receipt recorded for each dispatched command id so retries
+/// answer idempotently. A pure addition, so the version stamp is all the
+/// migration needs; the schema batch creates the table.
+pub(super) const MIGRATION_V4: &str = "
+UPDATE meta SET value = '5' WHERE key = 'schema_version';
 ";
 
 pub(super) const TERMINAL_STATES: &str = "'succeeded', 'failed', 'timed_out', 'cancelled'";

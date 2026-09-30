@@ -42,27 +42,14 @@ impl RunStore {
         selection: &ModelSelection,
         cwd: &Path,
     ) -> Result<(), RunStoreError> {
-        self.connection.lock().expect("run store mutex").execute(
-            "INSERT INTO agent_sessions
-                (session_id, integration, model, effort, cwd, status, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
-            ON CONFLICT(session_id) DO UPDATE SET
-                integration = excluded.integration,
-                model = excluded.model,
-                effort = excluded.effort,
-                cwd = excluded.cwd,
-                updated_at = excluded.updated_at",
-            params![
-                session_id.as_str(),
-                selection.integration_id.as_str(),
-                selection.model,
-                selection.effort.map(Effort::as_str),
-                cwd.display().to_string(),
-                SessionStatus::Idle.as_str(),
-                now(),
-            ],
-        )?;
-        Ok(())
+        let connection = self.connection.lock().expect("run store mutex");
+        upsert_agent_session(
+            &connection,
+            session_id,
+            &selection.integration_id,
+            Some(selection),
+            cwd,
+        )
     }
 
     /// Update the session's current model selection (`model.select`). The
@@ -202,22 +189,7 @@ impl RunStore {
                 integration_id,
                 cwd,
             } => {
-                connection.execute(
-                    "INSERT INTO agent_sessions
-                        (session_id, integration, model, effort, cwd, status, created_at, updated_at)
-                    VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5, ?5)
-                    ON CONFLICT(session_id) DO UPDATE SET
-                        integration = excluded.integration,
-                        cwd = excluded.cwd,
-                        updated_at = excluded.updated_at",
-                    params![
-                        session_id.as_str(),
-                        integration_id.as_str(),
-                        cwd.display().to_string(),
-                        SessionStatus::Idle.as_str(),
-                        now(),
-                    ],
-                )?;
+                upsert_agent_session(connection, session_id, integration_id, None, cwd)?;
             }
             AgentEventKind::SessionStatus { status } => {
                 connection.execute(
@@ -247,6 +219,13 @@ impl RunStore {
             _ => {}
         }
         Ok(())
+    }
+
+    /// The newest sequence the Session Event Log assigned for the session;
+    /// `0` when no events exist yet.
+    pub fn head_seq(&self, session_id: &SessionId) -> Result<Seq, RunStoreError> {
+        let connection = self.connection.lock().expect("run store mutex");
+        head_seq(&connection, session_id)
     }
 
     /// Read back the events after `after_seq`, oldest first, bounded by both
@@ -378,6 +357,58 @@ fn read_session_event(
             kind,
         },
     })
+}
+
+/// Insert-or-refresh the `agent_sessions` projection row, shared by
+/// `record_agent_session` and the `session.created` projection. With
+/// `selection`, the selection columns are written and refreshed on
+/// conflict; without it they insert as NULL and survive conflicts
+/// untouched, so an event-projected row never wipes a recorded selection.
+/// Status and `created_at` persist across conflicts either way.
+fn upsert_agent_session(
+    connection: &Connection,
+    session_id: &SessionId,
+    integration: &IntegrationId,
+    selection: Option<&ModelSelection>,
+    cwd: &Path,
+) -> Result<(), RunStoreError> {
+    let (model, effort) = selection
+        .map(|selection| {
+            (
+                Some(selection.model.as_str()),
+                selection.effort.map(Effort::as_str),
+            )
+        })
+        .unwrap_or((None, None));
+    let update = if selection.is_some() {
+        "integration = excluded.integration,
+            model = excluded.model,
+            effort = excluded.effort,
+            cwd = excluded.cwd,
+            updated_at = excluded.updated_at"
+    } else {
+        "integration = excluded.integration,
+            cwd = excluded.cwd,
+            updated_at = excluded.updated_at"
+    };
+    connection.execute(
+        &format!(
+            "INSERT INTO agent_sessions
+                (session_id, integration, model, effort, cwd, status, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+            ON CONFLICT(session_id) DO UPDATE SET {update}"
+        ),
+        params![
+            session_id.as_str(),
+            integration.as_str(),
+            model,
+            effort,
+            cwd.display().to_string(),
+            SessionStatus::Idle.as_str(),
+            now(),
+        ],
+    )?;
+    Ok(())
 }
 
 fn head_seq(connection: &Connection, session_id: &SessionId) -> Result<Seq, RunStoreError> {

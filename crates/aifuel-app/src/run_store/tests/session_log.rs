@@ -349,6 +349,26 @@ fn resume_cursor_roundtrips_for_startup_reconcile() {
 }
 
 #[test]
+fn head_seq_reports_the_log_tip() {
+    let path = store_path("head-seq");
+    let store = RunStore::open(&path).expect("store opens");
+    let session_id = register_agent_session(&store, "s-head");
+
+    // No events yet: the head is zero, not an error - `session.create`
+    // receipts land before the first fact exists in some flows, and `0`
+    // is the contract's no-position marker.
+    assert_eq!(store.head_seq(&session_id).expect("head seq reads"), 0);
+    store
+        .append(&session_id, run_started("run-a"))
+        .expect("event appends");
+    store
+        .append(&session_id, run_started("run-b"))
+        .expect("event appends");
+    assert_eq!(store.head_seq(&session_id).expect("head seq reads"), 2);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn version_three_databases_gain_the_session_log_tables() {
     let path = store_path("migrate-v3");
     // Seed only the version marker a version-3 store carried; the migration

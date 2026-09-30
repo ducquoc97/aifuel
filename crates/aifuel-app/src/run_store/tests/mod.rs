@@ -6,6 +6,7 @@ use aifuel_core::{
 };
 use std::path::PathBuf;
 
+mod commands;
 mod session_log;
 
 fn started_run(run_id: &str) -> StartedRun {

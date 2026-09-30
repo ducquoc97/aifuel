@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use helpers::{invalid_text, pid_alive};
 use schema::{
-    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, SCHEMA, SCHEMA_VERSION,
+    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, SCHEMA, SCHEMA_VERSION,
     TERMINAL_EVENT_KINDS, TERMINAL_STATES,
 };
 
@@ -33,7 +33,7 @@ pub use records::{ReplayPage, StoredAgentSession};
 /// History writes are best-effort: an active run must not fail because its
 /// metadata could not be persisted, but a silent drop hides a degraded
 /// install, so failures are reported on stderr instead.
-pub(crate) fn warn_store_write(error: &RunStoreError) {
+pub fn warn_store_write(error: &RunStoreError) {
     eprintln!("aifuel: run history write failed: {error}");
 }
 
@@ -84,12 +84,18 @@ impl RunStore {
                 connection.execute_batch(MIGRATION_V1)?;
                 connection.execute_batch(MIGRATION_V2)?;
                 connection.execute_batch(MIGRATION_V3)?;
+                connection.execute_batch(MIGRATION_V4)?;
             }
             "2" => {
                 connection.execute_batch(MIGRATION_V2)?;
                 connection.execute_batch(MIGRATION_V3)?;
+                connection.execute_batch(MIGRATION_V4)?;
             }
-            "3" => connection.execute_batch(MIGRATION_V3)?,
+            "3" => {
+                connection.execute_batch(MIGRATION_V3)?;
+                connection.execute_batch(MIGRATION_V4)?;
+            }
+            "4" => connection.execute_batch(MIGRATION_V4)?,
             version if version == SCHEMA_VERSION.to_string() => {}
             version => return Err(RunStoreError::UnsupportedSchema(version.to_owned())),
         }
@@ -497,6 +503,7 @@ impl RunStore {
     }
 }
 
+mod commands;
 mod error;
 mod helpers;
 mod records;
