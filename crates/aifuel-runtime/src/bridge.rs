@@ -13,7 +13,10 @@
 //!
 //! Every outbound message carries `v`, the contract's schema version, so
 //! the envelope is versioned JSON the same way the contract types inside
-//! it are.
+//! it are. Inbound `v` may be absent - a plain JSON-RPC 2.0 request can
+//! only mean v1, the one version the bridge serves - but a declared `v`
+//! must be `1` exactly: any other version answers `-32600`, never a
+//! silent dispatch under a version the frame did not ask for.
 //!
 //! ```json
 //! {"jsonrpc":"2.0","v":1,"id":7,"method":"session.create","params":{"cwd":"/repo","selection":{"integration_id":"claude","model":"opus"},"access":"workspace-write"}}
@@ -43,11 +46,14 @@
 //!
 //! Malformed lines answer a JSON-RPC error response, never a panic:
 //! `-32700` parse error, `-32600` invalid request, `-32601` method not
-//! found, `-32602` invalid params. Inbound notifications (no `id`) have
-//! no answer and are ignored. A frame over 1 MiB is a protocol violation
-//! the bridge cannot resynchronize past, so it is fatal. EOF on stdin is
-//! the orderly end: the runtime's graceful `shutdown` runs before the
-//! bridge exits.
+//! found, `-32602` invalid params. One `-32600` also answers a frame
+//! that is not a request object at all - a batch array (batches stay
+//! unimplemented) or a bare primitive - and an object carrying neither
+//! `id` nor `method`. Inbound notifications (a `method` and no `id`)
+//! have no answer and are ignored. A frame over 1 MiB is a protocol
+//! violation the bridge cannot resynchronize past, so it is fatal. EOF
+//! on stdin is the orderly end: the runtime's graceful `shutdown` runs
+//! before the bridge exits.
 
 use crate::runtime::AgentRuntime;
 use aifuel_core::{AGENT_RUNTIME_SCHEMA_VERSION, AgentCommand, AgentEvent, ConsumerId};
@@ -197,13 +203,40 @@ fn handle_frame(runtime: &AgentRuntime, consumer: &ConsumerId, frame: &[u8]) -> 
         Ok(request) => request,
         Err(_) => return Some(error_frame(Value::Null, PARSE_ERROR, "invalid JSON")),
     };
-    let Some(id) = request.get("id").cloned() else {
-        // A JSON-RPC notification is not answered. The inbound surface is
-        // request-only, so notifications are ignored.
-        return None;
+    let Some(object) = request.as_object() else {
+        // Batches stay unimplemented and primitives are never requests:
+        // one invalid-request error answers the whole frame rather than
+        // dropping it silently.
+        return Some(error_frame(Value::Null, INVALID_REQUEST, "invalid request"));
+    };
+    let Some(id) = object.get("id").cloned() else {
+        if object.contains_key("method") {
+            // A JSON-RPC notification is not answered. The inbound
+            // surface is request-only, so notifications are ignored.
+            return None;
+        }
+        // Neither a request nor a notification is not a message the
+        // protocol defines; it is an invalid request.
+        return Some(error_frame(Value::Null, INVALID_REQUEST, "invalid request"));
     };
     if request["jsonrpc"] != "2.0" {
         return Some(error_frame(Value::Null, INVALID_REQUEST, "invalid request"));
+    }
+    // The envelope's schema version: absent reads as v1 - a plain
+    // JSON-RPC 2.0 request can only mean the one version the bridge
+    // serves - while a declared `v` must be exactly it. Any other
+    // version is an invalid request, never a silent v1 dispatch. The
+    // error still echoes the request id so the host can correlate it.
+    match object.get("v") {
+        None => {}
+        Some(version) if version.as_u64() == Some(u64::from(BRIDGE_VERSION)) => {}
+        Some(_) => {
+            return Some(error_frame(
+                id,
+                INVALID_REQUEST,
+                "unsupported schema version",
+            ));
+        }
     }
     // The request id carries the command identity; only string and number
     // ids can carry one (per JSON-RPC and the `command_id` rule above).

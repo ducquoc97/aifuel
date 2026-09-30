@@ -361,6 +361,88 @@ fn malformed_frames_answer_error_responses() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The versioned-envelope contract is enforced inbound: `v` may be
+/// absent (a plain JSON-RPC 2.0 request can only mean the one version
+/// the bridge serves), but a declared `v` other than `1` is an invalid
+/// request, never a silent dispatch under a version the frame did not
+/// ask for. Frames that are not request objects (batch arrays, bare
+/// primitives, objects without `id` or `method`) answer one `-32600`
+/// instead of being dropped silently.
+#[test]
+fn envelope_version_and_frame_shape_are_enforced() {
+    let dir = test_dir("bridge-version");
+    let (_store, runtime) = fake_runtime(
+        &dir,
+        FakeAdapter::default_capabilities(),
+        vec![FakeAdapter::model("fake-a", &[])],
+        vec![],
+    );
+    let mut bridge = Bridge::start(Arc::new(runtime));
+
+    // A declared v other than the schema version is an invalid request;
+    // the error still echoes the request id and carries v:1 itself.
+    let response = bridge.call(&json!({
+        "jsonrpc": "2.0", "v": 99, "id": "v99", "method": "session.list",
+    }));
+    assert_eq!(response["v"], 1, "the error envelope is versioned");
+    assert_eq!(response["id"], "v99", "the error echoes the request id");
+    assert_eq!(response["error"]["code"], -32600);
+
+    // The version is an integer: a string or float spelling is not it.
+    let response = bridge.call(&json!({
+        "jsonrpc": "2.0", "v": "1", "id": "vstr", "method": "session.list",
+    }));
+    assert_eq!(response["error"]["code"], -32600);
+
+    // Absent v reads as v1: the request dispatches normally.
+    let response = bridge.call(&json!({
+        "jsonrpc": "2.0", "id": "no-v", "method": "session.list",
+    }));
+    assert_eq!(
+        response["result"]["receipt"]["ok"], true,
+        "a request without v dispatches as v1: {response}"
+    );
+
+    // A batch array is one invalid frame, answered by one -32600 rather
+    // than a reply per element or silence.
+    bridge.send(&json!([
+        {"jsonrpc": "2.0", "v": 1, "id": "b1", "method": "session.list"},
+        {"jsonrpc": "2.0", "v": 1, "id": "b2", "method": "session.list"},
+    ]));
+    bridge.send(&json!({"jsonrpc": "2.0", "v": 1, "id": "after", "method": "session.list"}));
+    let frames = bridge.collect_until(|frame| frame.get("id") == Some(&json!("after")));
+    assert_eq!(
+        frames.len(),
+        2,
+        "the batch answered exactly one error frame: {frames:?}"
+    );
+    assert_eq!(frames[0]["id"], Value::Null);
+    assert_eq!(frames[0]["error"]["code"], -32600);
+    assert_eq!(frames[1]["result"]["receipt"]["ok"], true);
+
+    // A bare primitive is not a request object either.
+    bridge.send_raw("42");
+    let response = bridge.next(|frame| frame.get("error").is_some());
+    assert_eq!(response["id"], Value::Null);
+    assert_eq!(response["error"]["code"], -32600);
+
+    // An object carrying neither id nor method is neither a request nor
+    // a notification.
+    bridge.send(&json!({"jsonrpc": "2.0", "params": {}}));
+    let response = bridge.next(|frame| frame.get("error").is_some());
+    assert_eq!(response["id"], Value::Null);
+    assert_eq!(response["error"]["code"], -32600);
+
+    // The bridge still serves a fully versioned request at the end.
+    let response = bridge.call(&json!({
+        "jsonrpc": "2.0", "v": 1, "id": "last", "method": "session.list", "params": {},
+    }));
+    assert_eq!(response["result"]["receipt"]["ok"], true);
+
+    bridge.close().expect("EOF shuts down cleanly");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// EOF on stdin is the orderly end: the serve loop returns, the runtime's
 /// graceful shutdown records in-flight sessions as `interrupted` in the
 /// Session Event Log, and the process exit path stays clean.
