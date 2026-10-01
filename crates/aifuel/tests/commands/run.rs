@@ -3,6 +3,7 @@ use std::process::Command;
 
 use crate::support::{
     TestDirectory, install_fake_codex_app_server, install_fake_command, path_with,
+    seed_codex_authentication,
 };
 
 #[test]
@@ -51,6 +52,7 @@ fn run_rejects_prompt_only_read_only_without_verified_provider_enforcement() {
 fn supported_codex_run_emits_a_structured_result_when_json_is_requested() {
     let directory = TestDirectory::new("json-run");
     let log_path = install_fake_codex_app_server(directory.path());
+    seed_codex_authentication(directory.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([
@@ -96,6 +98,7 @@ fn supported_codex_run_emits_a_structured_result_when_json_is_requested() {
 fn run_uses_the_selected_codex_integration() {
     let directory = TestDirectory::new("codex-run");
     let log_path = install_fake_codex_app_server(directory.path());
+    seed_codex_authentication(directory.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([

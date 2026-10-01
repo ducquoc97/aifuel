@@ -90,7 +90,7 @@ impl ExecutionCapabilities {
         self
     }
 
-    pub(super) fn evidence(&self) -> BTreeMap<AgentCapability, AgentCapabilityEvidence> {
+    pub(crate) fn evidence(&self) -> BTreeMap<AgentCapability, AgentCapabilityEvidence> {
         [
             (
                 AgentCapability::ModelCatalog,

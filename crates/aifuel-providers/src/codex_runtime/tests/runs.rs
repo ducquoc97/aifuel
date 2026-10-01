@@ -13,6 +13,14 @@ fn thread_start_carries_access_cwd_and_model() {
     let (adapter, servers) = duplex_adapter();
     let server = serve(servers, |mut server| async move {
         let start = server.handshake("thread-1").await;
+        // No external tools were selected, so setup must not poll MCP
+        // readiness; silence on the wire proves it.
+        let leaked =
+            tokio::time::timeout(Duration::from_millis(400), server.next_client_opt()).await;
+        assert!(
+            matches!(leaked, Err(_) | Ok(None)),
+            "an empty tool selection never polls mcpServerStatus/list: {leaked:?}"
+        );
         server.park().await;
         start
     });
@@ -31,6 +39,11 @@ fn thread_start_carries_access_cwd_and_model() {
     assert_eq!(params["model"], "codex-test-model");
     assert_eq!(params["cwd"], "/tmp");
     assert_eq!(params["ephemeral"], false);
+    assert_eq!(
+        params["config"],
+        json!({"mcp_servers": {}}),
+        "no tool selection means no managed MCP server"
+    );
     assert!(matches!(
         recv(&events),
         AgentEventKind::SessionClosed { .. }
@@ -60,6 +73,146 @@ fn thread_resume_uses_the_persisted_cursor() {
     assert_eq!(request["method"], "thread/resume");
     assert_eq!(request["params"]["threadId"], "thread-resumed");
     assert_eq!(request["params"]["sandbox"], "workspace-write");
+}
+
+/// A selected tool set spawns the filtered AI Fuel Gateway through the
+/// thread config, and the session opens only once `mcpServerStatus/list`
+/// reports exactly those tools. A host depending on external tools must
+/// never silently run on a partial tool set.
+#[test]
+fn external_tools_register_the_gateway_and_gate_setup_on_exact_readiness() {
+    let (adapter, servers) = duplex_adapter();
+    let server = serve(servers, |mut server| async move {
+        let init = server.next_method("initialize").await;
+        server.respond(&init, json!({})).await;
+        server.next_method("initialized").await;
+        let start = server.next_method("thread/start").await;
+        let config = start["params"]["config"].clone();
+        server
+            .respond(&start, json!({"thread": {"id": "thread-1"}}))
+            .await;
+        // The gateway is still starting: setup keeps polling inside the
+        // setup deadline rather than opening the session early.
+        let status = server.next_method("mcpServerStatus/list").await;
+        assert_eq!(status["params"]["threadId"], "thread-1");
+        assert_eq!(status["params"]["detail"], "full");
+        server
+            .respond(
+                &status,
+                json!({"data": [{"name": "aifuel-gateway", "runtimeStatus": "starting", "tools": {}}]}),
+            )
+            .await;
+        // Connected with exactly the selected tools: setup completes.
+        let status = server.next_method("mcpServerStatus/list").await;
+        server
+            .respond(
+                &status,
+                json!({"data": [{"name": "aifuel-gateway", "runtimeStatus": "connected", "tools": {
+                    "docs__search": {"name": "docs__search"},
+                    "repo__read": {"name": "repo__read"},
+                }}]}),
+            )
+            .await;
+        server.park().await;
+        config
+    });
+    let mut options = options(AccessMode::ReadOnly);
+    options.external_tools = vec!["docs__search".to_owned(), "repo__read".to_owned()];
+    let handle = adapter.start(&integration(), options).expect("start");
+    let events = test_events(&adapter, &handle);
+    expect_prelude(&events);
+    adapter.stop(handle).expect("stop");
+    let config = server.join().expect("server script finished");
+    assert_eq!(
+        config["mcp_servers"]["aifuel-gateway"]["args"],
+        json!([
+            "mcp",
+            "gateway",
+            "--agent",
+            "codex",
+            "--tool",
+            "docs__search",
+            "--tool",
+            "repo__read"
+        ]),
+        "the thread config launches the gateway filtered to the exact selection"
+    );
+}
+
+/// The same config and readiness gate applies to `thread/resume`: a
+/// resumed session is also forbidden from running without its tools.
+#[test]
+fn external_tools_gate_thread_resume_the_same_way() {
+    let (adapter, servers) = duplex_adapter();
+    let server = serve(servers, |mut server| async move {
+        let init = server.next_method("initialize").await;
+        server.respond(&init, json!({})).await;
+        server.next_method("initialized").await;
+        let resume = server.next_method("thread/resume").await;
+        let config = resume["params"]["config"].clone();
+        server
+            .respond(&resume, json!({"thread": {"id": "thread-9"}}))
+            .await;
+        let status = server.next_method("mcpServerStatus/list").await;
+        assert_eq!(status["params"]["threadId"], "thread-9");
+        server
+            .respond(
+                &status,
+                json!({"data": [{"name": "aifuel-gateway", "runtimeStatus": "connected", "tools": {
+                    "docs__search": {"name": "docs__search"},
+                }}]}),
+            )
+            .await;
+        server.park().await;
+        config
+    });
+    let mut options = options(AccessMode::WorkspaceWrite);
+    options.resume_cursor = Some("thread-9".to_owned());
+    options.external_tools = vec!["docs__search".to_owned()];
+    let handle = adapter.start(&integration(), options).expect("start");
+    let events = test_events(&adapter, &handle);
+    expect_prelude(&events);
+    adapter.stop(handle).expect("stop");
+    let config = server.join().expect("server script finished");
+    assert_eq!(
+        config["mcp_servers"]["aifuel-gateway"]["args"],
+        json!([
+            "mcp",
+            "gateway",
+            "--agent",
+            "codex",
+            "--tool",
+            "docs__search"
+        ]),
+        "the resume config launches the same filtered gateway"
+    );
+}
+
+/// The gateway reporting a tool the host never selected fails `start`:
+/// widening the tool set is as unacceptable as a missing tool.
+#[test]
+fn a_session_never_runs_on_a_tool_set_wider_than_selected() {
+    let (adapter, servers) = duplex_adapter();
+    let server = serve(servers, |mut server| async move {
+        server.handshake("thread-1").await;
+        let status = server.next_method("mcpServerStatus/list").await;
+        server
+            .respond(
+                &status,
+                json!({"data": [{"name": "aifuel-gateway", "runtimeStatus": "connected", "tools": {
+                    "docs__search": {"name": "docs__search"},
+                    "extra__tool": {"name": "extra__tool"},
+                }}]}),
+            )
+            .await;
+    });
+    let mut options = options(AccessMode::ReadOnly);
+    options.external_tools = vec!["docs__search".to_owned()];
+    let error = adapter
+        .start(&integration(), options)
+        .expect_err("a wider tool set fails the session");
+    assert_eq!(error.code, ReceiptCode::ProviderError);
+    server.join().expect("server script finished");
 }
 
 #[test]
@@ -453,6 +606,7 @@ fn capabilities_match_what_the_adapter_implements() {
             effort: true,
             images: true,
             todos: true,
+            external_tools: true,
         }
     );
 }

@@ -162,6 +162,25 @@ fn a_resumed_session_reports_its_cursor_before_any_frame() {
 }
 
 #[test]
+fn external_tools_are_rejected_before_any_transport_opens() {
+    // Claude's stream-json protocol has no mechanism to restrict the
+    // provider's tool set, so a non-empty selection fails `start` rather
+    // than silently running on a wider set than asked.
+    let (script, connector) = scripted(with_init("sess-1", |_| {}));
+    let adapter = adapter_with(connector);
+    let mut options = options(AccessMode::WorkspaceWrite);
+    options.external_tools = vec!["docs__search".to_owned()];
+    let error = adapter
+        .start(&integration(), options)
+        .expect_err("a session cannot promise tools it cannot enforce");
+    assert_eq!(error.code, ReceiptCode::Unsupported);
+    assert!(
+        script.written_lines().is_empty(),
+        "the provider transport never opened for a rejected selection"
+    );
+}
+
+#[test]
 fn an_error_control_response_fails_create() {
     // The provider refused initialize: create surfaces its message
     // instead of waiting out the handshake timeout.

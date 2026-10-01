@@ -8,6 +8,7 @@ mod support;
 use aifuel_core::{SessionId, SessionStatus};
 use aifuel_runtime::{AgentRuntime, bridge::serve_stdio};
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -234,7 +235,17 @@ fn run_events_arrive_as_agent_event_notifications() {
         "params": {"session_id": session_id, "input": {"text": "go"}},
     }));
 
-    let frames = bridge.collect_until(|frame| is_event(frame, "run.completed"));
+    // Responses are written by the request thread while notifications are
+    // pushed by the event pump, so a quick run can complete before its
+    // run.start response flushes - collect until both landed rather than
+    // assuming an order between the two lanes.
+    let saw_completed = Cell::new(false);
+    let saw_run_response = Cell::new(false);
+    let frames = bridge.collect_until(|frame| {
+        saw_completed.set(saw_completed.get() || is_event(frame, "run.completed"));
+        saw_run_response.set(saw_run_response.get() || frame.get("id") == Some(&json!("run-1")));
+        saw_completed.get() && saw_run_response.get()
+    });
     // Both command responses landed, notifications interleaved between them.
     let response = |id: &str| {
         frames
@@ -244,6 +255,17 @@ fn run_events_arrive_as_agent_event_notifications() {
     };
     assert_eq!(response("sub-1")["result"]["receipt"]["ok"], true);
     assert_eq!(response("run-1")["result"]["receipt"]["ok"], true);
+    // The run.start receipt names the accepted run on the wire - the id a
+    // host names in run.cancel without waiting for run.started - and it is
+    // the same run the event stream reports.
+    let receipt_run_id = response("run-1")["result"]["receipt"]["run_id"]
+        .as_str()
+        .expect("a run.start receipt carries run_id");
+    let started = frames
+        .iter()
+        .find(|frame| is_event(frame, "run.started"))
+        .expect("the run starts");
+    assert_eq!(started["params"]["run_id"], receipt_run_id);
 
     // The notification stream carries the subscribe replay first
     // (session.created, the idle prelude) then the run's causal order.

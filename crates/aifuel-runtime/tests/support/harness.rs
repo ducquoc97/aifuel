@@ -46,6 +46,8 @@ pub fn create_with_access(dir: &Path, model: &str, access: AccessMode) -> AgentC
         cwd: dir.to_path_buf(),
         selection: selection(model),
         access,
+        resume_cursor: None,
+        external_tools: Vec::new(),
     }
 }
 

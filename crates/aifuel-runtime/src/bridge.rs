@@ -29,7 +29,9 @@
 //! carries that command's fields. The response `result` is the serialized
 //! [`CommandOutcome`](crate::CommandOutcome): `receipt` plus the command's `payload` (`null` for
 //! most commands; `{"integrations":[...]}`, `{"models":[...]}`, or
-//! `{"sessions":[...]}` for the listing commands).
+//! `{"sessions":[...]}` for the listing commands). A `run.start` receipt
+//! also carries `run_id`, the accepted Agent Run a host names in
+//! `run.cancel` without waiting for `run.started`.
 //!
 //! ## `command_id`
 //!
@@ -358,6 +360,8 @@ mod tests {
                     effort: None,
                 },
                 access: AccessMode::ReadOnly,
+                resume_cursor: None,
+                external_tools: Vec::new(),
             },
             AgentCommand::SessionSubscribe {
                 command_id: command_id(),

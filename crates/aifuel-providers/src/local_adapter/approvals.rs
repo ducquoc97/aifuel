@@ -72,6 +72,9 @@ pub(crate) fn approval_request(
             .join("\n");
         format!("{}\n{questions}", request.description)
     };
+    // A protocol-level ask carries no provider-native method: record it
+    // absent rather than as "", which reads as a real method name.
+    let native_method = (!request.method.is_empty()).then(|| request.method.clone());
     match request.kind {
         AgentInteractionKind::OrdinaryInput => ApprovalRequest {
             kind: ApprovalKind::Question,
@@ -79,6 +82,10 @@ pub(crate) fn approval_request(
             detail,
             options: Vec::new(),
             requires_confirm: false,
+            interaction_kind: Some(request.kind),
+            questions: request.questions.clone(),
+            parameters: Some(request.parameters.clone()),
+            native_method,
         },
         AgentInteractionKind::McpElicitation => ApprovalRequest {
             kind: ApprovalKind::McpElicitation,
@@ -86,6 +93,10 @@ pub(crate) fn approval_request(
             detail,
             options: Vec::new(),
             requires_confirm: false,
+            interaction_kind: Some(request.kind),
+            questions: request.questions.clone(),
+            parameters: Some(request.parameters.clone()),
+            native_method,
         },
         AgentInteractionKind::CommandApproval | AgentInteractionKind::FileChangeApproval => {
             ApprovalRequest {
@@ -94,6 +105,10 @@ pub(crate) fn approval_request(
                 detail,
                 options: permission_options(access, request.requires_expanded_access),
                 requires_confirm: false,
+                interaction_kind: Some(request.kind),
+                questions: request.questions.clone(),
+                parameters: Some(request.parameters.clone()),
+                native_method,
             }
         }
         AgentInteractionKind::PermissionProfileApproval => ApprovalRequest {
@@ -102,6 +117,10 @@ pub(crate) fn approval_request(
             detail,
             options: decline_only_options(),
             requires_confirm: false,
+            interaction_kind: Some(request.kind),
+            questions: request.questions.clone(),
+            parameters: Some(request.parameters.clone()),
+            native_method,
         },
     }
 }
@@ -165,24 +184,46 @@ pub(crate) fn decision_response(
             })
         }
         AgentInteractionKind::OrdinaryInput | AgentInteractionKind::McpElicitation => {
-            let ApprovalDecision::Text(text) = decision else {
-                return Err(invalid_state(
-                    "input requests take free text, not a declared option",
-                ));
-            };
-            let question = match question_ids {
-                [] => "answer".to_owned(),
-                [only] => only.clone(),
-                _ => {
-                    return Err(unsupported(
-                        "a free-text decision cannot answer a multi-question request",
-                    ));
+            match decision {
+                ApprovalDecision::Text(text) => {
+                    let question = match question_ids {
+                        [] => "answer".to_owned(),
+                        [only] => only.clone(),
+                        _ => {
+                            return Err(unsupported(
+                                "a free-text decision cannot answer a multi-question request",
+                            ));
+                        }
+                    };
+                    Ok(AgentInteractionResponse::Answers(BTreeMap::from([(
+                        question,
+                        vec![text.clone()],
+                    )])))
                 }
-            };
-            Ok(AgentInteractionResponse::Answers(BTreeMap::from([(
-                question,
-                vec![text.clone()],
-            )])))
+                ApprovalDecision::Answers(answers) => {
+                    // Answers bind to the questions the request declared;
+                    // an answer for a question it never asked is rejected
+                    // rather than forwarded to the provider. A request
+                    // declaring no questions takes free text, so any
+                    // declared answer id is unasked.
+                    if let Some(unasked) = answers.keys().find(|id| !question_ids.contains(id)) {
+                        return Err(invalid_state(format!(
+                            "{unasked:?} was not asked on this request"
+                        )));
+                    }
+                    Ok(AgentInteractionResponse::Answers(answers.clone()))
+                }
+                ApprovalDecision::Elicitation(content)
+                    if kind == AgentInteractionKind::McpElicitation =>
+                {
+                    // The MCP elicitation content returns to the provider
+                    // verbatim, the shape its `requestedSchema` asked for.
+                    Ok(AgentInteractionResponse::Elicitation(content.clone()))
+                }
+                _ => Err(invalid_state(
+                    "input requests take free text, answers, or elicitation content",
+                )),
+            }
         }
     }
 }
@@ -193,4 +234,49 @@ fn invalid_state(message: impl Into<String>) -> AgentRuntimeError {
 
 fn unsupported(message: impl Into<String>) -> AgentRuntimeError {
     AgentRuntimeError::unsupported(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(method: &str, kind: AgentInteractionKind) -> AgentInteractionRequest {
+        AgentInteractionRequest {
+            request_id: json!("req-1"),
+            method: method.to_owned(),
+            kind,
+            description: "answer this".to_owned(),
+            questions: Vec::new(),
+            parameters: json!({}),
+            requires_expanded_access: false,
+        }
+    }
+
+    /// A protocol-level ask has no provider-native method: the durable
+    /// `approval.requested` must record it absent, not as `""` which reads
+    /// as a real method name to hosts.
+    #[test]
+    fn an_empty_native_method_records_as_absent_on_approval_requests() {
+        for kind in [
+            AgentInteractionKind::OrdinaryInput,
+            AgentInteractionKind::McpElicitation,
+            AgentInteractionKind::CommandApproval,
+            AgentInteractionKind::FileChangeApproval,
+            AgentInteractionKind::PermissionProfileApproval,
+        ] {
+            let request = approval_request(&request("", kind), AccessMode::ReadOnly);
+            assert_eq!(request.native_method, None, "{kind:?}");
+        }
+        let named = approval_request(
+            &request(
+                "item/tool/requestUserInput",
+                AgentInteractionKind::OrdinaryInput,
+            ),
+            AccessMode::ReadOnly,
+        );
+        assert_eq!(
+            named.native_method.as_deref(),
+            Some("item/tool/requestUserInput")
+        );
+    }
 }

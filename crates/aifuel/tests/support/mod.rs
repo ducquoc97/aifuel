@@ -93,6 +93,16 @@ pub fn install_fake_command(directory: &Path, command_name: &str) {
 
 /// Install a small Codex App Server fixture that speaks JSONL over stdio.
 /// Returns the path where it records each request frame.
+///
+/// The fixture answers the full session contract the runtime adapter
+/// drives: the `initialize`/`initialized` prelude, `thread/start` and
+/// `thread/resume`, `turn/start` (whose `result.turn.id` becomes the run
+/// id every notification must echo), the `item/agentMessage/delta` and
+/// `turn/completed` pair, and one server-initiated approval request when
+/// `AIFUEL_CODEX_FIXTURE_APPROVAL=1`. `codex --version` and
+/// `codex debug models --bundled` answer outside the app-server loop so
+/// the runtime's version and Advertised Model catalog probes see honest
+/// evidence; `AIFUEL_CODEX_FIXTURE_CATALOG` overrides the catalog body.
 pub fn install_fake_codex_app_server(directory: &Path) -> PathBuf {
     let log_path = directory.join("codex-app-server.jsonl");
 
@@ -104,6 +114,18 @@ pub fn install_fake_codex_app_server(directory: &Path) -> PathBuf {
         fs::write(
             &executable,
             r##"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    printf 'codex-cli 0.0.0-fixture\n'
+    exit 0
+fi
+if [ "$1" = "debug" ] && [ "$2" = "models" ] && [ "$3" = "--bundled" ]; then
+    if [ -n "${AIFUEL_CODEX_FIXTURE_CATALOG:-}" ]; then
+        printf '%s\n' "$AIFUEL_CODEX_FIXTURE_CATALOG"
+    else
+        printf '%s\n' '{"models":[]}'
+    fi
+    exit 0
+fi
 if [ "$1" != "app-server" ] || [ "$2" != "--stdio" ]; then
     printf 'unexpected Codex invocation: %s\n' "$*" >&2
     exit 64
@@ -120,20 +142,20 @@ while IFS= read -r line; do
             printf '%s\n' '{"id":1,"result":{"thread":{"id":"fixture-thread"}}}'
             ;;
         *'"id":2'*)
-            printf '%s\n' '{"id":2,"result":{}}'
+            printf '%s\n' '{"id":2,"result":{"turn":{"id":"fixture-turn"}}}'
             if [ "${AIFUEL_CODEX_FIXTURE_APPROVAL:-}" = "1" ]; then
-                printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"command":"touch fixture","reason":"run a command"}}'
+                printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"fixture-thread","turnId":"fixture-turn","itemId":"item-1","command":"touch fixture","reason":"run a command"}}'
                 continue
             fi
             if [ -n "${AIFUEL_CODEX_FIXTURE_DELAY_SECONDS:-}" ]; then
                 sleep "$AIFUEL_CODEX_FIXTURE_DELAY_SECONDS"
             fi
-            printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"fake codex app-server response"}}'
-            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+            printf '%s\n' '{"method":"item/agentMessage/delta","params":{"itemId":"m1","turnId":"fixture-turn","delta":"fake codex app-server response"}}'
+            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"id":"fixture-turn","status":"completed","error":null}}}'
             ;;
         *'"decision":"accept"'*)
-            printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"fake codex app-server response"}}'
-            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+            printf '%s\n' '{"method":"item/agentMessage/delta","params":{"itemId":"m1","turnId":"fixture-turn","delta":"fake codex app-server response"}}'
+            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"id":"fixture-turn","status":"completed","error":null}}}'
             ;;
     esac
 done
@@ -155,6 +177,20 @@ done
             &script,
             r#"
 $ErrorActionPreference = 'Stop'
+if ($args[0] -eq '--version') {
+    [Console]::Out.WriteLine('codex-cli 0.0.0-fixture')
+    exit 0
+}
+if ($args[0] -eq 'debug' -and $args[1] -eq 'models' -and $args[2] -eq '--bundled') {
+    $catalog = $env:AIFUEL_CODEX_FIXTURE_CATALOG
+    if (-not $catalog) { $catalog = '{"models":[]}' }
+    [Console]::Out.WriteLine($catalog)
+    exit 0
+}
+if ($args[0] -ne 'app-server' -or $args[1] -ne '--stdio') {
+    [Console]::Error.WriteLine("unexpected Codex invocation: $args")
+    exit 64
+}
 while ($null -ne ($line = [Console]::In.ReadLine())) {
     if ($env:AIFUEL_CODEX_FIXTURE_LOG) {
         [System.IO.File]::AppendAllText($env:AIFUEL_CODEX_FIXTURE_LOG, $line + "`n")
@@ -165,12 +201,20 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         '0' { [Console]::Out.WriteLine('{"id":0,"result":{}}') }
         '1' { [Console]::Out.WriteLine('{"id":1,"result":{"thread":{"id":"fixture-thread"}}}') }
         '2' {
-            [Console]::Out.WriteLine('{"id":2,"result":{}}')
+            [Console]::Out.WriteLine('{"id":2,"result":{"turn":{"id":"fixture-turn"}}}')
+            if ($env:AIFUEL_CODEX_FIXTURE_APPROVAL -eq '1') {
+                [Console]::Out.WriteLine('{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"fixture-thread","turnId":"fixture-turn","itemId":"item-1","command":"touch fixture","reason":"run a command"}}')
+                continue
+            }
             if ($env:AIFUEL_CODEX_FIXTURE_DELAY_SECONDS) {
                 Start-Sleep -Seconds ([int]$env:AIFUEL_CODEX_FIXTURE_DELAY_SECONDS)
             }
-            [Console]::Out.WriteLine('{"method":"item/agentMessage/delta","params":{"delta":"fake codex app-server response"}}')
-            [Console]::Out.WriteLine('{"method":"turn/completed","params":{"turn":{"status":"completed"}}}')
+            [Console]::Out.WriteLine('{"method":"item/agentMessage/delta","params":{"itemId":"m1","turnId":"fixture-turn","delta":"fake codex app-server response"}}')
+            [Console]::Out.WriteLine('{"method":"turn/completed","params":{"turn":{"id":"fixture-turn","status":"completed","error":null}}}')
+        }
+        'approval-1' {
+            [Console]::Out.WriteLine('{"method":"item/agentMessage/delta","params":{"itemId":"m1","turnId":"fixture-turn","delta":"fake codex app-server response"}}')
+            [Console]::Out.WriteLine('{"method":"turn/completed","params":{"turn":{"id":"fixture-turn","status":"completed","error":null}}}')
         }
     }
 }
@@ -179,12 +223,22 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         .expect("fake Codex App Server script should be writable");
         fs::write(
             directory.join("codex.cmd"),
-            "@echo off\n%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"%~dp0codex-app-server.ps1\"\n",
+            "@echo off\n%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"%~dp0codex-app-server.ps1\" %*\n",
         )
         .expect("fake Codex command wrapper should be writable");
     }
 
     log_path
+}
+
+/// The Codex runtime adapter only attempts sessions for a home carrying
+/// the provider's documented credential marker (`.codex/auth.json`); the
+/// fake app-server seeds the same marker so the deep adapter serves the
+/// run instead of reporting the integration unauthenticated.
+pub fn seed_codex_authentication(home: &Path) {
+    let codex_home = home.join(".codex");
+    fs::create_dir_all(&codex_home).expect("Codex home should be creatable");
+    fs::write(codex_home.join("auth.json"), "{}").expect("Codex auth marker should be writable");
 }
 
 pub fn path_with(directory: &Path) -> std::ffi::OsString {

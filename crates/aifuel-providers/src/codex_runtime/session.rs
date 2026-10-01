@@ -82,6 +82,11 @@ pub(super) struct SessionSetup {
     /// The persisted Codex thread id to `thread/resume`; `None` opens a
     /// fresh thread with `thread/start`.
     pub resume_cursor: Option<String>,
+    /// The exact AI Fuel Gateway tool names the host asked the session
+    /// to enforce. Non-empty selections spawn the filtered gateway MCP
+    /// server through the thread config and gate setup on those tools
+    /// reporting ready.
+    pub external_tools: Vec<String>,
 }
 
 /// The report `start` waits on after launching the driver: the Codex

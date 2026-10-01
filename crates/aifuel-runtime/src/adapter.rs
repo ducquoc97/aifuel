@@ -13,7 +13,7 @@ use aifuel_core::{
     AgentAdapter, AgentIntegrationInfo, AgentRuntimeError, AgentSessionHandle, IntegrationId,
     ModelDescriptor, ModelSelection, ProviderId, QuotaSummary, SessionId,
 };
-use aifuel_providers::{ClaudeAdapter, CliAdapter, CodexAdapter};
+use aifuel_providers::{AcpAdapter, ClaudeAdapter, CliAdapter, CodexAdapter, OpenCodeAdapter};
 
 /// One serving adapter behind the facade: the contract [`AgentAdapter`]
 /// plus the session-state operations the facade needs for P0.
@@ -97,3 +97,5 @@ macro_rules! runtime_adapter {
 runtime_adapter!(CliAdapter);
 runtime_adapter!(CodexAdapter);
 runtime_adapter!(ClaudeAdapter);
+runtime_adapter!(AcpAdapter);
+runtime_adapter!(OpenCodeAdapter);

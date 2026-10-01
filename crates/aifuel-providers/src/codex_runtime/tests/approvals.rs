@@ -262,6 +262,303 @@ fn free_text_requests_take_text_answers() {
     assert_eq!(answer["result"]["answers"]["branch"]["answers"][0], "main");
 }
 
+/// A multi-question `requestUserInput` takes a declared answers map and
+/// writes it back verbatim - the shape free text cannot express.
+#[test]
+fn request_user_input_takes_the_declared_answers_map() {
+    let (adapter, servers) = duplex_adapter();
+    let server = serve(servers, |mut server| async move {
+        server.handshake("thread-1").await;
+        let start = server.next_method("turn/start").await;
+        server
+            .respond(&start, json!({"turn": {"id": "turn-1"}}))
+            .await;
+        server
+            .write(json!({
+                "id": SERVER_REQUEST_ID,
+                "method": "item/tool/requestUserInput",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "questions": [
+                        {"id": "branch", "question": "Which branch?"},
+                        {"id": "target", "question": "Which target?"},
+                    ],
+                }
+            }))
+            .await;
+        let answer = server.next_client().await;
+        server
+            .write(json!({
+                "method": "turn/completed",
+                "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "error": null}}
+            }))
+            .await;
+        server.park().await;
+        answer
+    });
+    let handle = adapter
+        .start(&integration(), options(AccessMode::Full))
+        .expect("start");
+    let events = test_events(&adapter, &handle);
+    expect_prelude(&events);
+    adapter.send(&handle, input("go")).expect("send");
+    let request_id = loop {
+        if let AgentEventKind::ApprovalRequested {
+            request,
+            request_id,
+            ..
+        } = recv(&events)
+        {
+            assert_eq!(request.kind, ApprovalKind::Question);
+            assert_eq!(
+                request
+                    .questions
+                    .iter()
+                    .map(|question| question.id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["branch", "target"],
+                "the declared questions reach the host"
+            );
+            break request_id;
+        }
+    };
+    adapter
+        .answer(
+            &handle,
+            request_id,
+            ApprovalDecision::Answers(BTreeMap::from([
+                ("branch".to_owned(), vec!["main".to_owned()]),
+                ("target".to_owned(), vec!["workspace".to_owned()]),
+            ])),
+        )
+        .expect("the answers map resolves the ask");
+    through_idle(&events);
+    adapter.stop(handle).expect("stop");
+    let answer = server.join().expect("server script finished");
+    assert_eq!(answer["id"], SERVER_REQUEST_ID);
+    assert_eq!(answer["result"]["answers"]["branch"]["answers"][0], "main");
+    assert_eq!(
+        answer["result"]["answers"]["target"]["answers"][0],
+        "workspace"
+    );
+}
+
+/// An `elicitation` decision returns the content JSON verbatim, the
+/// shape the server's `requestedSchema` asked for.
+#[test]
+fn elicitation_returns_the_content_verbatim() {
+    let (adapter, servers) = duplex_adapter();
+    let server = serve(servers, |mut server| async move {
+        server.handshake("thread-1").await;
+        let start = server.next_method("turn/start").await;
+        server
+            .respond(&start, json!({"turn": {"id": "turn-1"}}))
+            .await;
+        server
+            .write(json!({
+                "id": SERVER_REQUEST_ID,
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "serverName": "docs",
+                    "requestId": "elic-1",
+                    "message": "pick a mode",
+                    "requestedSchema": {"type": "object"},
+                }
+            }))
+            .await;
+        let answer = server.next_client().await;
+        server
+            .write(json!({
+                "method": "turn/completed",
+                "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "error": null}}
+            }))
+            .await;
+        server.park().await;
+        answer
+    });
+    let handle = adapter
+        .start(&integration(), options(AccessMode::Full))
+        .expect("start");
+    let events = test_events(&adapter, &handle);
+    expect_prelude(&events);
+    adapter.send(&handle, input("go")).expect("send");
+    let request_id = loop {
+        if let AgentEventKind::ApprovalRequested {
+            request,
+            request_id,
+            ..
+        } = recv(&events)
+        {
+            assert_eq!(request.kind, ApprovalKind::McpElicitation);
+            break request_id;
+        }
+    };
+    adapter
+        .answer(
+            &handle,
+            request_id,
+            ApprovalDecision::Elicitation(json!({"mode": "fast", "limit": 3})),
+        )
+        .expect("the elicitation content resolves the ask");
+    through_idle(&events);
+    adapter.stop(handle).expect("stop");
+    let answer = server.join().expect("server script finished");
+    assert_eq!(answer["id"], SERVER_REQUEST_ID);
+    assert_eq!(answer["result"]["action"], "accept");
+    assert_eq!(
+        answer["result"]["content"],
+        json!({"mode": "fast", "limit": 3}),
+        "the elicitation content returns verbatim"
+    );
+}
+
+/// An elicitation ask declares no question ids, so every answers key is
+/// unasked: `answers` cannot smuggle content the server never requested.
+#[test]
+fn answers_for_an_ask_without_questions_are_rejected() {
+    let (adapter, servers) = duplex_adapter();
+    let server = serve(servers, |mut server| async move {
+        server.handshake("thread-1").await;
+        let start = server.next_method("turn/start").await;
+        server
+            .respond(&start, json!({"turn": {"id": "turn-1"}}))
+            .await;
+        server
+            .write(json!({
+                "id": SERVER_REQUEST_ID,
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "serverName": "docs",
+                    "requestId": "elic-1",
+                    "message": "pick a mode",
+                    "requestedSchema": {"type": "object"},
+                }
+            }))
+            .await;
+        let answer = server.next_client().await;
+        server
+            .write(json!({
+                "method": "turn/completed",
+                "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "error": null}}
+            }))
+            .await;
+        server.park().await;
+        answer
+    });
+    let handle = adapter
+        .start(&integration(), options(AccessMode::Full))
+        .expect("start");
+    let events = test_events(&adapter, &handle);
+    expect_prelude(&events);
+    adapter.send(&handle, input("go")).expect("send");
+    let request_id = loop {
+        if let AgentEventKind::ApprovalRequested { request_id, .. } = recv(&events) {
+            break request_id;
+        }
+    };
+    let error = adapter
+        .answer(
+            &handle,
+            request_id.clone(),
+            ApprovalDecision::Answers(BTreeMap::from([(
+                "mode".to_owned(),
+                vec!["fast".to_owned()],
+            )])),
+        )
+        .expect_err("answers are unasked when the ask declares no questions");
+    assert_eq!(error.code, ReceiptCode::InvalidState);
+    // The ask is still pending: the right decision kind resolves it.
+    adapter
+        .answer(
+            &handle,
+            request_id,
+            ApprovalDecision::Elicitation(json!({"mode": "fast"})),
+        )
+        .expect("the elicitation content resolves the ask");
+    through_idle(&events);
+    adapter.stop(handle).expect("stop");
+    let answer = server.join().expect("server script finished");
+    assert_eq!(answer["result"]["content"], json!({"mode": "fast"}));
+}
+
+/// An answers map naming a question the ask never declared is rejected
+/// rather than forwarded to the provider.
+#[test]
+fn answers_for_questions_never_asked_are_rejected() {
+    let (adapter, servers) = duplex_adapter();
+    let server = serve(servers, |mut server| async move {
+        server.handshake("thread-1").await;
+        let start = server.next_method("turn/start").await;
+        server
+            .respond(&start, json!({"turn": {"id": "turn-1"}}))
+            .await;
+        server
+            .write(json!({
+                "id": SERVER_REQUEST_ID,
+                "method": "item/tool/requestUserInput",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "questions": [{"id": "branch", "question": "Which branch?"}],
+                }
+            }))
+            .await;
+        let answer = server.next_client().await;
+        server
+            .write(json!({
+                "method": "turn/completed",
+                "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "error": null}}
+            }))
+            .await;
+        server.park().await;
+        answer
+    });
+    let handle = adapter
+        .start(&integration(), options(AccessMode::Full))
+        .expect("start");
+    let events = test_events(&adapter, &handle);
+    expect_prelude(&events);
+    adapter.send(&handle, input("go")).expect("send");
+    let request_id = loop {
+        if let AgentEventKind::ApprovalRequested { request_id, .. } = recv(&events) {
+            break request_id;
+        }
+    };
+    let error = adapter
+        .answer(
+            &handle,
+            request_id.clone(),
+            ApprovalDecision::Answers(BTreeMap::from([(
+                "unasked".to_owned(),
+                vec!["sneaky".to_owned()],
+            )])),
+        )
+        .expect_err("answers for unasked questions are rejected");
+    assert_eq!(error.code, ReceiptCode::InvalidState);
+    // The ask is still pending: a declared answer still resolves it.
+    adapter
+        .answer(
+            &handle,
+            request_id,
+            ApprovalDecision::Answers(BTreeMap::from([(
+                "branch".to_owned(),
+                vec!["main".to_owned()],
+            )])),
+        )
+        .expect("the declared answer resolves the ask");
+    through_idle(&events);
+    adapter.stop(handle).expect("stop");
+    let answer = server.join().expect("server script finished");
+    assert_eq!(answer["result"]["answers"]["branch"]["answers"][0], "main");
+}
+
 #[test]
 fn an_unknown_request_id_is_already_resolved() {
     let (adapter, servers) = duplex_adapter();

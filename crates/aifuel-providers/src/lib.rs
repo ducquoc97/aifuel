@@ -8,6 +8,7 @@
 //! Agent Runs use separate provider execution capabilities and require an
 //! explicit provider selection.
 
+pub mod acp_runtime;
 mod agent_execution;
 mod agent_run_registry;
 mod antigravity;
@@ -27,12 +28,14 @@ mod integrations;
 mod local_adapter;
 mod model_catalog;
 mod monitoring;
+pub mod opencode_runtime;
 mod openrouter;
 mod registration;
 mod registry;
 mod usage_helpers;
 mod wire;
 
+pub use acp_runtime::{AcpAdapter, acp_adapter};
 pub use agent_run_registry::agent_run_adapters;
 pub use claude_runtime::{ClaudeAdapter, claude_adapter};
 pub use cli_adapter::{
@@ -51,6 +54,7 @@ pub use integrations::{
 };
 pub use model_catalog::{ProviderCatalogDiscovery, ProviderCatalogModel, discover_model_catalog};
 pub use monitoring::{CollectionConfig, ProviderMonitoring};
+pub use opencode_runtime::{OpenCodeAdapter, opencode_adapter};
 pub use registration::agent_mcp_registration_adapter;
 pub(crate) use registration::codex_mcp_runtime_entry;
 pub use wire::{WireAdapterError, WireExecutionAdapter};

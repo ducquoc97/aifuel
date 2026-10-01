@@ -6,14 +6,14 @@ use crate::{
     AccessMode, AgentEventKind, AgentRuntimeError, ApprovalDecision, CheckpointId, Integration,
     ModelDescriptor, ModelSelection, RequestId, RunId, SessionId, UserInput,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Honest capability declarations for one provider adapter.
 ///
 /// An adapter that cannot surface a feature declares it `false`; hosts hide
 /// the affordance rather than fake it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdapterCapabilities {
     /// Live `message.delta` and `message.completed` streams.
     pub streaming: bool,
@@ -29,6 +29,11 @@ pub struct AdapterCapabilities {
     pub images: bool,
     /// `todos.updated` task-list events.
     pub todos: bool,
+    /// Exact AI Fuel Gateway tool names on `session.create`: an adapter
+    /// declares `true` only when it can enforce the requested snapshot, and
+    /// the runtime refuses tools the adapter cannot enforce.
+    #[serde(default)]
+    pub external_tools: bool,
 }
 
 /// Options for [`AgentAdapter::start`], mirroring `session.create`.
@@ -45,6 +50,12 @@ pub struct StartOptions {
     /// it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_cursor: Option<String>,
+    /// The exact AI Fuel Gateway tool names the host asked the session to
+    /// enforce. Empty means none requested; adapters that do not declare
+    /// `external_tools` never see this populated - the facade refuses the
+    /// session first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_tools: Vec<String>,
 }
 
 /// An adapter-owned handle to one live Agent Session.

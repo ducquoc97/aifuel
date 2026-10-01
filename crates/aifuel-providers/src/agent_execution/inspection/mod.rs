@@ -3,7 +3,7 @@
 use aifuel_core::{
     AgentAuthenticationEvidence, AgentAuthenticationState, AgentCapability,
     AgentCapabilityEvidence, AgentIntegrationInfo, AgentPresenceEvidence, AgentPresenceState,
-    AgentVersionEvidence, IntegrationId, ProviderId, ProviderKey,
+    AgentVersionEvidence, IntegrationId, ProviderId,
 };
 use process_wrap::std::{StdChildWrapper, StdCommandWrap};
 use std::ffi::{OsStr, OsString};
@@ -29,15 +29,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const AUTHENTICATION_NOT_INSPECTED_REASON: &str = "authentication is not inspected during listing to avoid reading local credentials or starting an auth flow; use provider setup guidance for manual login and checks";
 
 pub(crate) fn inspect_agent(
-    provider: ProviderKey,
+    provider: ProviderId,
     program: &str,
     version_args: Option<&'static [&'static str]>,
     authentication_args: Option<&'static [&'static str]>,
     declared_capabilities: impl IntoIterator<Item = (AgentCapability, AgentCapabilityEvidence)>,
 ) -> AgentIntegrationInfo {
-    // The built-in CLI adapter's configured integration id equals its catalog
-    // provider id, so the compiled key supplies both identities.
-    let provider = ProviderId::from(provider);
+    // Every built-in agent integration's configured integration id equals its
+    // provider id, so the provider identity supplies both identities.
     let integration = IntegrationId::new(provider.as_str());
     let declared_capabilities = declared_capabilities.into_iter().collect::<Vec<_>>();
     let path = match resolve_program(program) {

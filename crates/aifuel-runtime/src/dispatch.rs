@@ -14,7 +14,8 @@ use crate::runtime::AgentRuntime;
 use aifuel_app::{StoredAgentSession, warn_store_write};
 use aifuel_core::{
     AgentCommand, AgentRuntimeError, CommandId, ConsumerId, Effort, IntegrationId,
-    IntegrationSummary, ModelDescriptor, Receipt, ReceiptCode, Seq, SessionId, SessionStatus,
+    IntegrationSummary, ModelDescriptor, Receipt, ReceiptCode, RunId, Seq, SessionId,
+    SessionStatus,
 };
 use serde::{Deserialize, Serialize};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -140,7 +141,9 @@ pub(crate) fn store_error(error: aifuel_app::RunStoreError) -> AgentRuntimeError
 
 /// The fields of a recorded serialized [`Receipt`] the runtime needs to
 /// answer an idempotent retry. Snapshot-carrying commands are never
-/// deduplicated, so the field has no mirror here.
+/// deduplicated, so the field has no mirror here; `run_id` rides the
+/// receipt rather than the payload precisely so a retried `run.start`
+/// still answers the accepted run's id.
 #[derive(Deserialize)]
 struct RecordedReceipt {
     command_id: CommandId,
@@ -149,6 +152,8 @@ struct RecordedReceipt {
     seq: Option<Seq>,
     #[serde(default)]
     session_id: Option<SessionId>,
+    #[serde(default)]
+    run_id: Option<RunId>,
     #[serde(default)]
     code: Option<ReceiptCode>,
     #[serde(default)]
@@ -174,12 +179,16 @@ fn deduplicated(command: &AgentCommand) -> bool {
 fn recorded_outcome(receipt_json: &str) -> Option<CommandOutcome> {
     let recorded: RecordedReceipt = serde_json::from_str(receipt_json).ok()?;
     let receipt = if recorded.ok {
-        Receipt::ok(
+        let mut receipt = Receipt::ok(
             recorded.command_id,
             recorded.seq.unwrap_or(NO_SESSION_SEQ),
             recorded.session_id,
             None,
-        )
+        );
+        if let Some(run_id) = recorded.run_id {
+            receipt = receipt.with_run_id(run_id);
+        }
+        receipt
     } else {
         Receipt::err(
             recorded.command_id,
@@ -238,7 +247,16 @@ impl AgentRuntime {
                 cwd,
                 selection,
                 access,
-            } => self.session_create(command_id.clone(), cwd.clone(), selection.clone(), *access),
+                resume_cursor,
+                external_tools,
+            } => self.session_create(
+                command_id.clone(),
+                cwd.clone(),
+                selection.clone(),
+                *access,
+                resume_cursor.clone(),
+                external_tools.clone(),
+            ),
             AgentCommand::SessionSubscribe {
                 command_id,
                 session_id,

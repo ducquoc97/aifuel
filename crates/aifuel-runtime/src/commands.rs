@@ -26,13 +26,18 @@ use std::sync::Arc;
 impl AgentRuntime {
     /// `session.create`: resolve the selection, start the adapter session,
     /// register the persisted projection, append `session.created`, and
-    /// start the event pump.
+    /// start the event pump. `resume_cursor` continues a provider session
+    /// the host already holds; `external_tools` asks the adapter to enforce
+    /// an exact AI Fuel Gateway tool set and fails `unsupported` when the
+    /// serving adapter cannot - tool enforcement is never silently dropped.
     pub(crate) fn session_create(
         &self,
         command_id: CommandId,
         cwd: PathBuf,
         selection: ModelSelection,
         access: AccessMode,
+        resume_cursor: Option<String>,
+        external_tools: Vec<String>,
     ) -> CommandOutcome {
         let Some(descriptor) = self.registry.descriptor_for(&selection.integration_id) else {
             return CommandOutcome::rejected(
@@ -51,6 +56,16 @@ impl AgentRuntime {
                 format!("no adapter serves integration {}", selection.integration_id),
             );
         };
+        if !external_tools.is_empty() && !adapter.capabilities().external_tools {
+            return CommandOutcome::rejected(
+                command_id,
+                ReceiptCode::Unsupported,
+                format!(
+                    "the adapter serving {} cannot enforce external tools",
+                    selection.integration_id
+                ),
+            );
+        }
         // Resolve before start, per the contract: a selection that cannot
         // resolve - or resolves to a model that cannot run - fails
         // `invalid_selection` here rather than failing a run later.
@@ -63,7 +78,8 @@ impl AgentRuntime {
                 cwd: cwd.clone(),
                 selection: selection.clone(),
                 access,
-                resume_cursor: None,
+                resume_cursor,
+                external_tools: external_tools.clone(),
             },
         ) {
             Ok(handle) => handle,
@@ -72,9 +88,9 @@ impl AgentRuntime {
         let cleanup = |handle: AgentSessionHandle| {
             let _ = adapter.stop(handle);
         };
-        if let Err(error) = self
-            .store
-            .record_agent_session(&handle.session_id, &selection, &cwd)
+        if let Err(error) =
+            self.store
+                .record_agent_session(&handle.session_id, &selection, &cwd, &external_tools)
         {
             cleanup(handle);
             return CommandOutcome::rejected(
@@ -317,9 +333,11 @@ impl AgentRuntime {
     }
 
     /// `run.start`: send one input to the live session's adapter. The
-    /// adapter's worker emits `run.started` in causal order; the receipt's
-    /// `seq` is the log head observed at return, which may precede the
-    /// events the accepted run is about to produce.
+    /// adapter's worker emits `run.started` in causal order; the receipt
+    /// carries the accepted `run_id` so the host can issue `run.cancel`
+    /// without racing the event stream, and its `seq` is the log head
+    /// observed at return, which may precede the events the accepted run
+    /// is about to produce.
     pub(crate) fn run_start(
         &self,
         command_id: CommandId,
@@ -330,7 +348,12 @@ impl AgentRuntime {
             return self.not_live(&command_id, &session_id);
         };
         match adapter.send(&handle, input) {
-            Ok(_run_id) => self.head_seq_outcome(command_id, session_id),
+            Ok(run_id) => match self.head_seq(&session_id) {
+                Ok(seq) => CommandOutcome::ok(
+                    Receipt::ok(command_id, seq, Some(session_id), None).with_run_id(run_id),
+                ),
+                Err(error) => CommandOutcome::rejected(command_id, error.code, error.message),
+            },
             Err(error) => CommandOutcome::rejected(command_id, error.code, error.message),
         }
     }

@@ -318,3 +318,50 @@ fn seeded_resume_cursor_continues_the_provider_session() {
         "a run-reported provider session replaces the seeded cursor"
     );
 }
+
+/// An exact external tool selection the wrapped executor enforces rides
+/// the session's run requests unchanged: the session forwards, the
+/// execution adapter owns enforcement.
+#[test]
+fn external_tools_ride_the_run_request_when_the_executor_enforces() {
+    let execution = Arc::new(
+        FakeExecution::declaring(ProviderKey::Codex, &[AgentCapability::ExternalMcpTools])
+            .with_runs(vec![FakeRun::Complete {
+                status: RunStatus::Succeeded,
+                output: "done",
+                session_id: None,
+            }]),
+    );
+    let adapter = CliAdapter::new(execution.clone());
+    let mut options = options(ProviderKey::Codex, AccessMode::WorkspaceWrite);
+    options.external_tools = vec!["docs__search".to_owned()];
+    let handle = adapter
+        .start(&integration(ProviderKey::Codex), options)
+        .expect("the executor enforces the selection");
+    let events = test_events(&adapter, &handle);
+    adapter
+        .send(&handle, input("go"))
+        .expect("send is accepted");
+    through_run_completed(&events);
+
+    let requests = execution.requests.lock().expect("requests mutex");
+    assert_eq!(
+        requests[0].external_tools.as_deref(),
+        Some(&["docs__search".to_owned()][..]),
+        "the selected tool set reaches the wrapped run request verbatim"
+    );
+}
+
+/// Where the wrapped executor cannot enforce an exact selection, the
+/// same validation that gates a run rejects the session before it
+/// exists - it must never silently run on a wider tool set.
+#[test]
+fn external_tools_reject_start_when_the_executor_cannot_enforce() {
+    let adapter = CliAdapter::new(Arc::new(FakeExecution::new(ProviderKey::Codex)));
+    let mut options = options(ProviderKey::Codex, AccessMode::WorkspaceWrite);
+    options.external_tools = vec!["docs__search".to_owned()];
+    let error = adapter
+        .start(&integration(ProviderKey::Codex), options)
+        .expect_err("a session cannot promise tools it cannot enforce");
+    assert_eq!(error.code, ReceiptCode::Unsupported);
+}

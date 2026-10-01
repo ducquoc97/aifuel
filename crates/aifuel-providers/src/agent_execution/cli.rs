@@ -92,7 +92,7 @@ impl CliExecutionAdapter {
 
     fn integration_info(&self) -> AgentIntegrationInfo {
         super::inspection::inspect_agent(
-            self.provider,
+            ProviderId::from(self.provider),
             self.program,
             self.version_probe_args,
             self.authentication_probe_args,

@@ -132,6 +132,14 @@ impl AgentAdapter for ClaudeAdapter {
                 ));
             }
         }
+        // This adapter has no mechanism to restrict the provider's tool
+        // set, so a non-empty selection fails before any process exists
+        // rather than silently running wider than asked.
+        if !options.external_tools.is_empty() {
+            return Err(AgentRuntimeError::unsupported(
+                "the Claude stream-json adapter cannot enforce an exact external tool selection",
+            ));
+        }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let session_id = SessionId::new(format!("claude-session-{}-{id}", std::process::id()));
         let setup = session::SessionSetup {

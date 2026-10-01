@@ -5,8 +5,9 @@ use super::{FakeScript, FakeSession, run_script};
 use crate::support::{FAKE_INTEGRATION, FAKE_PROVIDER};
 use aifuel_core::{
     AdapterCapabilities, AgentAdapter, AgentAuthenticationEvidence, AgentAuthenticationState,
-    AgentEventKind, AgentEventStream, AgentIntegrationInfo, AgentPresenceState, AgentRuntimeError,
-    AgentSessionHandle, AgentVersionEvidence, ApprovalDecision, CheckpointId, Integration,
+    AgentCapability, AgentCapabilityEvidence, AgentEventKind, AgentEventStream,
+    AgentIntegrationInfo, AgentPresenceState, AgentRuntimeError, AgentSessionHandle,
+    AgentVersionEvidence, ApprovalDecision, CapabilityState, CheckpointId, Integration,
     IntegrationId, ModelDescriptor, ModelSelection, ProviderId, QuotaSummary, ReceiptCode,
     RequestId, RunId, SessionId, SessionStatus, StartOptions, UserInput,
 };
@@ -29,6 +30,12 @@ pub struct FakeAdapter {
     /// The Quota Pool observation `quota_observation` reports, when the
     /// fake's integration carries a Monitoring Collection Contract.
     quota: Option<QuotaSummary>,
+    /// The `external_tools` list each `start` received, in order.
+    start_tools: Mutex<Vec<Vec<String>>>,
+    /// The declared capability evidence `agent_info` reports, so tests can
+    /// stand the fake up where a shim's declared-capability gates consult
+    /// the listing.
+    declared: Vec<(AgentCapability, AgentCapabilityEvidence)>,
 }
 
 impl FakeAdapter {
@@ -43,7 +50,23 @@ impl FakeAdapter {
             next_id: AtomicU64::new(0),
             fail_start: false,
             quota: None,
+            start_tools: Mutex::new(Vec::new()),
+            declared: Vec::new(),
         }
+    }
+
+    /// Declare `capability` supported in `agent_info`'s compiled evidence,
+    /// matching what a compiled adapter's `declared_agent_capabilities`
+    /// would report.
+    pub fn declaring(mut self, capability: AgentCapability) -> Self {
+        self.declared.push((
+            capability,
+            AgentCapabilityEvidence {
+                state: CapabilityState::Supported,
+                reason: "fake".to_owned(),
+            },
+        ));
+        self
     }
 
     /// Queue the run scripts `send` calls consume in order.
@@ -65,6 +88,12 @@ impl FakeAdapter {
         self
     }
 
+    /// The `external_tools` lists `start` calls received, in order - the
+    /// observable record that the facade passed host tools through.
+    pub fn recorded_tools(&self) -> Vec<Vec<String>> {
+        self.start_tools.lock().expect("tools mutex").clone()
+    }
+
     /// The honest capability set most tests want: streaming plus resume.
     pub fn default_capabilities() -> AdapterCapabilities {
         AdapterCapabilities {
@@ -75,6 +104,7 @@ impl FakeAdapter {
             effort: true,
             images: false,
             todos: false,
+            external_tools: false,
         }
     }
 
@@ -173,6 +203,10 @@ impl AgentAdapter for FakeAdapter {
                 "the session working directory does not exist",
             ));
         }
+        self.start_tools
+            .lock()
+            .expect("tools mutex")
+            .push(options.external_tools.clone());
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let session_id = SessionId::new(format!("fake-session-{}-{id}", std::process::id()));
         // A reconcile resume seeds the persisted cursor the way the real
@@ -372,7 +406,7 @@ impl RuntimeAdapter for FakeAdapter {
                 state: AgentAuthenticationState::Authenticated,
                 reason: "fake".to_owned(),
             },
-            Vec::new(),
+            self.declared.clone(),
         )
     }
 

@@ -87,11 +87,21 @@ async fn on_response(
             }
             let turn_id = turn_id.expect("checked above").to_owned();
             let run_id = RunId::new(turn_id.clone());
+            // Register the run before releasing `send`: a caller that
+            // proceeds to `cancel` must never observe the run missing.
+            {
+                let mut state = session.state.lock().expect("session state mutex");
+                state.turn_starting = false;
+                state.active_run = Some(run_id.clone());
+            }
             if reply.send(Ok(run_id.clone())).is_err() {
                 // `send` gave up waiting: never announce the run, but
                 // the provider turn is live, so interrupt it and drop
                 // its notifications.
-                session.clear_turn_starting();
+                {
+                    let mut state = session.state.lock().expect("session state mutex");
+                    state.active_run = None;
+                }
                 orphans.insert(turn_id.clone());
                 let id = *next_rpc;
                 *next_rpc += 1;
@@ -102,11 +112,6 @@ async fn on_response(
                 });
                 let _ = send(stdin, interrupt, None).await;
                 return;
-            }
-            {
-                let mut state = session.state.lock().expect("session state mutex");
-                state.turn_starting = false;
-                state.active_run = Some(run_id.clone());
             }
             *turn = Some(TurnEvents::new(run_id.clone()));
             session.emit(AgentEventKind::RunStarted { run_id, selection });

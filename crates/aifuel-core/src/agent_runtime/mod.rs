@@ -54,6 +54,8 @@ mod tests {
                 effort: Some(Effort::High),
             },
             access: AccessMode::WorkspaceWrite,
+            resume_cursor: None,
+            external_tools: Vec::new(),
         };
 
         let value = serde_json::to_value(&command).expect("command serializes");
@@ -64,6 +66,145 @@ mod tests {
         assert_eq!(value["selection"]["effort"], "high");
         assert_eq!(value["access"], "workspace-write");
         assert_eq!(command.command_id(), &CommandId::new("cmd-1"));
+    }
+
+    /// `session.create` fields added after the first contract default on
+    /// deserialize so older hosts keep working, and serialize only when set.
+    #[test]
+    fn session_create_additive_fields_default_and_round_trip() {
+        let minimal = serde_json::json!({
+            "type": "session.create",
+            "command_id": "cmd-1",
+            "cwd": "/repo",
+            "selection": {"integration_id": "claude", "model": "claude-opus-4"},
+            "access": "read-only",
+        });
+        let command: AgentCommand =
+            serde_json::from_value(minimal).expect("old shape still decodes");
+        match command {
+            AgentCommand::SessionCreate {
+                resume_cursor,
+                external_tools,
+                ..
+            } => {
+                assert_eq!(resume_cursor, None);
+                assert!(external_tools.is_empty());
+            }
+            other => panic!("expected session.create: {other:?}"),
+        }
+
+        let command = AgentCommand::SessionCreate {
+            command_id: CommandId::new("cmd-2"),
+            cwd: "/repo".into(),
+            selection: ModelSelection {
+                integration_id: crate::IntegrationId::new("claude"),
+                model: "claude-opus-4".to_owned(),
+                effort: None,
+            },
+            access: AccessMode::ReadOnly,
+            resume_cursor: Some("native-42".to_owned()),
+            external_tools: vec!["gateway.search".to_owned()],
+        };
+        let value = serde_json::to_value(&command).expect("command serializes");
+        assert_eq!(value["resume_cursor"], "native-42");
+        assert_eq!(
+            value["external_tools"],
+            serde_json::json!(["gateway.search"])
+        );
+        let decoded: AgentCommand = serde_json::from_value(value).expect("full shape round-trips");
+        assert_eq!(decoded, command);
+    }
+
+    /// Approval decisions keep their externally tagged snake_case spellings;
+    /// the multi-question and elicitation forms join `option_id`/`text`
+    /// without changing them.
+    #[test]
+    fn approval_decision_variants_keep_stable_spellings() {
+        let option_id = serde_json::to_value(ApprovalDecision::OptionId("accept".to_owned()))
+            .expect("decision serializes");
+        assert_eq!(option_id, serde_json::json!({"option_id": "accept"}));
+
+        let text = serde_json::to_value(ApprovalDecision::Text("yes".to_owned()))
+            .expect("decision serializes");
+        assert_eq!(text, serde_json::json!({"text": "yes"}));
+
+        let answers = ApprovalDecision::Answers(std::collections::BTreeMap::from([
+            ("q1".to_owned(), vec!["a".to_owned()]),
+            ("q2".to_owned(), vec!["x".to_owned(), "y".to_owned()]),
+        ]));
+        let value = serde_json::to_value(&answers).expect("decision serializes");
+        assert_eq!(
+            value,
+            serde_json::json!({"answers": {"q1": ["a"], "q2": ["x", "y"]}})
+        );
+        let decoded: ApprovalDecision = serde_json::from_value(value).expect("answers decode");
+        assert_eq!(decoded, answers);
+
+        let elicitation =
+            ApprovalDecision::Elicitation(serde_json::json!({"approved": true, "field": 7}));
+        let value = serde_json::to_value(&elicitation).expect("decision serializes");
+        assert_eq!(
+            value,
+            serde_json::json!({"elicitation": {"approved": true, "field": 7}})
+        );
+        let decoded: ApprovalDecision = serde_json::from_value(value).expect("elicitation decodes");
+        assert_eq!(decoded, elicitation);
+    }
+
+    /// The legacy rebuild fields on Approval Requests default empty when an
+    /// older payload lacks them, and carry the interaction identity through
+    /// when present.
+    #[test]
+    fn approval_request_additive_fields_default_and_round_trip() {
+        let minimal = serde_json::json!({
+            "kind": "tool_permission",
+            "title": "run command",
+            "detail": "ls",
+            "requires_confirm": false,
+        });
+        let request: ApprovalRequest =
+            serde_json::from_value(minimal).expect("old shape still decodes");
+        assert_eq!(request.interaction_kind, None);
+        assert!(request.questions.is_empty());
+        assert_eq!(request.parameters, None);
+        assert_eq!(request.native_method, None);
+
+        let request = ApprovalRequest {
+            kind: crate::ApprovalKind::McpElicitation,
+            title: "approve tool".to_owned(),
+            detail: "server asks".to_owned(),
+            options: Vec::new(),
+            requires_confirm: false,
+            interaction_kind: Some(crate::AgentInteractionKind::McpElicitation),
+            questions: vec![crate::AgentInputQuestion {
+                id: "q1".to_owned(),
+                text: "confirm?".to_owned(),
+            }],
+            parameters: Some(serde_json::json!({"server": "fs"})),
+            native_method: Some("elicitation/create".to_owned()),
+        };
+        let value = serde_json::to_value(&request).expect("request serializes");
+        assert_eq!(value["interaction_kind"], "mcp_elicitation");
+        assert_eq!(value["questions"][0]["id"], "q1");
+        assert_eq!(value["parameters"]["server"], "fs");
+        assert_eq!(value["native_method"], "elicitation/create");
+        let decoded: ApprovalRequest = serde_json::from_value(value).expect("request round-trips");
+        assert_eq!(decoded, request);
+    }
+
+    /// A `run.start` receipt carries the accepted run id so a host can
+    /// cancel without racing `run.started`; other successes omit the field.
+    #[test]
+    fn run_start_receipt_carries_run_id() {
+        let receipt = Receipt::ok(CommandId::new("c-1"), 4, Some(SessionId::new("s-1")), None)
+            .with_run_id(RunId::new("r-9"));
+        let value = serde_json::to_value(&receipt).expect("receipt serializes");
+        assert_eq!(value["run_id"], "r-9");
+        assert_eq!(value["session_id"], "s-1");
+
+        let plain = Receipt::ok(CommandId::new("c-2"), 5, None, None);
+        let value = serde_json::to_value(&plain).expect("receipt serializes");
+        assert!(value.get("run_id").is_none(), "run_id stays absent");
     }
 
     /// Every event serializes the envelope fields alongside its tagged

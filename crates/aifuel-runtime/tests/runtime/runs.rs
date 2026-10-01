@@ -7,7 +7,7 @@ use crate::support::{
 };
 use aifuel_core::{
     AgentCommand, AgentEventKind, ApprovalDecision, ApprovalKind, ApprovalRequest, ReceiptCode,
-    RunOutcome,
+    ReceiptOutcome, RunOutcome,
 };
 
 #[test]
@@ -28,6 +28,10 @@ fn approval_answer_round_trip_and_second_answer_loses() {
             },
         ],
         requires_confirm: false,
+        interaction_kind: None,
+        questions: Vec::new(),
+        parameters: None,
+        native_method: None,
     };
     let (_store, runtime) = fake_runtime(
         &dir,
@@ -114,22 +118,26 @@ fn run_cancel_reports_cancelled_completion() {
     let events = runtime.events(&c1).expect("channel");
     runtime.dispatch(subscribe(&session_id, 0), &c1);
     let outcome = runtime.dispatch(run_start(&session_id, "block"), &c1);
-    assert!(
-        outcome.receipt.ok,
-        "run.start succeeds: {:?}",
-        outcome.receipt.outcome
-    );
-    // The run id comes from the `run.started` fact.
+    // The receipt names the accepted run so cancel needs no event wait.
+    let run_id = match &outcome.receipt.outcome {
+        ReceiptOutcome::Ok {
+            run_id: Some(run_id),
+            ..
+        } => run_id.clone(),
+        other => panic!("run.start should carry the accepted run id: {other:?}"),
+    };
+    // The event stream reports the same run identity.
     let started = collect_until(&events, |event| {
         matches!(&event.kind, AgentEventKind::RunStarted { .. })
     });
-    let run_id = started
+    let started_id = started
         .iter()
         .find_map(|event| match &event.kind {
             AgentEventKind::RunStarted { run_id, .. } => Some(run_id.clone()),
             _ => None,
         })
         .expect("the run.started fact");
+    assert_eq!(run_id, started_id, "receipt and event name the same run");
     let outcome = runtime.dispatch(
         AgentCommand::RunCancel {
             command_id: crate::support::next_id(),

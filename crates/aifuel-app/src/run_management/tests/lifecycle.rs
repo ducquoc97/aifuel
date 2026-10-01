@@ -55,7 +55,9 @@ fn session_selection_lookup_keeps_native_model_and_effort_defaults_unset() {
 
 #[test]
 fn input_deadline_clears_pending_state_and_absent_deadline_waits_for_owner() {
-    let manager = RunManager::new(vec![Arc::new(InputAdapter)]);
+    let manager = RunManager::new(vec![Arc::new(InputAdapter {
+        method: "item/tool/requestUserInput",
+    })]);
     let mut timed_request = request();
     timed_request.timeout = Some(Duration::from_millis(300));
     let timed = manager.start_run(timed_request).expect("timed run starts");

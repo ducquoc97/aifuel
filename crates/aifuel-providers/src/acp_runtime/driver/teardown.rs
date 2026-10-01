@@ -1,0 +1,110 @@
+//! Terminal facts and process teardown on every exit path: a prompt
+//! that was still in flight gets its `run.completed` fact, the agent
+//! process is reaped, and `session.closed` lands last.
+
+use super::{Exit, SHUTDOWN_TIMEOUT};
+use crate::acp_runtime::session::AcpSession;
+use crate::agent_execution::kill_and_wait;
+use aifuel_core::{AgentEventKind, ReceiptCode, RunOutcome};
+use std::io;
+use std::sync::Arc;
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
+
+/// Emit the run and session terminal facts the exit path implies, then
+/// reap the agent process and its stderr capture.
+pub(super) async fn teardown(
+    session: &Arc<AcpSession>,
+    stderr_task: Option<JoinHandle<io::Result<String>>>,
+    exit: Exit,
+) {
+    let (reason, run_outcome, run_error) = match &exit {
+        Exit::Requested => (None, Some(RunOutcome::Cancelled), None),
+        Exit::Dropped => (
+            Some("the session was dropped".to_owned()),
+            Some(RunOutcome::Cancelled),
+            None,
+        ),
+        Exit::ServerClosed => (
+            Some("the agent closed its output".to_owned()),
+            Some(RunOutcome::Failed),
+            Some("the agent closed its output".to_owned()),
+        ),
+        Exit::ServerFailed(reason) => (
+            Some(reason.clone()),
+            Some(RunOutcome::Failed),
+            Some(reason.clone()),
+        ),
+        // Nothing was announced and no run existed; the caller got the
+        // handshake error through the setup report.
+        Exit::SetupFailed => (None, None, None),
+    };
+    {
+        // A session ending retracts its server requests; parked
+        // approvals cannot be answered anymore. The agent process dies
+        // below, so no protocol answers are owed.
+        let mut state = session.state.lock().expect("session state mutex");
+        state.pending.clear();
+    }
+    // Reap the process before emitting `session.closed`.
+    let child = session.child.lock().expect("child mutex").take();
+    if let Some(mut child) = child {
+        let _ = kill_and_wait(&mut child).await;
+    }
+    let diagnostics = match stderr_task {
+        Some(task) => timeout(SHUTDOWN_TIMEOUT, task)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .and_then(Result::ok)
+            .unwrap_or_default(),
+        None => String::new(),
+    };
+    let run_id = session
+        .state
+        .lock()
+        .expect("session state mutex")
+        .active_run
+        .clone();
+    if let (Some(run_id), Some(outcome)) = (run_id, run_outcome) {
+        if let Some(message) = run_error {
+            let message = append_diagnostics(message, &diagnostics);
+            session.emit(AgentEventKind::Error {
+                run_id: Some(run_id.clone()),
+                code: ReceiptCode::ProviderError,
+                message,
+                retryable: false,
+            });
+        }
+        session.emit(AgentEventKind::RunCompleted {
+            run_id,
+            outcome,
+            usage: None,
+        });
+    }
+    session.mark_closed();
+    // An unexpected disconnect records `interrupted` before `closed`:
+    // the run stopped through a lost provider connection, not an answer.
+    if matches!(
+        exit,
+        Exit::Dropped | Exit::ServerClosed | Exit::ServerFailed(_)
+    ) {
+        session.finish_interrupted();
+    }
+    let reason = reason.map(|reason| append_diagnostics(reason, &diagnostics));
+    session.finish_close(reason);
+}
+
+/// Append provider stderr to a reason when the capture is non-empty,
+/// bounded so a huge diagnostic cannot inflate the event.
+fn append_diagnostics(mut reason: String, diagnostics: &str) -> String {
+    let diagnostics = diagnostics.trim();
+    if diagnostics.is_empty() {
+        return reason;
+    }
+    const LIMIT: usize = 2048;
+    let tail: String = diagnostics.chars().take(LIMIT).collect();
+    reason.push_str(": ");
+    reason.push_str(&tail);
+    reason
+}
