@@ -5,7 +5,7 @@
 
 use crate::{CredentialStoreError, ResolvedAuth};
 use aifuel_core::{AgentRunError, AuthBinding, EndpointConfig, KeyDelivery};
-use reqwest::header::{HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
 use std::io;
 use std::str::FromStr;
 use std::time::Duration;
@@ -101,6 +101,18 @@ pub(super) fn auth_error(error: CredentialStoreError) -> AgentRunError {
         }
         other => AgentRunError::Io(io::Error::other(other)),
     }
+}
+
+/// The cooldown an endpoint declares through `Retry-After`, when it uses
+/// the delta-seconds form common to rate-limited APIs. HTTP-date and
+/// malformed values read as absent; the caller then applies its own
+/// backoff step.
+pub(super) fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    headers
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
 }
 
 /// Scrub resolved credential material out of text that will surface in
