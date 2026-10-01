@@ -405,6 +405,27 @@ impl RunStore {
             .map_err(RunStoreError::from)
     }
 
+    /// Resolve the provider-native session id from a run's local session id.
+    /// Run output exposes both ids, so a resume request may name either; the
+    /// `sessions` table itself stays keyed on the native id.
+    pub(crate) fn native_session_for_local(
+        &self,
+        local_session_id: &str,
+    ) -> Result<Option<String>, RunStoreError> {
+        self.connection
+            .lock()
+            .expect("run store mutex")
+            .query_row(
+                "SELECT session_id FROM runs
+                WHERE local_session_id = ?1 AND session_id IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1",
+                params![local_session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(RunStoreError::from)
+    }
+
     /// Import legacy `agent-sessions.json` associations. Existing rows are
     /// refreshed in place; the JSON file remains authoritative until callers
     /// migrate to the database.

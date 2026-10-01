@@ -157,6 +157,34 @@ fn persisted_sessions_resume_across_owners() {
 }
 
 #[test]
+fn resume_accepts_the_local_session_id_a_run_reported() {
+    // Run output prints `local_session_id` alongside the provider-native
+    // `session_id`; a caller holding the local alias must reach the same
+    // stored session instead of being told it does not exist.
+    let path = store_path("resume-local-id");
+    let local_id;
+    {
+        let manager = probe_manager(&path);
+        let run = manager.start_run(request()).expect("run starts");
+        wait_for_terminal(&manager, &run.run_id);
+        local_id = manager
+            .get_result(&run.run_id)
+            .expect("result reads")
+            .local_session_id;
+        manager.shutdown();
+    }
+
+    assert_eq!(local_id.as_deref(), Some("provider-session"));
+    let next = probe_manager(&path);
+    let resumed = next
+        .resume_session("provider-session", request())
+        .expect("the local session id resolves to the native session");
+    wait_for_terminal(&next, &resumed.run_id);
+    next.shutdown();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn resume_rejects_while_the_session_has_an_active_run() {
     let path = store_path("resume-active");
     let wait = Arc::new(AtomicBool::new(true));

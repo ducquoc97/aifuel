@@ -9,15 +9,15 @@ impl RunManager {
         &self,
         session_id: &str,
     ) -> Result<StoredSessionSelection, RunManagementError> {
-        let session = self.stored_session(session_id, None).ok_or_else(|| {
+        let (native_id, session) = self.stored_session(session_id, None).ok_or_else(|| {
             RunManagementError::new(
                 RunManagementErrorCode::SessionUnavailable,
-                "native Agent Session is not available to this owner",
+                "no stored Agent Session matches this id",
             )
         })?;
         Ok(StoredSessionSelection {
             schema_version: RUN_MANAGEMENT_SCHEMA_VERSION,
-            session_id: session_id.to_owned(),
+            session_id: native_id,
             integration: session.integration,
             provider: session.provider,
             requested_model: session.model,
@@ -39,13 +39,13 @@ impl RunManager {
         // is scoped to the requested integration. Distinguish "no session for
         // this integration" from "the id belongs to another integration" for
         // the caller.
-        let session = self
+        let (native_id, session) = self
             .stored_session(session_id, Some(&request.integration))
             .ok_or_else(|| {
                 let message = if self.stored_session(session_id, None).is_some() {
                     "session integration does not match the requested integration"
                 } else {
-                    "native Agent Session is not available to this owner"
+                    "no stored Agent Session matches this id"
                 };
                 RunManagementError::new(RunManagementErrorCode::SessionUnavailable, message)
             })?;
@@ -58,7 +58,7 @@ impl RunManager {
         request.working_directory = request
             .working_directory
             .or(Some(session.working_directory));
-        request.resume = Some(session_id.to_owned());
+        request.resume = Some(native_id);
         self.start_run(request)
     }
 
@@ -67,7 +67,39 @@ impl RunManager {
     /// in-memory and legacy maps are keyed by bare id, so a mismatched entry
     /// is skipped and the query falls through to the integration-scoped
     /// history store.
+    ///
+    /// Run output carries both a provider-native session id and the local
+    /// session id a host was shown, so when the direct lookup misses the id
+    /// is translated through the run history before giving up. The resolved
+    /// native id is returned with the record so callers resume the provider
+    /// session rather than the local alias.
     fn stored_session(
+        &self,
+        session_id: &str,
+        integration: Option<&aifuel_core::IntegrationId>,
+    ) -> Option<(String, SessionRecord)> {
+        let direct = self
+            .native_session(session_id, integration)
+            .map(|record| (session_id.to_owned(), record));
+        direct.or_else(|| {
+            let native = {
+                let store = self.inner.run_store.lock().expect("run store mutex");
+                store
+                    .as_ref()?
+                    .native_session_for_local(session_id)
+                    .ok()
+                    .flatten()?
+            };
+            (native != session_id)
+                .then(|| self.native_session(&native, integration))
+                .flatten()
+                .map(|record| (native, record))
+        })
+    }
+
+    /// Look up `session_id` as a provider-native id across the in-memory,
+    /// legacy, and durable session maps.
+    fn native_session(
         &self,
         session_id: &str,
         integration: Option<&aifuel_core::IntegrationId>,
