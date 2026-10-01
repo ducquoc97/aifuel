@@ -26,6 +26,7 @@ version = "0.1.0"
 dependencies = [
  "aifuel-core",
  "fs4",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

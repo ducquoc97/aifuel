@@ -8,7 +8,9 @@ pub mod run_cli;
 mod run_selection;
 pub mod selection_cli;
 
-use aifuel_app::{AgentMcpSetupFacade, AgentRunFacade, McpGatewayFacade, MonitoringFacade};
+use aifuel_app::{
+    AgentMcpSetupFacade, AgentRunFacade, McpGatewayFacade, MonitoringFacade, WebhookNotifier,
+};
 use aifuel_core::{
     AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter, AgentIntegrationInfo,
     AgentRunError, AgentRunOutputHandler, AgentSetupGuidance, ExecutionConfig, IntegrationId,
@@ -41,7 +43,15 @@ pub fn monitoring_facade() -> Result<MonitoringFacade<ProviderMonitoring>, Strin
             monitoring = monitoring.with_registry_error(error);
         }
     }
-    Ok(MonitoringFacade::new(monitoring))
+    let facade = MonitoringFacade::new(monitoring);
+    // A malformed webhooks.json is reported but never blocks collection.
+    match WebhookNotifier::load(&aifuel_config_dir()?) {
+        Ok(notifier) => Ok(facade.with_notifier(notifier)),
+        Err(error) => {
+            eprintln!("aifuel: webhook configuration ignored: {error}");
+            Ok(facade)
+        }
+    }
 }
 
 /// Compose the shared Agent Run facade over the runtime Integration set.
