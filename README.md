@@ -46,9 +46,9 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | `aifuel model list\|refresh` | Cached provider model catalog, refreshed on demand |
 | `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations |
 | `aifuel approve --run ID --input ID --decision accept\|decline\|cancel` | Answer a pending permission request for a local run |
-| `aifuel mcp` | Read-only MCP status server over stdio |
-| `aifuel mcp execution` | MCP server that manages Agent Runs over stdio |
-| `aifuel mcp gateway --agent HOST` | Selected external MCP servers, served to one agent |
+| `aifuel mcp [--http [--host H] [--port P]]` | Read-only MCP status server over stdio, or streamable HTTP |
+| `aifuel mcp execution [--http [--host H] [--port P]]` | MCP server that manages Agent Runs over stdio, or streamable HTTP |
+| `aifuel mcp gateway --agent HOST [--tool T ...] [--http [--host H] [--port P]]` | Selected external MCP servers, served to one agent |
 | `aifuel mcp setup --agent HOST [--dry-run] [--remove]` | Apply or remove the gateway entry in an agent's own config |
 | `aifuel mcp servers ...` | Manage the gateway's external server catalog |
 | `aifuel runtime` | JSON-RPC stdio bridge for embedding agent runs in a host process |
@@ -93,7 +93,7 @@ Permission requests are never auto-approved: a run that asks for one prints the 
 
 ## MCP
 
-Three stdio servers:
+Three servers, each available over stdio (default) or streamable HTTP:
 
 | Server | Purpose |
 |---|---|
@@ -101,13 +101,31 @@ Three stdio servers:
 | `aifuel mcp execution` | Owns Agent Runs: `list_agents`, `list_models`, `resolve_run`, `start_run`, `resume_session`, `answer_input`, `get_run`, `get_result`, `cancel_run`, `read_events` |
 | `aifuel mcp gateway --agent HOST` | Serves your external MCP servers' tools, resources, and prompts to one agent |
 
-Register the status server on any host:
+Register the status server on any host over stdio:
 
 ```json
 { "mcpServers": { "aifuel": { "command": "aifuel", "args": ["mcp"] } } }
 ```
 
 Permission approvals stay local-only through `aifuel approve` - the execution server cannot grant them.
+
+### Streamable HTTP
+
+Pass `--http` to any of the three servers to serve remote MCP Hosts over HTTP instead of stdio. The server listens on `/mcp` at `127.0.0.1:8788` by default; `--host` and `--port` override the bind address:
+
+```bash
+aifuel mcp --http                              # http://127.0.0.1:8788/mcp
+aifuel mcp execution --http --port 8789        # a different port per server
+aifuel mcp gateway --agent HOST --http --host 0.0.0.0 --port 8788
+```
+
+A remote host then registers the URL directly:
+
+```json
+{ "mcpServers": { "aifuel": { "url": "http://127.0.0.1:8788/mcp" } } }
+```
+
+Each HTTP session is a full MCP connection (session id via `MCP-Session-Id`, `GET /mcp` for server events, `DELETE /mcp` to end it), so the gateway's progress notifications and the execution server's per-connection run ownership behave exactly as over stdio. There is no authentication layer: binding anything beyond loopback exposes the server's full MCP surface on that interface, and doing so is the operator's responsibility. `aifuel mcp setup` still writes stdio entries into host configs; configure HTTP entries by URL instead.
 
 ### Gateway config
 
