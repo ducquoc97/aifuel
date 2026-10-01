@@ -22,6 +22,7 @@ pub mod selection;
 mod session_store;
 #[cfg(test)]
 mod test_support;
+mod webhooks;
 mod workspace_lock;
 pub use agent_mcp_setup::{
     AgentMcpSetupAction, AgentMcpSetupError, AgentMcpSetupFacade, AgentMcpSetupOptions,
@@ -50,6 +51,7 @@ pub use selection::{
     SelectionError, SelectionInputs, SelectionResolver, SelectionSettings, SelectionSource,
     SelectionSources, SelectionStore, SelectionStoreError, StoredSession,
 };
+pub use webhooks::{WEBHOOKS_FILE_NAME, WebhookConfigError, WebhookNotifier};
 
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(300);
 
@@ -57,6 +59,7 @@ const STATUS_CACHE_TTL: Duration = Duration::from_secs(300);
 pub struct MonitoringFacade<C> {
     collector: C,
     cache: Mutex<Option<(Instant, StatusReport)>>,
+    notifier: Option<WebhookNotifier>,
 }
 
 impl<C> MonitoringFacade<C>
@@ -67,7 +70,16 @@ where
         Self {
             collector,
             cache: Mutex::new(None),
+            notifier: None,
         }
+    }
+
+    /// Attach the configured webhook notifier. Each fresh collection is then
+    /// evaluated for quota events before it is cached, so deliveries run on
+    /// the same cadence as collection across every interface.
+    pub fn with_notifier(mut self, notifier: Option<WebhookNotifier>) -> Self {
+        self.notifier = notifier;
+        self
     }
 
     /// Return cached monitoring status when it remains fresh, or collect and
@@ -82,6 +94,9 @@ where
         }
 
         let report = self.collector.collect_status().await;
+        if let Some(notifier) = &self.notifier {
+            notifier.deliver(&report).await;
+        }
         *self.cache.lock().expect("status cache mutex") = Some((Instant::now(), report.clone()));
         report
     }

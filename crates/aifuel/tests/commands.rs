@@ -5,3 +5,5 @@ mod support;
 mod mcp_dashboard;
 #[path = "commands/run.rs"]
 mod run;
+#[path = "commands/webhooks.rs"]
+mod webhooks;

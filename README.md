@@ -141,6 +141,27 @@ Trust rules: remote endpoints must use HTTPS (plain HTTP only on loopback) and s
 
 Then connect an agent: `aifuel mcp setup --agent HOST` writes the managed entry into the host's config (backup and `--dry-run` supported, `--remove` detaches). Host IDs: `codex`, `claude`, `copilot`, `gemini`, `antigravity`, `devin`. Restart the host after changing its registration. Repeatable `--tool NAME` on `mcp gateway` restricts which tools a host sees.
 
+### Quota webhooks
+
+Each collection (dashboard refresh, `--json`, `--text`, MCP `get_status`) can POST events to configured endpoints - useful for Slack, Discord, or any HTTPS receiver. Configure `webhooks.json` in the same `aifuel` user config directory as `mcp.json`:
+
+```json
+{
+  "webhooks": [
+    { "url": "https://hooks.slack.com/services/...", "events": ["threshold_crossed", "quota_reset"], "threshold_percent": 90 }
+  ],
+  "defaults": { "events": ["threshold_crossed", "quota_reset"], "threshold_percent": 90 }
+}
+```
+
+`threshold_crossed` fires when a quota window's consumed share reaches `threshold_percent` (default 90); `quota_reset` fires when a window that was over threshold comes back under it - the window reset or quota was replenished. `events` and `threshold_percent` fall back to `defaults`, then to the built-ins. Payloads look like:
+
+```json
+{ "event": "threshold_crossed", "provider": "gemini", "provider_name": "Gemini CLI", "window": "gemini-3.5-flash", "window_period": "daily", "authoritative": true, "percent_used": 95.0, "percent_remaining": 5.0, "threshold_percent": 90, "reset_at": 1893456000.0, "checked_at": 1790879303.8 }
+```
+
+`reset_at` and `checked_at` are Unix seconds. Endpoints must use HTTPS, or HTTP only on loopback - the same trust rule as the MCP gateway. Each crossing notifies once per window and threshold; the state lives in `webhook-state.json` so restarts don't re-announce. Delivery is at-most-once with short timeouts, and failures are logged to stderr without affecting collection.
+
 ## How it works
 
 - Credentials are read **locally only** - the same files your CLIs already use. Tokens are never printed and are sent only to their own provider's usage endpoint.
