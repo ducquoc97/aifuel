@@ -268,9 +268,11 @@ fn print_help() {
     println!("       aifuel model list|refresh [--provider PROVIDER_ID] [--json]");
     println!("       aifuel approve --run RUN_ID --input INPUT_ID --decision DECISION");
     println!("       aifuel runtime");
-    println!("       aifuel mcp");
-    println!("       aifuel mcp execution");
-    println!("       aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...]");
+    println!("       aifuel mcp [--http [--host H] [--port P]]");
+    println!("       aifuel mcp execution [--http [--host H] [--port P]]");
+    println!(
+        "       aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...] [--http [--host H] [--port P]]"
+    );
     println!("       aifuel mcp setup --agent MCP_HOST_ID [--dry-run] [--remove]");
     println!("       aifuel mcp servers list|validate|add|remove|select");
     println!();
@@ -280,6 +282,7 @@ fn print_help() {
     println!("mcp serves read-only status over standard input and output.");
     println!("mcp execution manages Agent Runs owned by its standard-input connection.");
     println!("mcp gateway serves selected external MCP tools over standard input and output.");
+    println!("each mcp server also accepts --http to serve streamable HTTP on /mcp.");
     println!("mcp setup previews, applies, or removes an AI Fuel Gateway registration.");
 }
 
