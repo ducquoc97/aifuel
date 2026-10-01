@@ -45,6 +45,28 @@ fn ordinary_input_response_rejects_scalar_for_multiple_questions() {
     assert!(error.message.contains("multiple questions"));
 }
 
+/// A question-less ask takes a scalar (mapped onto the synthetic `answer`
+/// id) or nothing keyed: every object key is unasked and must not reach
+/// the provider.
+#[test]
+fn a_ask_without_questions_rejects_any_keyed_answer() {
+    let pending = PendingRunInput {
+        input_id: "input-1".to_owned(),
+        run_id: "run-1".to_owned(),
+        kind: RunInputKind::Ordinary,
+        interaction_kind: AgentInteractionKind::OrdinaryInput,
+        description: "Say something".to_owned(),
+        native_method: None,
+        questions: Vec::new(),
+        question_ids: Vec::new(),
+        parameters: None,
+        requires_expanded_access: false,
+    };
+    let error = ordinary_input_response(&pending, serde_json::json!({"bogus": "x"}))
+        .expect_err("keyed answers are unasked on a questionless ask");
+    assert!(error.message.contains("unknown question"));
+}
+
 #[test]
 fn elicitation_response_preserves_typed_json_fields() {
     let pending = PendingRunInput {

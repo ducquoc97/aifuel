@@ -52,9 +52,9 @@ pub(super) fn ordinary_input_response(
         serde_json::Value::Object(object) => {
             let mut answers = BTreeMap::new();
             for (question, value) in object {
-                if !pending.question_ids.is_empty()
-                    && !pending.question_ids.iter().any(|id| id == &question)
-                {
+                // An ask declaring no questions takes no keyed answers: any
+                // id is unasked, matching the provider-boundary check.
+                if !pending.question_ids.iter().any(|id| id == &question) {
                     return Err(input_error("response contains an unknown question ID"));
                 }
                 let values = match value {
