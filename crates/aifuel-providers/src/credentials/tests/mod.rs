@@ -6,6 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod pool;
 mod transactions;
 
 /// The integration id resolve tests run under; test credentials are unbound,

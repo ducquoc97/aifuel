@@ -5,13 +5,16 @@ use super::schema::{
     CREDENTIALS_SCHEMA_VERSION, CredentialFile, CredentialKind, CredentialMetadata,
     ManagedCredential, OAuthTokens, VersionProbe, now_unix,
 };
-use aifuel_core::{ApiKeySource, AuthBinding, CredentialRef, IntegrationId, KeyDelivery};
+use aifuel_core::{AuthBinding, CredentialRef, IntegrationId, KeyDelivery};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+mod pool;
+pub use pool::{PoolKey, is_pool_member};
 
 const STORE_FILE_NAME: &str = "credentials.json";
 const LOCK_FILE_NAME: &str = "credentials.json.lock";
@@ -200,25 +203,17 @@ impl CredentialStore {
         match binding {
             AuthBinding::None => Ok(ResolvedAuth::None),
             AuthBinding::ApiKey { source, delivery } => {
-                let key = match source {
-                    ApiKeySource::Env { var } => env_override(var)
-                        .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() })?,
-                    ApiKeySource::Store { credential } => self
-                        .api_key_material(credential, integration)?
-                        .ok_or_else(|| {
-                            CredentialStoreError::CredentialAbsent(credential.clone())
-                        })?,
-                    ApiKeySource::EnvOrStore { var, credential } => {
-                        match self.api_key_material(credential, integration)? {
-                            Some(key) => key,
-                            None => env_override(var).ok_or_else(|| {
-                                CredentialStoreError::EnvVarAbsent { var: var.clone() }
-                            })?,
-                        }
-                    }
-                };
+                let pool = self.resolve_api_key_pool(source, integration)?;
+                // Single-key callers (monitoring, diagnostics) get the best
+                // available member: the first healthy key, else the first
+                // member so a status check still reports the provider's own
+                // answer. The execution path iterates the full pool itself.
+                let member = pool
+                    .iter()
+                    .find(|member| member.healthy())
+                    .unwrap_or(&pool[0]);
                 Ok(ResolvedAuth::ApiKey {
-                    key,
+                    key: member.key.clone(),
                     delivery: delivery.clone(),
                 })
             }
@@ -241,31 +236,6 @@ impl CredentialStore {
                 }
                 None => Err(CredentialStoreError::CredentialAbsent(credential.clone())),
             },
-        }
-    }
-
-    /// The API-key material for a store-bound source, or `None` when no
-    /// record exists at `reference` (letting an `EnvOrStore` binding fall
-    /// back to its declared variable). Kind and destination mismatches are
-    /// errors, never a silent fallback.
-    fn api_key_material(
-        &self,
-        reference: &CredentialRef,
-        integration: &IntegrationId,
-    ) -> Result<Option<String>, CredentialStoreError> {
-        match self.get(reference)? {
-            Some(credential) => {
-                check_destination(reference, &credential, integration)?;
-                match credential {
-                    ManagedCredential::Api { key, .. } => Ok(Some(key)),
-                    other => Err(CredentialStoreError::UnexpectedCredentialKind {
-                        reference: reference.clone(),
-                        expected: CredentialKind::ApiKey,
-                        found: other.kind(),
-                    }),
-                }
-            }
-            None => Ok(None),
         }
     }
 
