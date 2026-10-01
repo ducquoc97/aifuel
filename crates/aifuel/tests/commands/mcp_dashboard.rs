@@ -387,9 +387,9 @@ fn dashboard_connect_stores_and_removes_a_managed_credential() {
     );
     let response = dashboard_request(&address, request.as_bytes());
     assert!(response.starts_with("HTTP/1.1 200"), "remove: {response}");
-    // The EnvOrStore binding still names the reference, so the response
-    // carries the same warning `aifuel auth remove` prints.
-    assert!(response.contains("still binds credential openai:api-key"));
+    // Removing the only pool member strands the EnvOrStore binding, so the
+    // response carries the same warning `aifuel auth remove` prints.
+    assert!(response.contains("pool now holds no keys"));
 
     let response = dashboard_request(
         &address,
