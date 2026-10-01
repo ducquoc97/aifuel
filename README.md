@@ -66,7 +66,7 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | Antigravity CLI | **live** | Code Assist OAuth token |
 | Devin CLI | **live** | `credentials.toml` key |
 
-`live` = pulled from the provider's own API; a provider that cannot return live usage shows as an error, never a guess. A pinned catalog covers 69 provider IDs - catalog-only entries report as unsupported.
+`live` = pulled from the provider's own API; a provider that cannot return live usage shows as an error, never a guess. API-key integrations for OpenRouter (`/key` credits), Z.AI (coding-plan quota windows), DeepSeek, and SiliconFlow (account balance) also report live when their key is set. A pinned catalog covers 75 provider IDs and flags documented free tiers (`has_free`/`free_note` in `--json`, `free:` in `aifuel auth list`) - catalog-only entries report as unsupported.
 
 ## Running prompts
 
@@ -74,7 +74,7 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 aifuel run --provider codex --model gpt-5-codex --prompt "Explain Rust ownership"
 ```
 
-Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, `openai:api-key`, `openrouter:api-key`. Options:
+Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, and the OpenAI-compatible API-key integrations `openai:api-key`, `openrouter:api-key`, `cerebras:api-key`, `cohere:api-key`, `deepinfra:api-key`, `deepseek:api-key`, `fireworks:api-key`, `groq:api-key`, `huggingface:api-key`, `mistral:api-key`, `moonshot:api-key`, `nvidia:api-key`, `perplexity:api-key`, `siliconflow:api-key`, `together:api-key`, `xai:api-key`, `zai:api-key`. Each `*:api-key` reads its provider's conventional env var (for example `GROQ_API_KEY`; Hugging Face uses `HF_TOKEN`) or a key stored with `aifuel auth set-key`. Options:
 
 - `--prompt TEXT` / `--prompt-file PATH` - or omit both to pipe the prompt on stdin
 - `--model ID` / `--effort LEVEL` - explicit model and effort
@@ -149,7 +149,7 @@ Then connect an agent: `aifuel mcp setup --agent HOST` writes the managed entry 
 
 **Does this send my tokens anywhere?** No. It reads the same local credential files your CLIs use, calls each provider's *own* usage endpoint, and shows the result. No server, no telemetry, no third party.
 
-**Do I need API keys?** Not for monitoring - it reuses the OAuth/logins your AI coding CLIs already set up. `aifuel run` through an API-key integration (`openai:api-key`, `openrouter:api-key`) does need one via `aifuel auth set-key` or the env var. A general GitHub CLI login does not count as a GitHub Copilot login.
+**Do I need API keys?** Not for monitoring - it reuses the OAuth/logins your AI coding CLIs already set up. `aifuel run` through an API-key integration (any `*:api-key` id listed above) does need one via `aifuel auth set-key` or the provider's env var. A general GitHub CLI login does not count as a GitHub Copilot login.
 
 **It only shows some providers.** Those are the ones with local credentials. Log in to that provider's AI coding CLI, then refresh.
 

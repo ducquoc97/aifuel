@@ -62,11 +62,15 @@ fn list(args: &[String]) -> Result<u8, String> {
             .list()
             .map(|descriptor| {
                 let source = describe_source(descriptor, &stored);
+                let free_note =
+                    aifuel_providers::free_tier_note(descriptor.integration.provider.as_str());
                 serde_json::json!({
                     "integration": descriptor.integration.id.as_str(),
                     "provider": descriptor.integration.provider.as_str(),
                     "credential_source": source,
                     "discovered": describe_discovery(descriptor, &evidence),
+                    "has_free": free_note.is_some(),
+                    "free_note": free_note,
                 })
             })
             .collect();
@@ -101,12 +105,16 @@ fn list(args: &[String]) -> Result<u8, String> {
         let name = (integration.name != integration.id.as_str())
             .then(|| format!(" ({})", integration.name))
             .unwrap_or_default();
+        let free = aifuel_providers::free_tier_note(integration.provider.as_str())
+            .map(|note| format!(" free: {note}"))
+            .unwrap_or_default();
         println!(
-            "  {:<24} {:<12} {}{}",
+            "  {:<24} {:<12} {}{}{}",
             integration.id.as_str(),
             describe_discovery(descriptor, &evidence),
             describe_source(descriptor, &stored),
-            name
+            name,
+            free
         );
     }
     println!();

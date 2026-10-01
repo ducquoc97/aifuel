@@ -16,27 +16,26 @@
 //! `~/.cursor/cli-config.json` plus the `CURSOR_API_KEY`/`CURSOR_AUTH_TOKEN`
 //! environment variables.
 //!
-//! The HTTP builtins cover the spec's P1 matrix: local OpenAI-compatible
-//! servers (`ollama:local`, `lmstudio:local`) with explicit `AuthBinding::None`,
-//! and billed API-key integrations for OpenAI and OpenRouter. An API-key
+//! The HTTP builtins cover local OpenAI-compatible servers (`ollama:local`,
+//! `lmstudio:local`) with explicit `AuthBinding::None`, plus the
+//! OpenAI-compatible API-key provider catalog in [`api_keys`]. An API-key
 //! builtin binds `EnvOrStore`: the conventional environment variable works
 //! as-is, and `aifuel auth set-key <integration>` stores a managed credential
 //! that then takes precedence. No key material ever appears here - only the
 //! variable name and the managed Credential Reference are declared.
 
+mod api_keys;
+
 use super::evidence::EvidenceSource;
 use super::registry::IntegrationDescriptor;
 use aifuel_core::{
-    ApiKeySource, AuthBinding, CliAdapterId, CollectorId, CredentialRef, EndpointConfig,
-    ExecutionConfig, Integration, IntegrationId, KeyDelivery, MonitoringConfig, ProviderId,
-    ProviderKey, WireApi,
+    AuthBinding, CliAdapterId, EndpointConfig, ExecutionConfig, Integration, IntegrationId,
+    ProviderId, ProviderKey, WireApi,
 };
 use std::collections::BTreeMap;
 
 const OLLAMA_BASE_URL: &str = "http://localhost:11434/v1";
 const LMSTUDIO_BASE_URL: &str = "http://localhost:1234/v1";
-const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// The built-in integration descriptors: the six compiled-adapter CLI
 /// integrations in pinned catalog order, the OpenCode runtime adapter
@@ -119,41 +118,13 @@ pub fn builtin_integrations() -> Vec<IntegrationDescriptor> {
             LMSTUDIO_BASE_URL,
             vec![".lmstudio"],
         ),
-        // The P1 engine set serves WireApi::OpenAiChat only, so no Anthropic
-        // Messages builtin ships yet: a registered-but-never-executable
-        // integration is worse than an absent one.
-        api_key_endpoint(
-            "openai:api-key",
-            "openai",
-            "OpenAI (API key)",
-            OPENAI_BASE_URL,
-            WireApi::OpenAiChat,
-            "OPENAI_API_KEY",
-            KeyDelivery::Bearer,
-            BTreeMap::new(),
-        ),
-        {
-            let mut openrouter = api_key_endpoint(
-                "openrouter:api-key",
-                "openrouter",
-                "OpenRouter (API key)",
-                OPENROUTER_BASE_URL,
-                WireApi::OpenAiChat,
-                "OPENROUTER_API_KEY",
-                KeyDelivery::Bearer,
-                BTreeMap::new(),
-            );
-            // The one managed collector in the P1 matrix: OpenRouter reports
-            // the key-scoped credit allowance on `/key`. No dedicated
-            // monitoring credential - the execution binding is reused.
-            openrouter.integration.monitoring = Some(MonitoringConfig {
-                collector: CollectorId::new(crate::openrouter::OPENROUTER_KEY_COLLECTOR),
-                credential: None,
-                endpoint: None,
-            });
-            openrouter
-        },
     ]
+    .into_iter()
+    // The OpenAI-compatible API-key catalog. The P1 engine set serves
+    // WireApi::OpenAiChat only, so no Anthropic Messages builtin ships yet:
+    // a registered-but-never-executable integration is worse than absent.
+    .chain(api_keys::integrations())
+    .collect()
 }
 
 /// A CLI integration over a compiled adapter. The provider CLI owns its
@@ -222,49 +193,6 @@ fn local_endpoint(
         vec![EvidenceSource::ConfiguredEndpoint {
             marker_directories: marker_directories.into_iter().map(str::to_owned).collect(),
         }],
-    )
-}
-
-/// A billed API-key endpoint. The `EnvOrStore` binding names the
-/// conventional environment variable and reserves the Credential Reference
-/// `aifuel auth set-key` writes to; a stored managed credential takes
-/// precedence over the variable. Evidence covers both sources.
-fn api_key_endpoint(
-    id: &str,
-    provider: &str,
-    name: &str,
-    base_url: &str,
-    protocol: WireApi,
-    env_var: &str,
-    delivery: KeyDelivery,
-    extra_headers: BTreeMap<String, String>,
-) -> IntegrationDescriptor {
-    IntegrationDescriptor::builtin(
-        Integration {
-            id: IntegrationId::new(id),
-            provider: ProviderId::new(provider),
-            name: name.to_owned(),
-            execution: ExecutionConfig::Http {
-                endpoint: EndpointConfig {
-                    base_url: base_url.to_owned(),
-                    extra_headers,
-                    request_timeout_seconds: None,
-                },
-                protocol,
-                auth: AuthBinding::ApiKey {
-                    source: ApiKeySource::EnvOrStore {
-                        var: env_var.to_owned(),
-                        credential: CredentialRef::new(id),
-                    },
-                    delivery,
-                },
-            },
-            monitoring: None,
-        },
-        vec![
-            EvidenceSource::EnvVar(env_var.to_owned()),
-            EvidenceSource::ManagedEntry(CredentialRef::new(id)),
-        ],
     )
 }
 
@@ -341,66 +269,6 @@ mod tests {
                 vec![EvidenceSource::ConfiguredEndpoint {
                     marker_directories: vec![marker.to_owned()],
                 }]
-            );
-        }
-    }
-
-    #[test]
-    fn api_key_integrations_bind_env_or_store_never_key_material() {
-        let descriptors = builtin_integrations();
-        for (id, provider, base_url, protocol, var) in [
-            (
-                "openai:api-key",
-                "openai",
-                "https://api.openai.com/v1",
-                WireApi::OpenAiChat,
-                "OPENAI_API_KEY",
-            ),
-            (
-                "openrouter:api-key",
-                "openrouter",
-                "https://openrouter.ai/api/v1",
-                WireApi::OpenAiChat,
-                "OPENROUTER_API_KEY",
-            ),
-        ] {
-            let descriptor = descriptors
-                .iter()
-                .find(|d| d.integration.id.as_str() == id)
-                .unwrap_or_else(|| panic!("{id} is a builtin"));
-            assert_eq!(descriptor.integration.provider.as_str(), provider);
-            let ExecutionConfig::Http {
-                endpoint,
-                protocol: found_protocol,
-                auth,
-            } = &descriptor.integration.execution
-            else {
-                panic!("{id} must be an Http integration");
-            };
-            assert_eq!(endpoint.base_url, base_url);
-            assert_eq!(*found_protocol, protocol);
-            match auth {
-                AuthBinding::ApiKey {
-                    source:
-                        ApiKeySource::EnvOrStore {
-                            var: found,
-                            credential,
-                        },
-                    ..
-                } => {
-                    assert_eq!(found, var);
-                    // The managed Credential Reference a builtin reserves
-                    // equals its own Integration Identity.
-                    assert_eq!(credential.as_str(), id);
-                }
-                other => panic!("{id} must bind an env-or-store API key, got {other:?}"),
-            }
-            assert_eq!(
-                descriptor.sources,
-                vec![
-                    EvidenceSource::EnvVar(var.to_owned()),
-                    EvidenceSource::ManagedEntry(CredentialRef::new(id)),
-                ]
             );
         }
     }

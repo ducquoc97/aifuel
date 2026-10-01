@@ -65,6 +65,12 @@ pub struct CatalogProviderStatus {
     pub agent_execution: CapabilityState,
     pub evidence: String,
     pub platforms: Vec<CatalogPlatformStatus>,
+    /// Whether the provider advertises a free tier in the imported catalog
+    /// data. `false` means none is documented, not a guarantee none exists.
+    pub has_free: bool,
+    /// A short description of the free allowance (for example
+    /// "200K tokens/day per model"), when the data source records one.
+    pub free_note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
