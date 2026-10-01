@@ -27,40 +27,14 @@ where
     }
     if args.first().map(String::as_str) == Some("mcp") {
         return match args.get(1).map(String::as_str) {
-            None => {
-                aifuel_mcp::serve(aifuel::monitoring_facade()?)?;
-                Ok(0)
-            }
             Some("gateway") => run_mcp_gateway(&args[2..]),
             Some("servers") => aifuel::mcp_catalog::run(&args[2..]),
-            Some("execution") => {
-                if !args[2..].is_empty() {
-                    return Err("Usage: aifuel mcp execution".to_owned());
-                }
-                let selection =
-                    aifuel_app::selection::SelectionStore::load(aifuel::execution_config_path()?)
-                        .map_err(|error| error.to_string())?;
-                let manager = aifuel::execution_run_manager()?;
-                let catalog = aifuel::model_catalog_snapshot()?;
-                let runtime = tokio::runtime::Runtime::new()
-                    .map_err(|error| format!("could not start model catalog runtime: {error}"))?;
-                let refresh_catalog = move |provider: Option<ProviderKey>| {
-                    let providers = provider.map_or_else(|| ProviderKey::ALL.to_vec(), |p| vec![p]);
-                    providers
-                        .into_iter()
-                        .map(|provider| runtime.block_on(aifuel::refresh_model_catalog(provider)))
-                        .collect::<Result<Vec<_>, _>>()
-                };
-                aifuel_mcp::execution::serve_with_selection_and_catalog_refresh(
-                    manager,
-                    selection,
-                    catalog,
-                    refresh_catalog,
-                )?;
-                Ok(0)
-            }
+            Some("execution") => run_mcp_execution(&args[2..]),
             Some("setup") => crate::mcp_setup::run(&args[2..]),
-            Some(unknown) => Err(format!("unknown MCP command {unknown:?}; use --help")),
+            Some(unknown) if !unknown.starts_with('-') => {
+                Err(format!("unknown MCP command {unknown:?}; use --help"))
+            }
+            _ => run_mcp_status(&args[1..]),
         };
     }
 
@@ -119,6 +93,106 @@ where
     } else {
         1
     })
+}
+
+/// Parse the shared `--http/--host/--port` transport flags for the MCP
+/// servers. `None` selects the default stdio transport.
+fn mcp_transport_options(
+    command: &str,
+    args: &[String],
+    mut parse_flag: impl FnMut(&str, &[String], &mut usize) -> Result<bool, String>,
+) -> Result<Option<(String, u16)>, String> {
+    let mut http = false;
+    let mut host = "127.0.0.1".to_owned();
+    let mut port = aifuel_mcp::MCP_HTTP_DEFAULT_PORT;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--http" => http = true,
+            "--host" => {
+                index += 1;
+                host = args
+                    .get(index)
+                    .ok_or_else(|| format!("Usage: {command} --http [--host <H>] [--port <P>]"))?
+                    .clone();
+            }
+            "--port" => {
+                index += 1;
+                port = args
+                    .get(index)
+                    .and_then(|value| value.parse::<u16>().ok())
+                    .ok_or_else(|| format!("Usage: {command} --http [--host <H>] [--port <P>]"))?;
+            }
+            flag if parse_flag(flag, args, &mut index)? => {}
+            flag => return Err(format!("unknown {command} flag {flag:?}")),
+        }
+        index += 1;
+    }
+    if http {
+        return Ok(Some((host, port)));
+    }
+    if args.iter().any(|arg| arg == "--host" || arg == "--port") {
+        return Err(format!("--host and --port require {command} --http"));
+    }
+    Ok(None)
+}
+
+/// Serve the read-only monitoring MCP over stdio, or over streamable HTTP
+/// when `--http` is passed.
+fn run_mcp_status(args: &[String]) -> Result<u8, String> {
+    let options = mcp_transport_options("aifuel mcp", args, |flag, _, _| {
+        Err(format!("unknown aifuel mcp flag {flag:?}"))
+    })?;
+    match options {
+        Some((host, port)) => {
+            aifuel_mcp::serve_http(aifuel::monitoring_facade()?, &host, port)?;
+            Ok(0)
+        }
+        None => {
+            aifuel_mcp::serve(aifuel::monitoring_facade()?)?;
+            Ok(0)
+        }
+    }
+}
+
+/// Serve the Agent Run MCP over stdio, or over streamable HTTP when `--http`
+/// is passed. HTTP sessions each own a dedicated `RunManager`.
+fn run_mcp_execution(args: &[String]) -> Result<u8, String> {
+    let options = mcp_transport_options("aifuel mcp execution", args, |flag, _, _| {
+        Err(format!("unknown aifuel mcp execution flag {flag:?}"))
+    })?;
+    let selection = aifuel_app::selection::SelectionStore::load(aifuel::execution_config_path()?)
+        .map_err(|error| error.to_string())?;
+    let catalog = aifuel::model_catalog_snapshot()?;
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("could not start model catalog runtime: {error}"))?;
+    let refresh_catalog = move |provider: Option<ProviderKey>| {
+        let providers = provider.map_or_else(|| ProviderKey::ALL.to_vec(), |p| vec![p]);
+        providers
+            .into_iter()
+            .map(|provider| runtime.block_on(aifuel::refresh_model_catalog(provider)))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    match options {
+        Some((host, port)) => aifuel_mcp::execution::http::serve(
+            aifuel::execution_run_manager,
+            selection,
+            catalog,
+            refresh_catalog,
+            &host,
+            port,
+        )?,
+        None => {
+            let manager = aifuel::execution_run_manager()?;
+            aifuel_mcp::execution::serve_with_selection_and_catalog_refresh(
+                manager,
+                selection,
+                catalog,
+                refresh_catalog,
+            )?;
+        }
+    }
+    Ok(0)
 }
 
 /// `aifuel runtime`: serve the agent runtime as JSON-RPC over stdin and
@@ -220,9 +294,10 @@ fn print_help() {
 
 fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("Usage: aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...]");
+        println!("Usage: aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...] [--http [--host H] [--port P]]");
         println!();
         println!("Serves the selected external MCP server over standard input and output.");
+        println!("With --http it listens for streamable-HTTP MCP sessions on /mcp instead.");
         println!("The central catalog is aifuel/mcp.json in the user config directory.");
         println!("When --tool is supplied, only those exact Gateway tool names are exposed.");
         return Ok(0);
@@ -230,6 +305,9 @@ fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
 
     let mut agent = None;
     let mut allowed_tools = Vec::new();
+    let mut http = false;
+    let mut host = "127.0.0.1".to_owned();
+    let mut port = aifuel_mcp::MCP_HTTP_DEFAULT_PORT;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -240,6 +318,13 @@ fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
                 agent = Some(next_value(args, &mut index, "--agent")?);
             }
             "--tool" => allowed_tools.push(next_value(args, &mut index, "--tool")?),
+            "--http" => http = true,
+            "--host" => host = next_value(args, &mut index, "--host")?,
+            "--port" => {
+                port = next_value(args, &mut index, "--port")?
+                    .parse()
+                    .map_err(|_| "port must be a number between 0 and 65535".to_owned())?;
+            }
             unknown => return Err(format!("unknown argument {unknown:?} for mcp gateway")),
         }
         index += 1;
@@ -248,11 +333,27 @@ fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
     if agent.trim().is_empty() {
         return Err("--agent MCP_HOST_ID cannot be empty".to_owned());
     }
+    if !http
+        && args
+            .iter()
+            .any(|arg| arg == "--host" || arg == "--port")
+    {
+        return Err("--host and --port require aifuel mcp gateway --http".to_owned());
+    }
 
     let facade = aifuel::mcp_gateway_facade(&agent)?;
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("could not start MCP Gateway runtime: {error}"))?;
     let allowed_tools = (!allowed_tools.is_empty()).then_some(allowed_tools);
+    if http {
+        runtime.block_on(aifuel_mcp::gateway::serve_http_with_tool_allowlist(
+            facade,
+            allowed_tools,
+            &host,
+            port,
+        ))?;
+        return Ok(0);
+    }
     runtime.block_on(aifuel_mcp::gateway::serve_with_tool_allowlist(
         facade,
         allowed_tools,
