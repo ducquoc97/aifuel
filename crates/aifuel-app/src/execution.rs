@@ -136,6 +136,7 @@ mod tests {
                 diagnostics: None,
                 timed_out: false,
                 usage: None,
+                quota_exhausted: false,
                 working_directory: std::env::temp_dir(),
             })
         }

@@ -219,7 +219,16 @@ impl RunManager {
                     result.error,
                     result.diagnostics,
                     result.account_id,
-                    (result.status == RunStatus::Failed).then(|| "provider_failed".to_owned()),
+                    (result.status == RunStatus::Failed).then(|| {
+                        // Quota exhaustion the provider itself reported is a
+                        // separate failure category: `aifuel run --provider
+                        // auto` retries it on the next ranked Provider.
+                        if result.quota_exhausted {
+                            "quota_exhausted".to_owned()
+                        } else {
+                            "provider_failed".to_owned()
+                        }
+                    }),
                     result.usage,
                 )
             }
