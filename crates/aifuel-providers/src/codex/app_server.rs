@@ -435,6 +435,7 @@ where
         diagnostics,
         timed_out: status == RunStatus::Timeout,
         usage: None,
+        quota_exhausted: false,
         working_directory: cwd.to_path_buf(),
     })
 }

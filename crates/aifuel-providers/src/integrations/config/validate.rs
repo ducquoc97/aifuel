@@ -40,6 +40,20 @@ pub(super) fn build_descriptor(
     if entry.provider_id.trim().is_empty() {
         return Err(invalid("provider_id must not be empty".to_owned()));
     }
+    // `auto` is the reserved `--provider` alias for automatic routing; a
+    // literal integration or provider named `auto` would shadow it.
+    if entry.id.trim() == aifuel_core::AUTO_PROVIDER {
+        return Err(invalid(format!(
+            "integration id '{}' is reserved for automatic Provider routing",
+            aifuel_core::AUTO_PROVIDER
+        )));
+    }
+    if entry.provider_id.trim() == aifuel_core::AUTO_PROVIDER {
+        return Err(invalid(format!(
+            "provider_id '{}' is reserved for automatic Provider routing",
+            aifuel_core::AUTO_PROVIDER
+        )));
+    }
 
     let monitoring = entry
         .monitoring

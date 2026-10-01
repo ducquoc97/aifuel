@@ -280,6 +280,13 @@ impl WireExecutionAdapter {
             let diagnostics = read_bounded_body(&mut response)
                 .await
                 .map(|body| http::redact(body, &auth));
+            // HTTP 402 (payment/quota) and 429 (rate limit) are
+            // provider-reported allowance exhaustion, an explicit signal
+            // the run failed on the Quota Pool rather than the request.
+            let quota_exhausted = matches!(status.as_u16(), 402 | 429)
+                || diagnostics
+                    .as_deref()
+                    .is_some_and(|body| body.contains("insufficient_quota"));
             return Ok(self.build_result(
                 request,
                 RunStatus::Failed,
@@ -289,6 +296,7 @@ impl WireExecutionAdapter {
                 Some(format!("the endpoint returned HTTP {status}")),
                 diagnostics,
                 None,
+                quota_exhausted,
             ));
         }
 
@@ -340,6 +348,7 @@ impl WireExecutionAdapter {
             error,
             diagnostics,
             outcome.usage,
+            false,
         ))
     }
 
@@ -354,6 +363,7 @@ impl WireExecutionAdapter {
         error: Option<String>,
         diagnostics: Option<String>,
         usage: Option<aifuel_core::TokenUsage>,
+        quota_exhausted: bool,
     ) -> RunResult {
         let run_id = format!(
             "run-{}-{}",
@@ -390,6 +400,7 @@ impl WireExecutionAdapter {
             diagnostics,
             usage,
             timed_out,
+            quota_exhausted,
             working_directory: request
                 .working_directory
                 .clone()
