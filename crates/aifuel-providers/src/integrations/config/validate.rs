@@ -172,11 +172,11 @@ fn validate_monitoring(
     if monitoring.collector.trim().is_empty() {
         return Err(invalid("monitoring.collector must not be empty".to_owned()));
     }
-    if monitoring.collector != crate::openrouter::OPENROUTER_KEY_COLLECTOR {
+    if !crate::quota::compiled_collector_ids().contains(&monitoring.collector.as_str()) {
         return Err(invalid(format!(
             "monitoring.collector '{}' names no compiled collector; known values: {}",
             monitoring.collector,
-            crate::openrouter::OPENROUTER_KEY_COLLECTOR
+            crate::quota::compiled_collector_ids().join(", ")
         )));
     }
     let credential = monitoring

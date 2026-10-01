@@ -21,6 +21,7 @@ mod codex;
 pub mod codex_runtime;
 mod copilot;
 mod credentials;
+mod deepseek;
 mod devin;
 mod discovery;
 mod gemini;
@@ -30,13 +31,17 @@ mod model_catalog;
 mod monitoring;
 pub mod opencode_runtime;
 mod openrouter;
+mod quota;
 mod registration;
 mod registry;
+mod siliconflow;
 mod usage_helpers;
 mod wire;
+mod zai;
 
 pub use acp_runtime::{AcpAdapter, acp_adapter};
 pub use agent_run_registry::agent_run_adapters;
+pub use catalog::free_tier_note;
 pub use claude_runtime::{ClaudeAdapter, claude_adapter};
 pub use cli_adapter::{
     AdapterDiscovery, CliAdapter, cli_fallback_adapters, integration_summary, quota_summary,

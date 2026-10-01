@@ -21,6 +21,9 @@ pub struct CollectionConfig {
     pub devin_api_server_url: String,
     pub gemini_api_url: String,
     pub openrouter_key_url: String,
+    pub zai_quota_url: String,
+    pub deepseek_balance_url: String,
+    pub siliconflow_balance_url: String,
 }
 
 impl Default for CollectionConfig {
@@ -33,6 +36,9 @@ impl Default for CollectionConfig {
             devin_api_server_url: "https://server.codeium.com".to_owned(),
             gemini_api_url: "https://cloudcode-pa.googleapis.com/v1internal:".to_owned(),
             openrouter_key_url: "https://openrouter.ai/api/v1/key".to_owned(),
+            zai_quota_url: "https://api.z.ai/api/monitor/usage/quota/limit".to_owned(),
+            deepseek_balance_url: "https://api.deepseek.com/user/balance".to_owned(),
+            siliconflow_balance_url: "https://api.siliconflow.com/v1/user/info".to_owned(),
         }
     }
 }
@@ -52,6 +58,15 @@ impl CollectionConfig {
         replace_from_env(
             &mut config.openrouter_key_url,
             "AIFUEL_OPENROUTER_USAGE_URL",
+        );
+        replace_from_env(&mut config.zai_quota_url, "AIFUEL_ZAI_USAGE_URL");
+        replace_from_env(
+            &mut config.deepseek_balance_url,
+            "AIFUEL_DEEPSEEK_USAGE_URL",
+        );
+        replace_from_env(
+            &mut config.siliconflow_balance_url,
+            "AIFUEL_SILICONFLOW_USAGE_URL",
         );
         config
     }
@@ -178,33 +193,37 @@ impl ProviderMonitoring {
                 // A wire integration without a monitoring contract reports
                 // Unsupported honestly rather than vanishing from the report.
                 if let ExecutionConfig::Http { .. } = &descriptor.integration.execution {
-                    observations.push(crate::openrouter::unobserved(
+                    observations.push(crate::quota::unobserved(
                         integration_id,
                         provider_id,
                         now,
                         ObservationState::Unsupported,
+                        "monitoring",
+                        "Quota monitoring",
                     ));
                 }
                 continue;
             };
-            if monitoring.collector.as_str() != crate::openrouter::OPENROUTER_KEY_COLLECTOR {
+            let Some(collector) = crate::quota::spec(monitoring.collector.as_str()) else {
                 errors.push(integration_error(
                     provider_id,
                     format!("unknown monitoring collector {}", monitoring.collector),
                 ));
-                observations.push(crate::openrouter::unobserved(
+                observations.push(crate::quota::unobserved(
                     integration_id,
                     provider_id,
                     now,
                     ObservationState::Unsupported,
+                    "monitoring",
+                    "Quota monitoring",
                 ));
                 continue;
-            }
+            };
             let url = monitoring
                 .endpoint
                 .as_ref()
                 .map(|endpoint| endpoint.base_url.clone())
-                .unwrap_or_else(|| self.config.openrouter_key_url.clone());
+                .unwrap_or_else(|| (collector.default_url)(&self.config));
             // A dedicated monitoring credential is a Bearer API key; absent
             // one, the observation reuses the integration's execution binding.
             let binding = match &monitoring.credential {
@@ -239,7 +258,7 @@ impl ProviderMonitoring {
                     format!("the declared credential did not resolve: {error}"),
                 )),
                 Ok(Ok(auth)) => {
-                    match crate::openrouter::collect_key_quota(
+                    match (collector.collect)(
                         &self.client,
                         &url,
                         monitoring.endpoint.as_ref(),
@@ -250,20 +269,20 @@ impl ProviderMonitoring {
                     )
                     .await
                     {
-                        Ok(observation) => Ok(observation),
-                        Err(crate::openrouter::KeyQuotaError::Unauthenticated(detail)) => {
+                        Ok(collected) => Ok(collected),
+                        Err(crate::quota::QuotaError::Unauthenticated(detail)) => {
                             Err((ObservationState::Unauthenticated, detail))
                         }
-                        Err(crate::openrouter::KeyQuotaError::Unavailable(detail)) => {
+                        Err(crate::quota::QuotaError::Unavailable(detail)) => {
                             Err((ObservationState::Unavailable, detail))
                         }
                     }
                 }
             };
             match outcome {
-                Ok(observation) => observations.push(observation),
+                Ok(collected) => observations.extend(collected),
                 Err((state, detail)) => {
-                    observations.push(crate::openrouter::unobserved(
+                    observations.push((collector.unobserved)(
                         integration_id,
                         provider_id,
                         now,
