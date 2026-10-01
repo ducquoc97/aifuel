@@ -1,6 +1,7 @@
 mod connection;
 mod handler;
 mod host_transport;
+pub(crate) mod http;
 mod identity;
 mod process;
 mod progress;
@@ -17,8 +18,10 @@ mod transport;
 use aifuel_app::McpGatewayFacade;
 use handler::{GatewayServerHandler, GatewayServerService};
 use rmcp::ServiceExt;
+use rmcp::service::RoleServer;
 use state::GatewayState;
 use std::collections::HashSet;
+use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -54,6 +57,59 @@ pub async fn serve_with_tool_allowlist(
         .prepare_legacy_host()
         .await
         .map_err(|_| "MCP Gateway could not initialize the host protocol session".to_owned())?;
+    run_session(state, transport, cancellation, overflow).await
+}
+
+/// Serve the selected external MCP servers to MCP Hosts over streamable HTTP
+/// on `POST/GET/DELETE /mcp`. Each HTTP session owns a dedicated
+/// `GatewayState`, so upstream connections stay per-connection exactly as
+/// they do over stdio.
+pub async fn serve_http(facade: McpGatewayFacade, host: &str, port: u16) -> Result<(), String> {
+    serve_http_with_tool_allowlist(facade, None, host, port).await
+}
+
+/// Serve the selected external MCP servers over streamable HTTP, optionally
+/// exposing only the exact gateway tool names in `allowed_tools`.
+pub async fn serve_http_with_tool_allowlist(
+    facade: McpGatewayFacade,
+    allowed_tools: Option<Vec<String>>,
+    host: &str,
+    port: u16,
+) -> Result<(), String> {
+    let allowed_tools = validate_tool_allowlist(allowed_tools)?;
+    let max_message_bytes = facade.gateway_limits().max_message_bytes;
+    let host = host.to_owned();
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        crate::http::serve(
+            "aifuel mcp gateway",
+            &host,
+            port,
+            max_message_bytes,
+            move |_| {
+                http::GatewayHttpSession::start(
+                    facade.clone(),
+                    allowed_tools.clone(),
+                    runtime.clone(),
+                )
+            },
+        )
+    })
+    .await
+    .map_err(|_| "MCP Gateway HTTP server task failed".to_owned())?
+}
+
+/// Run one host protocol session over any transport until it ends, then shut
+/// the session's upstream connections down.
+async fn run_session<T>(
+    state: Arc<GatewayState>,
+    transport: T,
+    cancellation: CancellationToken,
+    overflow: CancellationToken,
+) -> Result<(), String>
+where
+    T: rmcp::transport::Transport<RoleServer, Error = io::Error> + 'static,
+{
     let server = GatewayServerHandler::new(Arc::clone(&state));
     let service = GatewayServerService::new(server)
         .serve_with_ct(transport, cancellation.clone())
