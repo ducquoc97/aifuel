@@ -136,6 +136,13 @@ struct ProviderMetadata {
     name: &'static str,
 }
 
+/// The reserved `--provider` selector for automatic Provider routing:
+/// `aifuel run --provider auto` ranks the Discovered Providers by quota
+/// headroom and runs on the best one. It is never a literal Provider or
+/// Integration Identity - `providers.json` rejects it and selection
+/// resolves it before a real Integration is named.
+pub const AUTO_PROVIDER: &str = "auto";
+
 impl fmt::Display for ProviderKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -380,6 +387,17 @@ impl ProviderUsage {
             reset_at,
             reset_credits: None,
         }
+    }
+
+    /// The remaining allowance a ranking should trust: the authoritative
+    /// window's remaining percentage - collectors order windows
+    /// most-constrained first - or -1 when no window reported one.
+    pub fn effective_remaining(&self) -> f64 {
+        self.windows
+            .iter()
+            .filter_map(|window| window.remaining_percent)
+            .next()
+            .unwrap_or(-1.0)
     }
 }
 

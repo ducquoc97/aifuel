@@ -252,6 +252,11 @@ pub struct RunResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
     pub timed_out: bool,
+    /// The provider reported quota or rate-limit exhaustion for this run -
+    /// a depleted `quota.observed` fact or an HTTP exhaustion status, not
+    /// wording guesses. `aifuel run --provider auto` treats it as retriable
+    /// evidence: the next ranked Provider still has untested allowance.
+    pub quota_exhausted: bool,
     pub working_directory: PathBuf,
 }
 
