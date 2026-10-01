@@ -72,6 +72,9 @@ pub(crate) fn approval_request(
             .join("\n");
         format!("{}\n{questions}", request.description)
     };
+    // A protocol-level ask carries no provider-native method: record it
+    // absent rather than as "", which reads as a real method name.
+    let native_method = (!request.method.is_empty()).then(|| request.method.clone());
     match request.kind {
         AgentInteractionKind::OrdinaryInput => ApprovalRequest {
             kind: ApprovalKind::Question,
@@ -82,7 +85,7 @@ pub(crate) fn approval_request(
             interaction_kind: Some(request.kind),
             questions: request.questions.clone(),
             parameters: Some(request.parameters.clone()),
-            native_method: Some(request.method.clone()),
+            native_method,
         },
         AgentInteractionKind::McpElicitation => ApprovalRequest {
             kind: ApprovalKind::McpElicitation,
@@ -93,7 +96,7 @@ pub(crate) fn approval_request(
             interaction_kind: Some(request.kind),
             questions: request.questions.clone(),
             parameters: Some(request.parameters.clone()),
-            native_method: Some(request.method.clone()),
+            native_method,
         },
         AgentInteractionKind::CommandApproval | AgentInteractionKind::FileChangeApproval => {
             ApprovalRequest {
@@ -105,7 +108,7 @@ pub(crate) fn approval_request(
                 interaction_kind: Some(request.kind),
                 questions: request.questions.clone(),
                 parameters: Some(request.parameters.clone()),
-                native_method: Some(request.method.clone()),
+                native_method,
             }
         }
         AgentInteractionKind::PermissionProfileApproval => ApprovalRequest {
@@ -117,7 +120,7 @@ pub(crate) fn approval_request(
             interaction_kind: Some(request.kind),
             questions: request.questions.clone(),
             parameters: Some(request.parameters.clone()),
-            native_method: Some(request.method.clone()),
+            native_method,
         },
     }
 }
@@ -231,4 +234,49 @@ fn invalid_state(message: impl Into<String>) -> AgentRuntimeError {
 
 fn unsupported(message: impl Into<String>) -> AgentRuntimeError {
     AgentRuntimeError::unsupported(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(method: &str, kind: AgentInteractionKind) -> AgentInteractionRequest {
+        AgentInteractionRequest {
+            request_id: json!("req-1"),
+            method: method.to_owned(),
+            kind,
+            description: "answer this".to_owned(),
+            questions: Vec::new(),
+            parameters: json!({}),
+            requires_expanded_access: false,
+        }
+    }
+
+    /// A protocol-level ask has no provider-native method: the durable
+    /// `approval.requested` must record it absent, not as `""` which reads
+    /// as a real method name to hosts.
+    #[test]
+    fn an_empty_native_method_records_as_absent_on_approval_requests() {
+        for kind in [
+            AgentInteractionKind::OrdinaryInput,
+            AgentInteractionKind::McpElicitation,
+            AgentInteractionKind::CommandApproval,
+            AgentInteractionKind::FileChangeApproval,
+            AgentInteractionKind::PermissionProfileApproval,
+        ] {
+            let request = approval_request(&request("", kind), AccessMode::ReadOnly);
+            assert_eq!(request.native_method, None, "{kind:?}");
+        }
+        let named = approval_request(
+            &request(
+                "item/tool/requestUserInput",
+                AgentInteractionKind::OrdinaryInput,
+            ),
+            AccessMode::ReadOnly,
+        );
+        assert_eq!(
+            named.native_method.as_deref(),
+            Some("item/tool/requestUserInput")
+        );
+    }
 }
