@@ -97,11 +97,7 @@ where
 
 /// Parse the shared `--http/--host/--port` transport flags for the MCP
 /// servers. `None` selects the default stdio transport.
-fn mcp_transport_options(
-    command: &str,
-    args: &[String],
-    mut parse_flag: impl FnMut(&str, &[String], &mut usize) -> Result<bool, String>,
-) -> Result<Option<(String, u16)>, String> {
+fn mcp_transport_options(command: &str, args: &[String]) -> Result<Option<(String, u16)>, String> {
     let mut http = false;
     let mut host = "127.0.0.1".to_owned();
     let mut port = aifuel_mcp::MCP_HTTP_DEFAULT_PORT;
@@ -123,7 +119,6 @@ fn mcp_transport_options(
                     .and_then(|value| value.parse::<u16>().ok())
                     .ok_or_else(|| format!("Usage: {command} --http [--host <H>] [--port <P>]"))?;
             }
-            flag if parse_flag(flag, args, &mut index)? => {}
             flag => return Err(format!("unknown {command} flag {flag:?}")),
         }
         index += 1;
@@ -140,9 +135,7 @@ fn mcp_transport_options(
 /// Serve the read-only monitoring MCP over stdio, or over streamable HTTP
 /// when `--http` is passed.
 fn run_mcp_status(args: &[String]) -> Result<u8, String> {
-    let options = mcp_transport_options("aifuel mcp", args, |flag, _, _| {
-        Err(format!("unknown aifuel mcp flag {flag:?}"))
-    })?;
+    let options = mcp_transport_options("aifuel mcp", args)?;
     match options {
         Some((host, port)) => {
             aifuel_mcp::serve_http(aifuel::monitoring_facade()?, &host, port)?;
@@ -158,9 +151,7 @@ fn run_mcp_status(args: &[String]) -> Result<u8, String> {
 /// Serve the Agent Run MCP over stdio, or over streamable HTTP when `--http`
 /// is passed. HTTP sessions each own a dedicated `RunManager`.
 fn run_mcp_execution(args: &[String]) -> Result<u8, String> {
-    let options = mcp_transport_options("aifuel mcp execution", args, |flag, _, _| {
-        Err(format!("unknown aifuel mcp execution flag {flag:?}"))
-    })?;
+    let options = mcp_transport_options("aifuel mcp execution", args)?;
     let selection = aifuel_app::selection::SelectionStore::load(aifuel::execution_config_path()?)
         .map_err(|error| error.to_string())?;
     let catalog = aifuel::model_catalog_snapshot()?;
