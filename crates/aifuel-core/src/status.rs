@@ -267,8 +267,8 @@ impl StatusReport {
             CollectionOutcome::Failed
         };
         providers.sort_by(|left, right| {
-            let left_remaining = effective_remaining(left);
-            let right_remaining = effective_remaining(right);
+            let left_remaining = left.effective_remaining();
+            let right_remaining = right.effective_remaining();
             (left_remaining <= 0.0)
                 .cmp(&(right_remaining <= 0.0))
                 .then_with(|| {
@@ -409,15 +409,35 @@ impl StatusReport {
             discovery_errors,
         }
     }
-}
 
-fn effective_remaining(provider: &ProviderUsage) -> f64 {
-    provider
-        .windows
-        .iter()
-        .filter_map(|window| window.remaining_percent)
-        .next()
-        .unwrap_or(-1.0)
+    /// The Discovered Providers ranked for `aifuel run --provider auto`:
+    /// the most remaining allowance in the authoritative window first -
+    /// the same [`ProviderUsage::effective_remaining`] evidence the status
+    /// ordering reads - with the soonest window reset breaking ties.
+    /// Providers reporting no usable headroom, exhausted or unmeasured,
+    /// sort last in report order so the chain still reaches a provider
+    /// whose quota evidence failed to collect.
+    pub fn route_candidates(&self) -> Vec<ProviderKey> {
+        let mut ranked = self.providers.clone();
+        ranked.sort_by(|left, right| {
+            let left_remaining = left.effective_remaining();
+            let right_remaining = right.effective_remaining();
+            (left_remaining <= 0.0)
+                .cmp(&(right_remaining <= 0.0))
+                .then_with(|| {
+                    right_remaining
+                        .partial_cmp(&left_remaining)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| {
+                    left.reset_at
+                        .unwrap_or(f64::INFINITY)
+                        .partial_cmp(&right.reset_at.unwrap_or(f64::INFINITY))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        ranked.iter().map(|provider| provider.key).collect()
+    }
 }
 
 fn quota_pool_id(provider: &ProviderUsage) -> String {
@@ -426,4 +446,72 @@ fn quota_pool_id(provider: &ProviderUsage) -> String {
         provider.key,
         provider.account_id.as_deref().unwrap_or("unknown")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::QuotaWindow;
+
+    fn usage(key: ProviderKey, used_percent: f64, reset_at: Option<f64>) -> ProviderUsage {
+        ProviderUsage::success(
+            key,
+            vec![QuotaWindow::new(
+                "Current session",
+                "5h",
+                Some(used_percent),
+                None,
+                reset_at,
+            )],
+        )
+    }
+
+    #[test]
+    fn route_candidates_rank_by_headroom_then_soonest_reset() {
+        // The chain prefers the most remaining allowance in the
+        // authoritative window; equal headroom resets sooner first.
+        let report = StatusReport::from_usage(
+            0.0,
+            vec![
+                usage(ProviderKey::Claude, 10.0, Some(2000.0)),
+                usage(ProviderKey::Codex, 10.0, Some(1000.0)),
+                usage(ProviderKey::Gemini, 5.0, Some(3000.0)),
+                ProviderUsage::error(ProviderKey::Copilot, "no token"),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(
+            report.route_candidates(),
+            vec![
+                ProviderKey::Gemini,
+                ProviderKey::Codex,
+                ProviderKey::Claude,
+                ProviderKey::Copilot,
+            ]
+        );
+    }
+
+    #[test]
+    fn route_candidates_keep_exhausted_providers_after_measured_ones() {
+        // A provider at 0% sorts with the unmeasured tail instead of being
+        // dropped: collected evidence may be stale by the time the chain
+        // reaches it, and a launch error simply moves the chain on.
+        let report = StatusReport::from_usage(
+            0.0,
+            vec![
+                ProviderUsage::error(ProviderKey::Copilot, "no token"),
+                usage(ProviderKey::Claude, 100.0, Some(100.0)),
+                usage(ProviderKey::Codex, 50.0, None),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(
+            report.route_candidates(),
+            vec![
+                ProviderKey::Codex,
+                ProviderKey::Claude,
+                ProviderKey::Copilot
+            ]
+        );
+    }
 }

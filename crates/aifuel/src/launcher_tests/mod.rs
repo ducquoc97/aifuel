@@ -121,6 +121,7 @@ pub(super) fn streaming_result(request: &RunRequest) -> RunResult {
         diagnostics: None,
         timed_out: false,
         usage: None,
+        quota_exhausted: false,
         working_directory: std::env::temp_dir(),
     }
 }
