@@ -328,6 +328,7 @@ impl RuntimeExecutionAdapter {
             diagnostics: (!drain.diagnostics.is_empty()).then(|| drain.diagnostics.join("\n")),
             usage: drain.usage,
             timed_out: terminal.timed_out,
+            quota_exhausted: drain.quota_exhausted,
             working_directory: cwd,
         })
     }
