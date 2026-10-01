@@ -6,6 +6,30 @@ use crate::support::{
     seed_claude_authentication, seed_codex_authentication, seed_codex_token, start_json_fixture,
 };
 
+/// The environment variables the API-key integrations declare
+/// (`crates/aifuel-providers/src/integrations/builtin/api_keys.rs`). An
+/// inherited variable would make its integration an `auto` candidate, so
+/// tests scrub them all and set the ones they exercise.
+const API_KEY_ENV_VARS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "CEREBRAS_API_KEY",
+    "COHERE_API_KEY",
+    "DEEPINFRA_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "FIREWORKS_API_KEY",
+    "GROQ_API_KEY",
+    "MISTRAL_API_KEY",
+    "MOONSHOT_API_KEY",
+    "NVIDIA_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "PERPLEXITY_API_KEY",
+    "SILICONFLOW_API_KEY",
+    "TOGETHER_API_KEY",
+    "XAI_API_KEY",
+    "ZAI_API_KEY",
+];
+
 fn aifuel(directory: &TestDirectory) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aifuel"));
     command
@@ -14,6 +38,9 @@ fn aifuel(directory: &TestDirectory) -> Command {
         .env("USERPROFILE", directory.path())
         .env("APPDATA", directory.path())
         .env("XDG_CONFIG_HOME", directory.path().join(".config"));
+    for var in API_KEY_ENV_VARS {
+        command.env_remove(var);
+    }
     command
 }
 
@@ -240,7 +267,20 @@ fn auto_run_falls_back_to_the_next_ranked_provider_on_a_launch_error() {
     assert_eq!(value["routing"]["selected"], "codex");
     assert_eq!(
         value["routing"]["candidates"],
-        serde_json::json!(["claude", "codex"])
+        serde_json::json!([
+            {
+                "provider": "claude",
+                "integration": "claude",
+                "basis": "quota",
+                "remaining_percent": 90.0,
+            },
+            {
+                "provider": "codex",
+                "integration": "codex",
+                "basis": "quota",
+                "remaining_percent": 60.0,
+            },
+        ])
     );
     let attempts = value["routing"]["attempts"]
         .as_array()
@@ -537,6 +577,13 @@ fn auto_resume_runs_on_the_session_owning_provider() {
     assert_eq!(value["routing"]["requested"], "auto");
     assert_eq!(value["routing"]["selected"], "codex");
     assert_eq!(value["routing"]["resumed"], true);
+    assert_eq!(
+        value["routing"]["candidates"],
+        serde_json::json!([
+            {"provider": "codex", "integration": "codex", "basis": "session"}
+        ]),
+        "a resumed run is pinned, not ranked: {stdout}"
+    );
     let attempts = value["routing"]["attempts"]
         .as_array()
         .expect("routing attempts should be an array");
@@ -605,7 +652,9 @@ fn auto_run_model_filter_keeps_only_advertising_providers() {
     assert_eq!(value["provider"], "codex");
     assert_eq!(
         value["routing"]["candidates"],
-        serde_json::json!(["codex"]),
+        serde_json::json!([
+            {"provider": "codex", "integration": "codex", "basis": "quota"}
+        ]),
         "only Codex advertises fixture-model: {stdout}"
     );
     let attempts = value["routing"]["attempts"]
@@ -635,5 +684,149 @@ fn auto_run_reports_when_no_provider_is_discovered() {
     assert!(
         String::from_utf8_lossy(&output.stdout).is_empty(),
         "nothing ran, so stdout stays empty"
+    );
+}
+
+/// A keyed API-key integration is a valid `auto` candidate on credential
+/// evidence alone - a Groq key works without any subscription. The
+/// routing report explains each candidate's basis: measured quota
+/// headroom first, then keyed API-key integrations with a documented
+/// free tier ahead of paid keys. Here Claude's launch error moves the
+/// chain to Codex, so the Groq and xAI candidates are ranked but never
+/// attempted.
+#[test]
+fn auto_run_ranks_keyed_api_key_integrations_after_quota_headroom() {
+    let directory = TestDirectory::new("auto-api-key-ranking");
+    let log_path = install_fake_codex_app_server(directory.path());
+    seed_codex_token(directory.path());
+    seed_claude_authentication(directory.path());
+    let (claude_url, claude_server) = start_json_fixture(
+        r#"{"five_hour":{"remaining_percentage":90,"resets_at":"2030-01-01T00:00:00Z"}}"#,
+        1,
+    );
+    let (codex_url, codex_server) = start_json_fixture(
+        r#"{"rate_limit":{"primary_window":{"limit_window_seconds":18000,"used_percent":40,"reset_at":4102444800}}}"#,
+        1,
+    );
+
+    let output = aifuel(&directory)
+        .args([
+            "run",
+            "--provider",
+            "auto",
+            "--prompt",
+            "hello",
+            "--output",
+            "json",
+        ])
+        .env("AIFUEL_CLAUDE_USAGE_URL", &claude_url)
+        .env("AIFUEL_CODEX_USAGE_URL", &codex_url)
+        .env("AIFUEL_CODEX_FIXTURE_LOG", &log_path)
+        .env("GROQ_API_KEY", "gsk-fake")
+        .env("XAI_API_KEY", "xai-fake")
+        .output()
+        .expect("aifuel should start");
+    claude_server.join().expect("claude fixture should answer");
+    codex_server.join().expect("codex fixture should answer");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("auto run should emit JSON");
+    assert_eq!(
+        value["routing"]["candidates"],
+        serde_json::json!([
+            {
+                "provider": "claude",
+                "integration": "claude",
+                "basis": "quota",
+                "remaining_percent": 90.0,
+            },
+            {
+                "provider": "codex",
+                "integration": "codex",
+                "basis": "quota",
+                "remaining_percent": 60.0,
+            },
+            {
+                "provider": "groq",
+                "integration": "groq:api-key",
+                "basis": "free_tier",
+            },
+            {
+                "provider": "xai",
+                "integration": "xai:api-key",
+                "basis": "api_key",
+            },
+        ]),
+        "{stdout}"
+    );
+    // The chain settled on subscription headroom first: the keyed
+    // integrations were candidates but never reached.
+    let attempts = value["routing"]["attempts"]
+        .as_array()
+        .expect("routing attempts should be an array");
+    assert_eq!(attempts.len(), 2, "{stdout}");
+    assert_eq!(attempts[0]["provider"], "claude");
+    assert_eq!(attempts[0]["outcome"], "launch_error");
+    assert_eq!(attempts[1]["provider"], "codex");
+    assert_eq!(attempts[1]["outcome"], "succeeded");
+}
+
+/// A Groq key alone makes `auto` work: with no subscription markers the
+/// integration's credential is still candidacy evidence, and the chain
+/// tries it. The request carries no model, so the attempt reports the
+/// endpoint's model requirement instead of guessing one.
+#[test]
+fn auto_run_attempts_a_keyed_api_key_integration_without_subscriptions() {
+    let directory = TestDirectory::new("auto-api-key-only");
+    let output = aifuel(&directory)
+        .args([
+            "run",
+            "--provider",
+            "auto",
+            "--prompt",
+            "hello",
+            "--output",
+            "json",
+        ])
+        .env("GROQ_API_KEY", "gsk-fake")
+        .output()
+        .expect("aifuel should start");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr} {stdout}");
+    assert!(
+        stderr.contains("auto selected groq"),
+        "the keyed integration should be the selected candidate: {stderr}"
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("an exhausted chain still emits JSON");
+    assert!(value["error"].is_string(), "{stdout}");
+    assert_eq!(
+        value["routing"]["candidates"],
+        serde_json::json!([
+            {
+                "provider": "groq",
+                "integration": "groq:api-key",
+                "basis": "free_tier",
+            }
+        ]),
+        "{stdout}"
+    );
+    let attempts = value["routing"]["attempts"]
+        .as_array()
+        .expect("routing attempts should be an array");
+    assert_eq!(attempts.len(), 1, "{stdout}");
+    assert_eq!(attempts[0]["provider"], "groq");
+    assert_eq!(attempts[0]["integration"], "groq:api-key");
+    assert_eq!(attempts[0]["outcome"], "launch_error");
+    assert!(
+        attempts[0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("requires a model")),
+        "the attempt should explain why it could not launch: {stdout}"
     );
 }

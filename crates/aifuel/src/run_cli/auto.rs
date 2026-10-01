@@ -8,18 +8,79 @@
 //! provider - a timeout or an ordinary mid-run failure - ends the chain,
 //! and a resumed session is pinned to its owning Provider so `auto` never
 //! falls back away from it.
+//!
+//! API-key integrations join the chain too: one whose credential is
+//! present - a declared environment variable or a stored managed
+//! credential - is a valid candidate even when it carries no quota
+//! evidence. They rank between the headroom-positive quota providers and
+//! the no-headroom tail, and a provider whose catalog entry documents a
+//! free tier outranks a paid key.
 
 use super::{ParsedRunRequest, render_run_result_with_sources};
 use crate::launcher;
-use aifuel_core::{IntegrationId, ManagedRunResult, ProviderId, ProviderKey, RunState, RunStatus};
+use aifuel_core::{
+    ApiKeySource, AuthBinding, ExecutionConfig, IntegrationId, ManagedRunResult, ProviderId,
+    ProviderKey, RunState, RunStatus,
+};
 use std::collections::BTreeSet;
 
-/// One ranked Discovered Provider plus the Integration Identity its
-/// attempt binds - the first registered integration for the provider, in
-/// deterministic registry order (built-ins precede configured entries).
+/// The evidence a chain candidate's position rests on, reported on the
+/// `routing` object so the ranking is explainable rather than positional.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteBasis {
+    /// Ranked by a quota observation - `remaining_percent` records the
+    /// measured headroom (absent when collection reported nothing).
+    Quota,
+    /// A keyed API-key integration whose catalog provider documents a
+    /// free tier.
+    FreeTier,
+    /// A keyed API-key integration with no documented free tier.
+    ApiKey,
+}
+
+impl RouteBasis {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Quota => "quota",
+            Self::FreeTier => "free_tier",
+            Self::ApiKey => "api_key",
+        }
+    }
+}
+
+/// One ranked chain entry: the Provider its attempt reports, the
+/// Integration Identity it binds, and the basis that placed it.
 struct RouteCandidate {
-    provider: ProviderKey,
+    provider: ProviderId,
     integration: IntegrationId,
+    basis: RouteBasis,
+    /// The measured remaining-allowance percent a `quota` candidate
+    /// ranked on; `None` for unmeasured quota providers and for
+    /// credential-ranked candidates.
+    remaining_percent: Option<f64>,
+}
+
+/// One chain candidate as emitted on the `routing` object: provider and
+/// integration plus the rank basis (`quota`, `free_tier`, `api_key`, or
+/// `session` when a resume pins the session's owner without ranking).
+#[derive(Debug, serde::Serialize)]
+pub(super) struct RouteCandidateReport {
+    provider: String,
+    integration: String,
+    basis: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remaining_percent: Option<f64>,
+}
+
+impl From<&RouteCandidate> for RouteCandidateReport {
+    fn from(candidate: &RouteCandidate) -> Self {
+        Self {
+            provider: candidate.provider.as_str().to_owned(),
+            integration: candidate.integration.as_str().to_owned(),
+            basis: candidate.basis.as_str(),
+            remaining_percent: candidate.remaining_percent,
+        }
+    }
 }
 
 /// How one attempt in the chain ended, recorded on the result's `routing`
@@ -38,14 +99,14 @@ pub(super) struct RouteAttempt {
 /// The routing decision a `run --provider auto` invocation made, emitted
 /// as `routing` on structured output. `selected` names the Provider whose
 /// attempt produced the reported outcome; `candidates` is the ranked list
-/// the chain was allowed to try.
+/// the chain was allowed to try, each with the basis that placed it.
 #[derive(Debug, Default, serde::Serialize)]
 pub(super) struct RouteReport {
     pub requested: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub candidates: Vec<String>,
+    pub candidates: Vec<RouteCandidateReport>,
     pub resumed: bool,
     #[serde(default)]
     pub attempts: Vec<RouteAttempt>,
@@ -83,23 +144,25 @@ pub(super) fn run(selected: &ParsedRunRequest) -> Result<u8, String> {
         request.integration = stored.integration.clone();
         report.resumed = true;
         report.selected = Some(stored.provider.as_str().to_owned());
-        report.candidates = vec![stored.provider.as_str().to_owned()];
+        report.candidates = vec![RouteCandidateReport {
+            provider: stored.provider.as_str().to_owned(),
+            integration: stored.integration.as_str().to_owned(),
+            basis: "session",
+            remaining_percent: None,
+        }];
         eprintln!("aifuel: auto resolved the session to {}", stored.provider);
         return finish(launcher::execute(&request), &request, selected, &mut report);
     }
 
     let candidates = provider_candidates(request.model.as_deref())?;
-    report.candidates = candidates
-        .iter()
-        .map(|candidate| candidate.provider.as_str().to_owned())
-        .collect();
+    report.candidates = candidates.iter().map(RouteCandidateReport::from).collect();
     if candidates.is_empty() {
         return Err(match request.model.as_deref() {
             Some(model) => format!(
                 "'auto' found no Discovered Provider advertising model {model:?}; refresh evidence with `aifuel model refresh` or select a provider explicitly"
             ),
             None => {
-                "'auto' found no Discovered Provider; `aifuel status` shows which credential sources are present"
+                "'auto' found no Discovered Provider or keyed API-key integration; `aifuel status` shows which credential sources are present and `aifuel auth list` shows integration credentials"
                     .to_owned()
             }
         });
@@ -243,33 +306,155 @@ fn finish(
     }
 }
 
-/// The Discovered Providers ranked for routing, each bound to its first
-/// registered Integration. `--model` keeps only providers whose cached
-/// model catalog advertises the model.
+/// The routing chain for `auto`, ordered by the evidence each candidate
+/// rests on:
+///
+/// 1. Discovered Providers whose quota observation reports positive
+///    headroom, in `StatusReport::route_candidates` order.
+/// 2. API-key integrations whose credential is present - the declared
+///    environment variable set, or a managed credential (or pool member)
+///    stored - ranked catalog order, providers with a documented free
+///    tier ahead of paid keys.
+/// 3. Discovered Providers with no usable headroom (exhausted or
+///    unmeasured quota evidence) last; stale evidence may still resolve
+///    to a working run.
+///
+/// `--model` keeps only providers whose cached model catalog advertises
+/// the model - API-key candidates carry no catalog advertisement, so a
+/// model filter narrows to the quota-ranked catalog providers.
 fn provider_candidates(model: Option<&str>) -> Result<Vec<RouteCandidate>, String> {
     let facade = crate::monitoring_facade()?;
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("could not start the status collection runtime: {error}"))?;
     let report = runtime.block_on(facade.status(false));
-    let mut ranked = report.route_candidates();
+    let registry = crate::integration_registry()?;
+    let credentials = aifuel_providers::CredentialStore::new(crate::aifuel_config_dir()?);
+    // A store that cannot be read suppresses every store-backed binding at
+    // once; surface that once instead of silently narrowing the chain to
+    // environment-provided keys.
+    if let Err(error) = credentials.list() {
+        eprintln!(
+            "aifuel: could not read the credential store ({error}); only environment-provided API keys can be `auto` candidates"
+        );
+    }
+
+    // `route_candidates` already orders headroom-positive providers ahead
+    // of the no-headroom tail; the measured remaining percentage re-exposes
+    // that boundary so keyed integrations can slot between the two groups.
+    let remaining_of = |key: ProviderKey| {
+        report
+            .providers
+            .iter()
+            .find(|usage| usage.key == key)
+            .map(|usage| usage.effective_remaining())
+            .filter(|remaining| *remaining >= 0.0)
+    };
+    let (measured, depleted): (Vec<ProviderKey>, Vec<ProviderKey>) = report
+        .route_candidates()
+        .into_iter()
+        .partition(|key| remaining_of(*key).is_some_and(|remaining| remaining > 0.0));
+
+    let mut candidates: Vec<RouteCandidate> = Vec::new();
+    candidates.extend(
+        measured
+            .into_iter()
+            .filter_map(|key| bind_provider(&registry, key, remaining_of(key))),
+    );
+    let (free_tier, paid): (Vec<RouteCandidate>, Vec<RouteCandidate>) = registry
+        .list()
+        .filter_map(|descriptor| keyed_api_key(descriptor, &credentials))
+        .partition(|candidate| candidate.basis == RouteBasis::FreeTier);
+    candidates.extend(free_tier);
+    candidates.extend(paid);
+    candidates.extend(
+        depleted
+            .into_iter()
+            .filter_map(|key| bind_provider(&registry, key, remaining_of(key))),
+    );
+
     if let Some(model) = model {
         let advertised = advertised_providers(model)?;
-        ranked.retain(|provider| advertised.contains(provider));
+        candidates.retain(|candidate| {
+            candidate
+                .provider
+                .as_str()
+                .parse::<ProviderKey>()
+                .is_ok_and(|key| advertised.contains(&key))
+        });
     }
-    let registry = crate::integration_registry()?;
-    Ok(ranked
-        .into_iter()
-        .filter_map(|provider| {
-            let provider_id = ProviderId::from(provider);
-            registry
-                .list()
-                .find(|descriptor| *descriptor.provider() == provider_id)
-                .map(|descriptor| RouteCandidate {
-                    provider,
-                    integration: descriptor.id().clone(),
-                })
+    Ok(candidates)
+}
+
+/// Bind a quota-ranked Provider to its first registered Integration, in
+/// deterministic registry order (built-ins precede configured entries).
+fn bind_provider(
+    registry: &aifuel_providers::IntegrationRegistry,
+    key: ProviderKey,
+    remaining_percent: Option<f64>,
+) -> Option<RouteCandidate> {
+    let provider = ProviderId::from(key);
+    registry
+        .list()
+        .find(|descriptor| *descriptor.provider() == provider)
+        .map(|descriptor| RouteCandidate {
+            provider,
+            integration: descriptor.id().clone(),
+            basis: RouteBasis::Quota,
+            remaining_percent,
         })
-        .collect())
+}
+
+/// A registered API-key integration whose credential is present is a
+/// candidate on credential evidence alone: it has no quota observation,
+/// but its key can run. The basis is `free_tier` when the catalog
+/// documents a free allowance for the provider, else `api_key`.
+fn keyed_api_key(
+    descriptor: &aifuel_providers::IntegrationDescriptor,
+    credentials: &aifuel_providers::CredentialStore,
+) -> Option<RouteCandidate> {
+    let ExecutionConfig::Http {
+        auth: AuthBinding::ApiKey { source, .. },
+        ..
+    } = &descriptor.integration.execution
+    else {
+        return None;
+    };
+    if !credential_present(source, credentials) {
+        return None;
+    }
+    let basis = if aifuel_providers::free_tier_note(descriptor.provider().as_str()).is_some() {
+        RouteBasis::FreeTier
+    } else {
+        RouteBasis::ApiKey
+    };
+    Some(RouteCandidate {
+        provider: descriptor.integration.provider.clone(),
+        integration: descriptor.integration.id.clone(),
+        basis,
+        remaining_percent: None,
+    })
+}
+
+/// Whether an API-key source resolves to present material without reading
+/// it - the declared environment variable is set, or a managed credential
+/// (or any pool member under its Credential Reference) is stored. Mirrors
+/// the evidence check `EvidenceSource::EnvVar`/`ManagedEntry` performs for
+/// discovery: presence only, never content, and store errors read as
+/// absent (the caller surfaces an unreadable store once).
+fn credential_present(
+    source: &ApiKeySource,
+    credentials: &aifuel_providers::CredentialStore,
+) -> bool {
+    let stored = |credential: &aifuel_core::CredentialRef| {
+        credentials.contains_credential(credential).unwrap_or(false)
+    };
+    match source {
+        ApiKeySource::Env { var } => aifuel_providers::env_override(var).is_some(),
+        ApiKeySource::Store { credential } => stored(credential),
+        ApiKeySource::EnvOrStore { var, credential } => {
+            aifuel_providers::env_override(var).is_some() || stored(credential)
+        }
+    }
 }
 
 /// Providers whose cached model catalog advertises `model`: the catalog
@@ -503,5 +688,131 @@ mod tests {
             "the provider exited with exit code 1"
         ));
         assert!(!provider_quota_wording("authentication failed"));
+    }
+
+    fn test_store(name: &str) -> (std::path::PathBuf, aifuel_providers::CredentialStore) {
+        let dir =
+            std::env::temp_dir().join(format!("aifuel-auto-test-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("test dir should be creatable");
+        let store = aifuel_providers::CredentialStore::new(&dir);
+        (dir, store)
+    }
+
+    fn api_key_descriptor(
+        provider: &str,
+        source: ApiKeySource,
+    ) -> aifuel_providers::IntegrationDescriptor {
+        aifuel_providers::IntegrationDescriptor::builtin(
+            aifuel_core::Integration {
+                id: IntegrationId::new(format!("{provider}:api-key")),
+                provider: ProviderId::new(provider),
+                name: provider.to_owned(),
+                execution: ExecutionConfig::Http {
+                    endpoint: aifuel_core::EndpointConfig {
+                        base_url: "https://endpoint.test".to_owned(),
+                        extra_headers: std::collections::BTreeMap::new(),
+                        request_timeout_seconds: None,
+                    },
+                    protocol: aifuel_core::WireApi::OpenAiChat,
+                    auth: AuthBinding::ApiKey {
+                        source,
+                        delivery: aifuel_core::KeyDelivery::Bearer,
+                    },
+                },
+                monitoring: None,
+            },
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn credential_presence_is_metadata_only_over_env_and_store() {
+        // Candidacy mirrors the discovery evidence: a set env var or a
+        // stored Managed Credential - including a pool member under the
+        // bound Credential Reference - counts; nothing reads key material.
+        let (dir, store) = test_store("presence");
+        let reference = aifuel_core::CredentialRef::new("test:api-key");
+        let source = ApiKeySource::EnvOrStore {
+            var: "AIFUEL_TEST_CANDIDATE_KEY".to_owned(),
+            credential: reference.clone(),
+        };
+
+        unsafe { std::env::remove_var("AIFUEL_TEST_CANDIDATE_KEY") };
+        assert!(!credential_present(&source, &store));
+
+        unsafe { std::env::set_var("AIFUEL_TEST_CANDIDATE_KEY", "sk-test") };
+        assert!(credential_present(&source, &store));
+        unsafe { std::env::remove_var("AIFUEL_TEST_CANDIDATE_KEY") };
+
+        store
+            .set_api_key(&reference, "sk-stored")
+            .expect("store should accept the key");
+        assert!(credential_present(&source, &store));
+
+        // A pool member alone - no root credential - still reads as a
+        // present credential, matching `contains_credential`.
+        let pooled = aifuel_core::CredentialRef::new("test:pooled-key");
+        store
+            .set_api_key(
+                &aifuel_core::CredentialRef::new("test:pooled-key/2"),
+                "sk-2",
+            )
+            .expect("store should accept the pool member");
+        assert!(credential_present(
+            &ApiKeySource::Store { credential: pooled },
+            &store
+        ));
+
+        std::fs::remove_dir_all(&dir).expect("test dir should be removable");
+    }
+
+    #[test]
+    fn keyed_api_key_basis_follows_the_catalog_free_tier() {
+        // A documented free tier outranks a paid key because free headroom
+        // beats a billed call; an unkeyed integration is no candidate.
+        let (dir, store) = test_store("basis");
+        unsafe {
+            std::env::set_var("AIFUEL_TEST_BASIS_KEY", "sk-test");
+        }
+        let source = || ApiKeySource::Env {
+            var: "AIFUEL_TEST_BASIS_KEY".to_owned(),
+        };
+
+        let groq = keyed_api_key(&api_key_descriptor("groq", source()), &store)
+            .expect("a keyed integration is a candidate");
+        assert_eq!(groq.basis, RouteBasis::FreeTier);
+        assert_eq!(groq.provider.as_str(), "groq");
+        assert_eq!(groq.integration.as_str(), "groq:api-key");
+
+        let paid = keyed_api_key(&api_key_descriptor("xai", source()), &store)
+            .expect("a keyed integration is a candidate");
+        assert_eq!(paid.basis, RouteBasis::ApiKey);
+
+        unsafe {
+            std::env::remove_var("AIFUEL_TEST_BASIS_KEY");
+        }
+        assert!(keyed_api_key(&api_key_descriptor("groq", source()), &store).is_none());
+        std::fs::remove_dir_all(&dir).expect("test dir should be removable");
+    }
+
+    #[test]
+    fn non_api_key_integrations_are_not_credential_candidates() {
+        // CLI integrations keep their quota/discovery candidacy; a binding
+        // without an API key never enters the credential tier.
+        let (_dir, store) = test_store("non-api-key");
+        let cli = aifuel_providers::IntegrationDescriptor::builtin(
+            aifuel_core::Integration {
+                id: IntegrationId::new("codex"),
+                provider: ProviderId::new("codex"),
+                name: "codex".to_owned(),
+                execution: ExecutionConfig::Cli {
+                    adapter: aifuel_core::CliAdapterId::new("codex"),
+                },
+                monitoring: None,
+            },
+            Vec::new(),
+        );
+        assert!(keyed_api_key(&cli, &store).is_none());
+        std::fs::remove_dir_all(&_dir).expect("test dir should be removable");
     }
 }

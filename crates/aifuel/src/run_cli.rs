@@ -416,7 +416,10 @@ fn print_run_help() {
         "  --integration|--provider ID           target integration or provider; `auto` is reserved:"
     );
     println!(
-        "                                        rank the Discovered Providers by quota headroom"
+        "                                        rank the Discovered Providers by quota headroom,"
+    );
+    println!(
+        "                                        then keyed API-key integrations (free tier first),"
     );
     println!("                                        and fall back on failures before execution");
     println!("  --prompt TEXT                         prompt text");
