@@ -42,6 +42,7 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | `aifuel --text` | Compact **colored terminal** summary (great over SSH) |
 | `aifuel --json` | **Normalized JSON** for scripts, status bars, and piping |
 | `aifuel run --provider ID --prompt "..."` | One explicit prompt through an installed provider CLI |
+| `aifuel run --provider auto --prompt "..."` | Route the prompt to the discovered provider with the most quota headroom |
 | `aifuel profile list\|save\|remove` | Named defaults for `run` (provider, model, effort, access, timeout) |
 | `aifuel model list\|refresh` | Cached provider model catalog, refreshed on demand |
 | `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations |
@@ -86,6 +87,8 @@ Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex
 - `--external-tool NAME` - allow one exact gateway tool (repeatable)
 - `--output text|json|jsonl` - result format (default: text)
 - `--timeout 30s|10m|1h` - optional deadline; `0` means none
+
+`--provider auto` is a reserved routing alias, never a literal provider id: `auto` ranks the discovered providers by the same quota evidence `aifuel status` shows (most remaining allowance first, soonest reset breaks ties), runs the prompt on the best one, and starts a new run on the next provider only when the previous attempt failed before execution - a missing integration, a launch/request error, or provider-reported quota exhaustion. A timeout or a mid-run failure ends the chain. `--model` narrows the candidates to providers whose cached catalog advertises that model, and `--resume` pins `auto` to the session's owning provider without fallback. The `json`/`jsonl` result carries a `routing` object listing the ranked candidates and every attempt's provider, outcome, and reason.
 
 Exit codes: `0` succeeded, `2` request or launch error, `3` provider has no verified agent integration, `4` run failed, `5` timed out.
 
