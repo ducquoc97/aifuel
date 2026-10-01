@@ -1,6 +1,7 @@
 //! Connection-owned Agent Runs. This endpoint never grants permissions.
 
 mod catalog;
+pub mod http;
 mod tools;
 
 use self::catalog::list_models;
@@ -45,16 +46,26 @@ pub fn serve_with_selection_and_catalog_refresh<F>(
 where
     F: Fn(Option<ProviderKey>) -> Result<Vec<Value>, String>,
 {
-    let mut catalog = catalog;
-    let result = serve_connection(&manager, &selection, &mut catalog, &refresh_catalog);
+    let mut connection = ConnectionState {
+        initialized: false,
+        catalog,
+    };
+    let result = serve_connection(&manager, &selection, &mut connection, &refresh_catalog);
     manager.shutdown();
     result
+}
+
+/// Mutable state carried by one client connection: the initialize gate and
+/// the session's cached model catalog.
+pub(crate) struct ConnectionState {
+    initialized: bool,
+    catalog: Vec<Value>,
 }
 
 fn serve_connection<F>(
     manager: &RunManager,
     selection: &GlobalSelectionConfig,
-    catalog: &mut Vec<Value>,
+    connection: &mut ConnectionState,
     refresh_catalog: &F,
 ) -> Result<(), String>
 where
@@ -63,7 +74,6 @@ where
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut output = io::BufWriter::new(io::stdout().lock());
-    let mut initialized = false;
     loop {
         let mut frame = Vec::new();
         let count = input
@@ -87,61 +97,75 @@ where
                 continue;
             }
         };
-        let Some(id) = request.get("id").cloned() else {
-            continue;
-        };
-        if request["jsonrpc"] != "2.0" || !(id.is_string() || id.is_number() || id.is_null()) {
-            write_response(
-                &mut output,
-                &rpc_error(Value::Null, -32600, "invalid request"),
-            )?;
-            continue;
+        if let Some(response) = respond(manager, selection, connection, refresh_catalog, &request) {
+            write_response(&mut output, &response)?;
         }
-        let response = match request["method"].as_str() {
-            Some("initialize") if !initialized => {
-                let version = request["params"]["protocolVersion"].as_str().unwrap_or("");
-                if !matches!(
-                    version,
-                    "2024-11-05" | "2025-03-26" | "2025-06-18" | "2025-11-25"
-                ) {
-                    rpc_error(id, -32602, "unsupported protocol version")
-                } else {
-                    initialized = true;
-                    json!({"jsonrpc":"2.0","id":id,"result":{
-                        "protocolVersion":version,"capabilities":{"tools":{}},
-                        "serverInfo":{"name":"aifuel-execution","version":env!("CARGO_PKG_VERSION")}
-                    }})
-                }
-            }
-            Some("ping") => json!({"jsonrpc":"2.0","id":id,"result":{}}),
-            _ if !initialized => rpc_error(id, -32002, "initialize first"),
-            Some("tools/list") => {
-                json!({"jsonrpc":"2.0","id":id,"result":{"tools":tool_definitions()}})
-            }
-            Some("tools/call") => {
-                let result = call(
-                    manager,
-                    selection,
-                    &request["params"],
-                    catalog,
-                    refresh_catalog,
-                );
-                let (value, is_error) = match result {
-                    Ok(value) => (value, false),
-                    Err(error) => (
-                        serde_json::to_value(error).expect("execution error serializes"),
-                        true,
-                    ),
-                };
+    }
+}
+
+/// Apply the stdio connection semantics to one parsed message: notifications
+/// are ignored, and requests answer the initialize gate, `ping`,
+/// `tools/list`, and `tools/call`. Shared with the HTTP session.
+pub(crate) fn respond<F>(
+    manager: &RunManager,
+    selection: &GlobalSelectionConfig,
+    connection: &mut ConnectionState,
+    refresh_catalog: &F,
+    request: &Value,
+) -> Option<Value>
+where
+    F: Fn(Option<ProviderKey>) -> Result<Vec<Value>, String>,
+{
+    let Some(id) = request.get("id").cloned() else {
+        return None;
+    };
+    if request["jsonrpc"] != "2.0" || !(id.is_string() || id.is_number() || id.is_null()) {
+        return Some(rpc_error(Value::Null, -32600, "invalid request"));
+    }
+    let response = match request["method"].as_str() {
+        Some("initialize") if !connection.initialized => {
+            let version = request["params"]["protocolVersion"].as_str().unwrap_or("");
+            if !matches!(
+                version,
+                "2024-11-05" | "2025-03-26" | "2025-06-18" | "2025-11-25"
+            ) {
+                rpc_error(id, -32602, "unsupported protocol version")
+            } else {
+                connection.initialized = true;
                 json!({"jsonrpc":"2.0","id":id,"result":{
-                    "content":[{"type":"text","text":value.to_string()}],
-                    "structuredContent":value,"isError":is_error
+                    "protocolVersion":version,"capabilities":{"tools":{}},
+                    "serverInfo":{"name":"aifuel-execution","version":env!("CARGO_PKG_VERSION")}
                 }})
             }
-            _ => rpc_error(id, -32601, "method not found"),
-        };
-        write_response(&mut output, &response)?;
-    }
+        }
+        Some("ping") => json!({"jsonrpc":"2.0","id":id,"result":{}}),
+        _ if !connection.initialized => rpc_error(id, -32002, "initialize first"),
+        Some("tools/list") => {
+            json!({"jsonrpc":"2.0","id":id,"result":{"tools":tool_definitions()}})
+        }
+        Some("tools/call") => {
+            let result = call(
+                manager,
+                selection,
+                &request["params"],
+                &mut connection.catalog,
+                refresh_catalog,
+            );
+            let (value, is_error) = match result {
+                Ok(value) => (value, false),
+                Err(error) => (
+                    serde_json::to_value(error).expect("execution error serializes"),
+                    true,
+                ),
+            };
+            json!({"jsonrpc":"2.0","id":id,"result":{
+                "content":[{"type":"text","text":value.to_string()}],
+                "structuredContent":value,"isError":is_error
+            }})
+        }
+        _ => rpc_error(id, -32601, "method not found"),
+    };
+    Some(response)
 }
 
 fn write_response(output: &mut impl Write, response: &Value) -> Result<(), String> {
