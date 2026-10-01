@@ -37,19 +37,21 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 
 | Command | What you get |
 |---|---|
-| `aifuel` | Auto-refreshing **web dashboard** at `http://127.0.0.1:8787` (opens a browser) |
+| `aifuel` | **Web dashboard** at `http://127.0.0.1:8787` (opens a browser; optional auto-refresh) |
 | `aifuel --no-browser` | Dashboard without opening a browser; `--host`/`--port` change the bind |
 | `aifuel --text` | Compact **colored terminal** summary (great over SSH) |
 | `aifuel --json` | **Normalized JSON** for scripts, status bars, and piping |
 | `aifuel run --provider ID --prompt "..."` | One explicit prompt through an installed provider CLI |
 | `aifuel profile list\|save\|remove` | Named defaults for `run` (provider, model, effort, access, timeout) |
 | `aifuel model list\|refresh` | Cached provider model catalog, refreshed on demand |
+| `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations |
 | `aifuel approve --run ID --input ID --decision accept\|decline\|cancel` | Answer a pending permission request for a local run |
 | `aifuel mcp` | Read-only MCP status server over stdio |
 | `aifuel mcp execution` | MCP server that manages Agent Runs over stdio |
 | `aifuel mcp gateway --agent HOST` | Selected external MCP servers, served to one agent |
 | `aifuel mcp setup --agent HOST [--dry-run] [--remove]` | Apply or remove the gateway entry in an agent's own config |
 | `aifuel mcp servers ...` | Manage the gateway's external server catalog |
+| `aifuel runtime` | JSON-RPC stdio bridge for embedding agent runs in a host process |
 
 `--json` is a stable structured feed - it drops cleanly into a tmux / polybar / Sketchybar / starship status line.
 
@@ -72,13 +74,13 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 aifuel run --provider codex --model gpt-5-codex --prompt "Explain Rust ownership"
 ```
 
-Provider IDs: `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`. Options:
+Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, `openai:api-key`, `openrouter:api-key`. Options:
 
 - `--prompt TEXT` / `--prompt-file PATH` - or omit both to pipe the prompt on stdin
 - `--model ID` / `--effort LEVEL` - explicit model and effort
 - `--profile NAME` - apply a saved profile (`aifuel profile save NAME --provider ID --model ID [--effort LEVEL] [--access MODE] [--timeout SECONDS]`)
 - `--account ID` - explicit account
-- `--access read-only|workspace-write` - permission profile (default: read-only)
+- `--access read-only|workspace-write|full` - permission profile (default: read-only)
 - `--working-directory PATH` (or `--cwd`) - project directory for the run
 - `--resume SESSION_ID` - continue a known session; explicit `--model`/`--effort` override stored values
 - `--external-tool NAME` - allow one exact gateway tool (repeatable)
@@ -132,7 +134,7 @@ aifuel mcp servers add SERVER_ID --definition FILE | remove SERVER_ID
 aifuel mcp servers select --defaults [SERVER_ID ...] | --agent HOST [SERVER_ID ...] | --agent HOST --inherit
 ```
 
-Trust rules: remote endpoints must use HTTPS (plain HTTP only on loopback) and speak MCP 2025-11-25. `bearerTokenEnv` and `secretHeaders` name environment variables only - values resolve once at startup, are sent only to the configured endpoint, and are never written to `mcp.json` or logs. Redirects are rejected, so configure the final URL. For stdio servers, `env` sets literals and `envFrom` names variables read at startup; children get a small platform allowlist plus what you configure.
+Trust rules: remote endpoints must use HTTPS (plain HTTP only on loopback) and speak MCP 2025-11-25. `bearerTokenEnv` and `secretHeaders` name environment variables only - values resolve once at startup (a missing or empty value fails that server), are sent only to the configured endpoint, and are never written to `mcp.json` or logs. Redirects are rejected, so configure the final URL. For stdio servers, `env` sets literals and `envFrom` names variables read at startup; children get a small platform allowlist plus what you configure.
 
 Then connect an agent: `aifuel mcp setup --agent HOST` writes the managed entry into the host's config (backup and `--dry-run` supported, `--remove` detaches). Host IDs: `codex`, `claude`, `copilot`, `gemini`, `antigravity`, `devin`. Restart the host after changing its registration. Repeatable `--tool NAME` on `mcp gateway` restricts which tools a host sees.
 
@@ -140,14 +142,14 @@ Then connect an agent: `aifuel mcp setup --agent HOST` writes the managed entry 
 
 - Credentials are read **locally only** - the same files your CLIs already use. Tokens are never printed and are sent only to their own provider's usage endpoint.
 - Discovery is filesystem-only: it never calls an API, refreshes a token, or writes credentials. One provider's failure doesn't block the rest - JSON reports it in `discovery_errors`.
-- Results cache in-process for 300s unless a refresh is requested; the dashboard auto-refreshes every 5 minutes and countdowns tick every second.
+- Results cache in-process for 300s unless a refresh is requested; the dashboard's 5-minute auto-refresh is opt-in and countdowns tick every second.
 - Providers rank by their authoritative weekly/monthly window, else soonest reset; depleted providers sort last.
 
 ## FAQ
 
 **Does this send my tokens anywhere?** No. It reads the same local credential files your CLIs use, calls each provider's *own* usage endpoint, and shows the result. No server, no telemetry, no third party.
 
-**Do I need API keys?** No. It reuses the OAuth/login your AI coding CLIs already set up. A general GitHub CLI login does not count as a GitHub Copilot login.
+**Do I need API keys?** Not for monitoring - it reuses the OAuth/logins your AI coding CLIs already set up. `aifuel run` through an API-key integration (`openai:api-key`, `openrouter:api-key`) does need one via `aifuel auth set-key` or the env var. A general GitHub CLI login does not count as a GitHub Copilot login.
 
 **It only shows some providers.** Those are the ones with local credentials. Log in to that provider's AI coding CLI, then refresh.
 
