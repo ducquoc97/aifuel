@@ -416,6 +416,77 @@ fn elicitation_returns_the_content_verbatim() {
     );
 }
 
+/// An elicitation ask declares no question ids, so every answers key is
+/// unasked: `answers` cannot smuggle content the server never requested.
+#[test]
+fn answers_for_an_ask_without_questions_are_rejected() {
+    let (adapter, servers) = duplex_adapter();
+    let server = serve(servers, |mut server| async move {
+        server.handshake("thread-1").await;
+        let start = server.next_method("turn/start").await;
+        server
+            .respond(&start, json!({"turn": {"id": "turn-1"}}))
+            .await;
+        server
+            .write(json!({
+                "id": SERVER_REQUEST_ID,
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "serverName": "docs",
+                    "requestId": "elic-1",
+                    "message": "pick a mode",
+                    "requestedSchema": {"type": "object"},
+                }
+            }))
+            .await;
+        let answer = server.next_client().await;
+        server
+            .write(json!({
+                "method": "turn/completed",
+                "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "error": null}}
+            }))
+            .await;
+        server.park().await;
+        answer
+    });
+    let handle = adapter
+        .start(&integration(), options(AccessMode::Full))
+        .expect("start");
+    let events = test_events(&adapter, &handle);
+    expect_prelude(&events);
+    adapter.send(&handle, input("go")).expect("send");
+    let request_id = loop {
+        if let AgentEventKind::ApprovalRequested { request_id, .. } = recv(&events) {
+            break request_id;
+        }
+    };
+    let error = adapter
+        .answer(
+            &handle,
+            request_id.clone(),
+            ApprovalDecision::Answers(BTreeMap::from([(
+                "mode".to_owned(),
+                vec!["fast".to_owned()],
+            )])),
+        )
+        .expect_err("answers are unasked when the ask declares no questions");
+    assert_eq!(error.code, ReceiptCode::InvalidState);
+    // The ask is still pending: the right decision kind resolves it.
+    adapter
+        .answer(
+            &handle,
+            request_id,
+            ApprovalDecision::Elicitation(json!({"mode": "fast"})),
+        )
+        .expect("the elicitation content resolves the ask");
+    through_idle(&events);
+    adapter.stop(handle).expect("stop");
+    let answer = server.join().expect("server script finished");
+    assert_eq!(answer["result"]["content"], json!({"mode": "fast"}));
+}
+
 /// An answers map naming a question the ask never declared is rejected
 /// rather than forwarded to the provider.
 #[test]

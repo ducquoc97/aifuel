@@ -200,11 +200,10 @@ pub(crate) fn decision_response(
                 ApprovalDecision::Answers(answers) => {
                     // Answers bind to the questions the request declared;
                     // an answer for a question it never asked is rejected
-                    // rather than forwarded to the provider.
-                    if let Some(unasked) = answers
-                        .keys()
-                        .find(|id| !question_ids.is_empty() && !question_ids.contains(id))
-                    {
+                    // rather than forwarded to the provider. A request
+                    // declaring no questions takes free text, so any
+                    // declared answer id is unasked.
+                    if let Some(unasked) = answers.keys().find(|id| !question_ids.contains(id)) {
                         return Err(invalid_state(format!(
                             "{unasked:?} was not asked on this request"
                         )));
