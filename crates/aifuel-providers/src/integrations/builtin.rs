@@ -18,7 +18,7 @@
 //!
 //! The HTTP builtins cover local OpenAI-compatible servers (`ollama:local`,
 //! `lmstudio:local`) with explicit `AuthBinding::None`, plus the
-//! OpenAI-compatible API-key provider catalog in [`api_keys`]. An API-key
+//! API-key provider catalog in [`api_keys`]. An API-key
 //! builtin binds `EnvOrStore`: the conventional environment variable works
 //! as-is, and `aifuel auth set-key <integration>` stores a managed credential
 //! that then takes precedence. No key material ever appears here - only the
@@ -120,9 +120,9 @@ pub fn builtin_integrations() -> Vec<IntegrationDescriptor> {
         ),
     ]
     .into_iter()
-    // The OpenAI-compatible API-key catalog. The P1 engine set serves
-    // WireApi::OpenAiChat only, so no Anthropic Messages builtin ships yet:
-    // a registered-but-never-executable integration is worse than absent.
+    // The API-key catalog: OpenAI-compatible endpoints plus Anthropic's
+    // native Messages API. Every row must declare a served Wire Api - a
+    // registered-but-never-executable integration is worse than absent.
     .chain(api_keys::integrations())
     .collect()
 }
@@ -275,13 +275,12 @@ mod tests {
 
     #[test]
     fn no_builtin_declares_a_wire_protocol_without_an_engine() {
-        // P1 serves openai_chat only; a builtin on another protocol would be
-        // registered but never executable, which is worse than absent.
+        // A builtin on an unserved protocol would be registered but never
+        // executable, which is worse than absent.
         for descriptor in builtin_integrations() {
             if let ExecutionConfig::Http { protocol, .. } = &descriptor.integration.execution {
-                assert_eq!(
-                    *protocol,
-                    WireApi::OpenAiChat,
+                assert!(
+                    crate::wire::serves(*protocol),
                     "builtin {} declares an unserveable Wire Api",
                     descriptor.integration.id
                 );

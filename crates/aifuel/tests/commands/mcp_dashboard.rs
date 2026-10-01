@@ -192,7 +192,7 @@ fn json_status_command_collects_gemini_quota_through_the_real_binary() {
     assert_eq!(value["collection"]["outcome"], "complete");
     assert_eq!(
         value["catalog"].as_array().expect("catalog array").len(),
-        75
+        76
     );
     assert_eq!(value["providers"][0]["key"], "gemini");
     assert_eq!(

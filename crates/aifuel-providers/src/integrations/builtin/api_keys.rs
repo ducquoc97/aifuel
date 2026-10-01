@@ -1,7 +1,7 @@
 //! The compiled API-key Provider Integrations.
 //!
-//! Every entry is a billed (or free-tier) OpenAI-compatible endpoint bound
-//! to `AuthBinding::ApiKey` with `ApiKeySource::EnvOrStore`: the provider's
+//! Every entry is a billed (or free-tier) endpoint bound to
+//! `AuthBinding::ApiKey` with `ApiKeySource::EnvOrStore`: the provider's
 //! documented environment variable works as-is, and `aifuel auth set-key
 //! <integration>` stores a managed Credential Reference that then takes
 //! precedence. No key material ever appears here - only the variable name
@@ -11,11 +11,12 @@
 //! catalog (`release/v3.8.52`, MIT licensed) and cross-checked against each
 //! provider's own API documentation; free-tier notes live in
 //! `crate::catalog` keyed by provider id. A provider
-//! only lands here when its documented base URL accepts the OpenAI
-//! chat-completions Wire Api - the `POST {base_url}/chat/completions`
-//! request/response shape. `collector` names a compiled Monitoring
+//! only lands here when its documented base URL serves a compiled Wire
+//! Api - `WireApi::OpenAiChat` (the `POST {base_url}/chat/completions`
+//! shape) for the OpenAI-compatible entries, `WireApi::AnthropicMessages`
+//! for Anthropic's native API. `collector` names a compiled Monitoring
 //! Collection Contract and is set only for providers that document a
-//! quota, usage, or balance endpoint; OpenAI compatibility alone never
+//! quota, usage, or balance endpoint; an inference protocol alone never
 //! implies one.
 
 use crate::integrations::{EvidenceSource, IntegrationDescriptor};
@@ -33,13 +34,18 @@ struct ApiKeyProvider {
     provider: &'static str,
     /// The display name surfaced in `aifuel auth list`.
     name: &'static str,
-    /// The documented OpenAI-compatible base URL.
+    /// The documented base URL the declared Wire Api serves.
     base_url: &'static str,
     /// The provider's conventional environment variable.
     env_var: &'static str,
     /// The compiled collector id, when the provider documents a quota,
     /// usage, or balance endpoint.
     collector: Option<&'static str>,
+    /// The Wire Api the documented base URL serves.
+    protocol: WireApi,
+    /// The named header carrying the key when the provider does not use
+    /// `Authorization: Bearer` (Anthropic's `x-api-key`).
+    key_header: Option<&'static str>,
 }
 
 const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
@@ -50,6 +56,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.openai.com/v1",
         env_var: "OPENAI_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "openrouter:api-key",
@@ -59,6 +67,21 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         env_var: "OPENROUTER_API_KEY",
         // OpenRouter reports the key-scoped credit allowance on `/key`.
         collector: Some(crate::openrouter::OPENROUTER_KEY_COLLECTOR),
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
+    },
+    ApiKeyProvider {
+        id: "anthropic:api-key",
+        provider: "anthropic",
+        name: "Anthropic (API key)",
+        // The native API origin; the wire layer appends `/v1/messages`.
+        base_url: "https://api.anthropic.com",
+        env_var: "ANTHROPIC_API_KEY",
+        // Anthropic documents no quota or balance endpoint.
+        collector: None,
+        protocol: WireApi::AnthropicMessages,
+        // Anthropic keys authenticate on `x-api-key`, not Bearer.
+        key_header: Some("x-api-key"),
     },
     ApiKeyProvider {
         id: "cerebras:api-key",
@@ -67,6 +90,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.cerebras.ai/v1",
         env_var: "CEREBRAS_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "cohere:api-key",
@@ -75,6 +100,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.cohere.ai/compatibility/v1",
         env_var: "COHERE_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "deepinfra:api-key",
@@ -83,6 +110,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.deepinfra.com/v1/openai",
         env_var: "DEEPINFRA_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "deepseek:api-key",
@@ -92,6 +121,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         env_var: "DEEPSEEK_API_KEY",
         // DeepSeek reports the prepaid credit balance on `/user/balance`.
         collector: Some(crate::deepseek::DEEPSEEK_BALANCE_COLLECTOR),
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "fireworks:api-key",
@@ -100,6 +131,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.fireworks.ai/inference/v1",
         env_var: "FIREWORKS_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "groq:api-key",
@@ -108,6 +141,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.groq.com/openai/v1",
         env_var: "GROQ_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "huggingface:api-key",
@@ -116,6 +151,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://router.huggingface.co/v1",
         env_var: "HF_TOKEN",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "mistral:api-key",
@@ -124,6 +161,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.mistral.ai/v1",
         env_var: "MISTRAL_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "moonshot:api-key",
@@ -132,6 +171,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.moonshot.ai/v1",
         env_var: "MOONSHOT_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "nvidia:api-key",
@@ -140,6 +181,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://integrate.api.nvidia.com/v1",
         env_var: "NVIDIA_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "perplexity:api-key",
@@ -148,6 +191,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.perplexity.ai",
         env_var: "PERPLEXITY_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "siliconflow:api-key",
@@ -157,6 +202,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         env_var: "SILICONFLOW_API_KEY",
         // SiliconFlow reports the wallet balance on `/v1/user/info`.
         collector: Some(crate::siliconflow::SILICONFLOW_BALANCE_COLLECTOR),
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "together:api-key",
@@ -165,6 +212,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.together.xyz/v1",
         env_var: "TOGETHER_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "xai:api-key",
@@ -173,6 +222,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.x.ai/v1",
         env_var: "XAI_API_KEY",
         collector: None,
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
     ApiKeyProvider {
         id: "zai:api-key",
@@ -183,6 +234,8 @@ const API_KEY_PROVIDERS: &[ApiKeyProvider] = &[
         base_url: "https://api.z.ai/api/coding/paas/v4",
         env_var: "ZAI_API_KEY",
         collector: Some(crate::zai::ZAI_QUOTA_COLLECTOR),
+        protocol: WireApi::OpenAiChat,
+        key_header: None,
     },
 ];
 
@@ -193,14 +246,20 @@ pub(super) fn integrations() -> Vec<IntegrationDescriptor> {
     API_KEY_PROVIDERS
         .iter()
         .map(|spec| {
+            let delivery = match spec.key_header {
+                Some(name) => KeyDelivery::Header {
+                    name: name.to_owned(),
+                },
+                None => KeyDelivery::Bearer,
+            };
             let mut descriptor = api_key_endpoint(
                 spec.id,
                 spec.provider,
                 spec.name,
                 spec.base_url,
-                WireApi::OpenAiChat,
+                spec.protocol,
                 spec.env_var,
-                KeyDelivery::Bearer,
+                delivery,
                 BTreeMap::new(),
             );
             if let Some(collector) = spec.collector {
@@ -264,10 +323,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_entry_uses_the_documented_openai_chat_binding() {
+    fn every_entry_uses_its_documented_binding() {
         // The provider set was ported only where the documented base URL
-        // speaks OpenAI chat completions and a conventional env var exists;
-        // the table must keep both properties true for every row.
+        // speaks a compiled Wire Api and a conventional env var exists;
+        // the table must keep both properties true for every row, and a
+        // row must never declare a protocol no engine serves.
         let descriptors = integrations();
         assert_eq!(descriptors.len(), API_KEY_PROVIDERS.len());
         for spec in API_KEY_PROVIDERS {
@@ -286,7 +346,12 @@ mod tests {
                 panic!("{} must be an Http integration", spec.id);
             };
             assert_eq!(endpoint.base_url, spec.base_url);
-            assert_eq!(*protocol, WireApi::OpenAiChat);
+            assert_eq!(*protocol, spec.protocol);
+            assert!(
+                crate::wire::serves(*protocol),
+                "{} declares an unserveable Wire Api",
+                spec.id
+            );
             match auth {
                 AuthBinding::ApiKey {
                     source: ApiKeySource::EnvOrStore { var, credential },
@@ -296,10 +361,15 @@ mod tests {
                     // The managed Credential Reference a builtin reserves
                     // equals its own Integration Identity.
                     assert_eq!(credential.as_str(), spec.id);
+                    let expected = match spec.key_header {
+                        Some(name) => KeyDelivery::Header {
+                            name: name.to_owned(),
+                        },
+                        None => KeyDelivery::Bearer,
+                    };
                     assert_eq!(
-                        *delivery,
-                        KeyDelivery::Bearer,
-                        "{} must send the key as a bearer token",
+                        *delivery, expected,
+                        "{} must deliver the key the documented way",
                         spec.id
                     );
                 }

@@ -136,6 +136,7 @@ pub const PINNED_PROVIDER_IDS: &[&str] = &[
     "nvidia",
     "siliconflow",
     "together",
+    "anthropic",
 ];
 
 pub(crate) fn statuses() -> Vec<CatalogProviderStatus> {
@@ -197,8 +198,8 @@ mod tests {
 
     #[test]
     fn pinned_catalog_preserves_all_provider_ids() {
-        assert_eq!(PINNED_PROVIDER_IDS.len(), 75);
+        assert_eq!(PINNED_PROVIDER_IDS.len(), 76);
         assert_eq!(PINNED_PROVIDER_IDS.first(), Some(&"codex"));
-        assert_eq!(PINNED_PROVIDER_IDS.last(), Some(&"together"));
+        assert_eq!(PINNED_PROVIDER_IDS.last(), Some(&"anthropic"));
     }
 }
