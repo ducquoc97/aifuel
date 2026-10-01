@@ -2,7 +2,10 @@ use aifuel_app::MonitoringFacade;
 use aifuel_core::{StatusCollector, StatusReport};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 pub fn serve<C>(facade: MonitoringFacade<C>) -> Result<(), String>
 where
@@ -33,6 +36,57 @@ where
         }
     }
     Ok(())
+}
+
+/// Serve the same read-only status surface over streamable HTTP on
+/// `POST /mcp`. Sessions carry no extra state: dispatch only reads the
+/// shared facade cache, and this server emits no server-initiated messages,
+/// so `GET /mcp` answers 405.
+pub fn serve_http<C>(facade: MonitoringFacade<C>, host: &str, port: u16) -> Result<(), String>
+where
+    C: StatusCollector + 'static,
+{
+    let runtime = Arc::new(
+        tokio::runtime::Runtime::new()
+            .map_err(|error| format!("could not start MCP runtime: {error}"))?,
+    );
+    let facade = Arc::new(facade);
+    crate::http::serve(
+        "aifuel mcp",
+        host,
+        port,
+        MAX_MESSAGE_BYTES,
+        move |_| {
+            Ok(MonitoringHttpSession {
+                facade: Arc::clone(&facade),
+                runtime: Arc::clone(&runtime),
+            })
+        },
+    )
+}
+
+struct MonitoringHttpSession<C> {
+    facade: Arc<MonitoringFacade<C>>,
+    runtime: Arc<tokio::runtime::Runtime>,
+}
+
+impl<C> crate::http::HttpSession for MonitoringHttpSession<C>
+where
+    C: StatusCollector + 'static,
+{
+    fn handle(&self, message: &Value) -> Option<Value> {
+        let state = match status_for_request(message, &self.facade, &self.runtime) {
+            Ok(state) => state,
+            Err(error) => {
+                return Some(json!({
+                    "jsonrpc": "2.0",
+                    "id": message.get("id").cloned().unwrap_or(Value::Null),
+                    "error": {"code": -32603, "message": error}
+                }));
+            }
+        };
+        dispatch(message, &state)
+    }
 }
 
 fn status_for_request<C>(
