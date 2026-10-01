@@ -280,10 +280,10 @@ fn set_key(args: &[String]) -> Result<u8, String> {
     }
     .map_err(|error| error.to_string())?;
     match &destination {
-        Some(integration) => println!(
-            "Stored API key as credential {} bound to integration {}.",
+        Some(identity) => println!(
+            "Stored API key as credential {} bound to {}.",
             reference.as_str(),
-            integration.as_str()
+            identity.as_str()
         ),
         None => println!("Stored API key as credential {}.", reference.as_str()),
     }
@@ -299,6 +299,18 @@ fn resolve_credential_ref(
 ) -> Result<(CredentialRef, Option<aifuel_core::IntegrationId>), String> {
     use aifuel_providers::ResolveError;
     let registry = crate::integration_registry()?;
+    // A Provider Integration instance binds its credential under the
+    // instance id: `credential` when the spec names one, otherwise a
+    // conventional `<id>-api-key` reference. Exact instance ids are checked
+    // before `resolve` because instances are not provider selectors.
+    let target_id = aifuel_core::IntegrationId::new(target);
+    if let Some(instance) = registry.instance(&target_id) {
+        let reference = instance
+            .credential
+            .clone()
+            .unwrap_or_else(|| CredentialRef::new(format!("{target}-api-key")));
+        return Ok((reference, Some(instance.id.clone())));
+    }
     let descriptor = match registry.resolve(target) {
         Ok(descriptor) => descriptor,
         Err(error @ ResolveError::Ambiguous { .. }) => {

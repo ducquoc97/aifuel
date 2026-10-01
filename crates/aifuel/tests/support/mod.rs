@@ -103,6 +103,9 @@ pub fn install_fake_command(directory: &Path, command_name: &str) {
 /// `codex debug models --bundled` answer outside the app-server loop so
 /// the runtime's version and Advertised Model catalog probes see honest
 /// evidence; `AIFUEL_CODEX_FIXTURE_CATALOG` overrides the catalog body.
+/// When `AIFUEL_CODEX_FIXTURE_ENV_LOG` is set the fixture records the
+/// `FAKE_INSTANCE_*` environment it was spawned with there - the observable
+/// proof an instance overlay reached the provider process.
 pub fn install_fake_codex_app_server(directory: &Path) -> PathBuf {
     let log_path = directory.join("codex-app-server.jsonl");
 
@@ -129,6 +132,9 @@ fi
 if [ "$1" != "app-server" ] || [ "$2" != "--stdio" ]; then
     printf 'unexpected Codex invocation: %s\n' "$*" >&2
     exit 64
+fi
+if [ -n "${AIFUEL_CODEX_FIXTURE_ENV_LOG:-}" ]; then
+    printf 'FAKE_INSTANCE_MARKER=%s\nFAKE_INSTANCE_KEY=%s\n' "${FAKE_INSTANCE_MARKER:-<unset>}" "${FAKE_INSTANCE_KEY:-<unset>}" >> "$AIFUEL_CODEX_FIXTURE_ENV_LOG"
 fi
 while IFS= read -r line; do
     if [ -n "${AIFUEL_CODEX_FIXTURE_LOG:-}" ]; then
@@ -190,6 +196,11 @@ if ($args[0] -eq 'debug' -and $args[1] -eq 'models' -and $args[2] -eq '--bundled
 if ($args[0] -ne 'app-server' -or $args[1] -ne '--stdio') {
     [Console]::Error.WriteLine("unexpected Codex invocation: $args")
     exit 64
+}
+if ($env:AIFUEL_CODEX_FIXTURE_ENV_LOG) {
+    $marker = if ($env:FAKE_INSTANCE_MARKER) { $env:FAKE_INSTANCE_MARKER } else { '<unset>' }
+    $key = if ($env:FAKE_INSTANCE_KEY) { $env:FAKE_INSTANCE_KEY } else { '<unset>' }
+    [System.IO.File]::AppendAllText($env:AIFUEL_CODEX_FIXTURE_ENV_LOG, "FAKE_INSTANCE_MARKER=$marker`nFAKE_INSTANCE_KEY=$key`n")
 }
 while ($null -ne ($line = [Console]::In.ReadLine())) {
     if ($env:AIFUEL_CODEX_FIXTURE_LOG) {

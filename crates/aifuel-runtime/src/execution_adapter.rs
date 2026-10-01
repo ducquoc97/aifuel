@@ -68,26 +68,43 @@ const CANCEL_SETTLE: Duration = Duration::from_secs(10);
 pub struct RuntimeExecutionAdapter {
     runtime: Arc<AgentRuntime>,
     adapter: Arc<dyn RuntimeAdapter>,
+    /// The Integration Identity this shim answers to: the adapter's own
+    /// for a base integration, the instance's selector id when the shim
+    /// serves a Provider Integration instance. `validate` and the
+    /// `RunResult`'s `integration_id` both use it, while `provider()` and
+    /// capabilities stay the serving adapter's - an instance never widens
+    /// what its base integration declares.
+    served: IntegrationId,
     /// Per-shim unique stamp for minted command ids: the runtime dedups
     /// `command_id` store-wide, so ids carry pid plus this construction-time
     /// discriminator and a counter - a recycled pid against the same store
     /// cannot collide with a stale recorded receipt.
     stamp: u64,
     sequence: AtomicU64,
+    /// The instance overlay this shim serves plus the store it resolves
+    /// against, so `validate` can reject a missing or mismatched Managed
+    /// Credential at accept time instead of failing the spawned run.
+    instance: Option<(
+        aifuel_providers::InstanceDescriptor,
+        aifuel_providers::CredentialStore,
+    )>,
 }
 
 impl RuntimeExecutionAdapter {
     /// The shim over `adapter` on `runtime`. `adapter` must be registered
     /// with `runtime` already - `resolve` is the lookup that guarantees it.
     pub fn new(runtime: Arc<AgentRuntime>, adapter: Arc<dyn RuntimeAdapter>) -> Self {
+        let served = adapter.integration();
         Self {
             runtime,
             adapter,
+            served,
             stamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_nanos() as u64,
             sequence: AtomicU64::new(0),
+            instance: None,
         }
     }
 
@@ -102,6 +119,27 @@ impl RuntimeExecutionAdapter {
             .into_iter()
             .find(|adapter| adapter.integration() == *integration)?;
         Some(Self::new(Arc::clone(runtime), adapter))
+    }
+
+    /// The shim over the adapter `runtime` resolves for `instance`'s base
+    /// integration, answering to the instance's own selector id. The shim
+    /// keeps the descriptor and `credentials` so `validate` can resolve the
+    /// overlay before a run is accepted; `session.create` still resolves it
+    /// again at spawn, so a credential removed between the two stays a
+    /// failure - just a later one.
+    pub fn resolve_instance(
+        runtime: &Arc<AgentRuntime>,
+        instance: &aifuel_providers::InstanceDescriptor,
+        credentials: aifuel_providers::CredentialStore,
+    ) -> Option<RuntimeExecutionAdapter> {
+        let adapter = runtime
+            .registered_adapters()
+            .into_iter()
+            .find(|adapter| adapter.integration() == instance.integration)?;
+        let mut shim = Self::new(Arc::clone(runtime), adapter);
+        shim.served = instance.id.clone();
+        shim.instance = Some((instance.clone(), credentials));
+        Some(shim)
     }
 
     /// The shared runtime this shim dispatches through.
@@ -361,8 +399,11 @@ fn internal_error(message: &str) -> AgentRunError {
 }
 
 impl AgentExecutionAdapter for RuntimeExecutionAdapter {
+    /// The identity this shim serves - the instance's selector id when
+    /// `resolve_instance` built it, so `request.integration` and the run
+    /// result name the identity the caller selected.
     fn integration(&self) -> IntegrationId {
-        self.adapter.integration()
+        self.served.clone()
     }
 
     fn provider(&self) -> ProviderId {
@@ -404,6 +445,15 @@ impl AgentExecutionAdapter for RuntimeExecutionAdapter {
             return Err(AgentRunError::InvalidRequest(
                 "prompt must not be empty".to_owned(),
             ));
+        }
+        // An instance's overlay resolves once at accept so a missing or
+        // mismatched credential rejects the request here; `session.create`
+        // resolves it again at spawn. The resolved material never leaves
+        // this statement.
+        if let Some((instance, credentials)) = &self.instance {
+            instance.resolve_env(credentials).map_err(|error| {
+                AgentRunError::InvalidRequest(format!("instance {}: {error}", instance.id))
+            })?;
         }
         let provider = self.provider();
         // Every read-only run requires the provider to declare a verified

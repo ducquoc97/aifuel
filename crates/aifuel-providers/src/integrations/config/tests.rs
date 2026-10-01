@@ -304,3 +304,65 @@ fn custom_headers_cannot_override_managed_auth_headers() {
         _ => unreachable!(),
     }
 }
+
+#[test]
+fn instance_entries_decode_alongside_integrations() {
+    let dir = TestDir::new();
+    let path = dir.write(
+        r#"{
+            "schema_version": 1,
+            "integrations": [],
+            "instances": {
+                "claude.work": {
+                    "integration": "claude",
+                    "env": {
+                        "CLAUDE_CONFIG_DIR": "/cfg",
+                        "ANTHROPIC_API_KEY": { "credential": "work-key" }
+                    },
+                    "credential": "work-key"
+                },
+                "claude.personal": { "integration": "claude" }
+            }
+        }"#,
+    );
+    let config = ProvidersConfig::load(path).expect("file is well-formed");
+    assert!(config.entries().is_empty());
+    let instances = config.instances();
+    assert_eq!(instances.len(), 2);
+    let work = instances[0].as_ref().expect("work instance is valid");
+    assert_eq!(work.id.as_str(), "claude.work");
+    assert_eq!(
+        work.env["ANTHROPIC_API_KEY"],
+        crate::integrations::InstanceEnvSource::Credential(aifuel_core::CredentialRef::new(
+            "work-key"
+        ))
+    );
+    let personal = instances[1].as_ref().expect("personal instance is valid");
+    assert!(personal.env.is_empty());
+    assert!(personal.credential.is_none());
+}
+
+#[test]
+fn one_bad_instance_reports_its_own_error() {
+    // A malformed instance entry reports `InvalidInstance` keyed by its map
+    // id while a sibling entry still decodes - the same per-entry isolation
+    // `integrations` entries get.
+    let dir = TestDir::new();
+    let path = dir.write(
+        r#"{
+            "schema_version": 1,
+            "instances": {
+                "good": { "integration": "claude" },
+                "bad": { "env": { "X": "y" } }
+            }
+        }"#,
+    );
+    let config = ProvidersConfig::load(path).expect("file is well-formed");
+    let instances = config.instances();
+    assert_eq!(instances.len(), 2);
+    assert!(matches!(
+        instances[0],
+        Err(ConfigError::InvalidInstance { ref id, .. }) if id == "bad"
+    ));
+    assert!(instances[1].is_ok());
+}

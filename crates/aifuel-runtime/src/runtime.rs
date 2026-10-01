@@ -19,11 +19,11 @@ use aifuel_core::{
     ModelSelection, ReceiptCode, RequestId, SessionId, SessionStatus, StartOptions,
 };
 use aifuel_providers::{
-    AdapterDiscovery, CredentialStore, DiscoveryContext, IntegrationDescriptor,
+    AdapterDiscovery, CredentialStore, DiscoveryContext, InstanceDescriptor, IntegrationDescriptor,
     IntegrationRegistry, PROVIDERS_FILE_NAME, ProvidersConfig, acp_adapter, builtin_integrations,
     claude_adapter, cli_fallback_adapters, codex_adapter, opencode_adapter,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -62,6 +62,12 @@ pub(crate) struct LiveSession {
     /// Contract, so a completed run asks its adapter for a Quota Pool
     /// observation. Contract-free integrations are never asked.
     pub(crate) monitoring: bool,
+    /// The Integration Identity the session was created through: an
+    /// instance id when the host selected a Provider Integration instance,
+    /// else the adapter's own. `model.select` compares against it so a
+    /// live session can never silently trade the instance it was spawned
+    /// under.
+    pub(crate) serving: aifuel_core::IntegrationId,
 }
 
 /// One consumer's live event channel. `receiver` is handed out once by
@@ -123,12 +129,17 @@ impl AgentRuntime {
             ProvidersConfig::load(config_dir.join(PROVIDERS_FILE_NAME)).map_err(|error| {
                 AgentRuntimeError::provider_error(format!("providers.json could not load: {error}"))
             })?;
-        let registry = IntegrationRegistry::build(builtin_integrations(), config.into_entries())
-            .map_err(|error| {
-                AgentRuntimeError::provider_error(format!(
-                    "the integration registry could not be built: {error}"
-                ))
-            })?;
+        let aifuel_providers::ProvidersConfigParts {
+            integrations: config_entries,
+            instances: config_instances,
+        } = config.into_parts();
+        let registry =
+            IntegrationRegistry::build(builtin_integrations(), config_entries, config_instances)
+                .map_err(|error| {
+                    AgentRuntimeError::provider_error(format!(
+                        "the integration registry could not be built: {error}"
+                    ))
+                })?;
         let discovery_context = AdapterDiscovery {
             discovery,
             credentials,
@@ -151,26 +162,31 @@ impl AgentRuntime {
         )
         .collect();
         let descriptors = registry.list().cloned().collect();
-        Self::assemble(store, adapters, descriptors, discovery_context)
+        let instances = registry.instances().cloned().collect();
+        Self::assemble(store, adapters, descriptors, instances, discovery_context)
     }
 
     /// Open the runtime over an existing store and an explicit adapter set,
     /// for embedders and tests. `descriptors` is the integration registry
-    /// snapshot `integrations.list` reports; `discovery` carries the local
-    /// evidence context descriptor inspection consults.
+    /// snapshot `integrations.list` reports; `instances` carries the named
+    /// Provider Integration instances those descriptors serve;
+    /// `discovery` carries the local evidence context descriptor
+    /// inspection consults.
     pub fn with_adapters(
         store: RunStore,
         adapters: Vec<Arc<dyn RuntimeAdapter>>,
         descriptors: Vec<IntegrationDescriptor>,
+        instances: Vec<InstanceDescriptor>,
         discovery: AdapterDiscovery,
     ) -> Result<Self, AgentRuntimeError> {
-        Self::assemble(store, adapters, descriptors, discovery)
+        Self::assemble(store, adapters, descriptors, instances, discovery)
     }
 
     fn assemble(
         store: RunStore,
         adapters: Vec<Arc<dyn RuntimeAdapter>>,
         descriptors: Vec<IntegrationDescriptor>,
+        instances: Vec<InstanceDescriptor>,
         discovery: AdapterDiscovery,
     ) -> Result<Self, AgentRuntimeError> {
         // The owner id the store stamps on `agent_sessions` rows registers
@@ -179,7 +195,7 @@ impl AgentRuntime {
         let owner = store.register_owner();
         let runtime = Self {
             store,
-            registry: Registry::new(adapters, descriptors, discovery),
+            registry: Registry::new(adapters, descriptors, discovery, instances),
             inner: Arc::new(Mutex::new(Inner {
                 live: HashMap::new(),
                 consumers: HashMap::new(),
@@ -228,15 +244,33 @@ impl AgentRuntime {
             let Some(cursor) = session.resume_cursor.clone() else {
                 continue;
             };
-            let (Some(descriptor), Some(adapter)) = (
-                self.registry.descriptor_for(&session.integration),
-                self.registry.adapter_for(&session.integration),
-            ) else {
+            let Some((descriptor, instance)) = self.registry.serving(&session.integration) else {
+                continue;
+            };
+            let Some(adapter) = self.registry.adapter_for(&session.integration) else {
                 continue;
             };
             if !adapter.capabilities().resume {
                 continue;
             }
+            // A session created through an instance re-resolves its
+            // environment here: the spec is never persisted, so a removed
+            // instance or credential simply refuses to reattach rather than
+            // resuming under different configuration than the session ran
+            // with.
+            let env = match instance {
+                Some(instance) => match instance.resolve_env(self.registry.credentials()) {
+                    Ok(env) => env,
+                    Err(error) => {
+                        eprintln!(
+                            "aifuel: agent session {} could not resume: instance {}: {error}",
+                            session.session_id, instance.id
+                        );
+                        continue;
+                    }
+                },
+                None => BTreeMap::new(),
+            };
             // Claim the row before spending a provider attach: the claim
             // only lands while the owner is still the dead one this sweep
             // enumerated, so two runtimes cannot double-attach one session.
@@ -256,7 +290,10 @@ impl AgentRuntime {
                 StartOptions {
                     cwd: session.cwd.clone(),
                     selection: ModelSelection {
-                        integration_id: session.integration.clone(),
+                        // Adapters and descriptors serve base integration
+                        // identities; the instance id stays on the session
+                        // row and on `serving` below.
+                        integration_id: descriptor.integration.id.clone(),
                         model: session.model.clone().unwrap_or_default(),
                         effort: session.effort,
                     },
@@ -271,6 +308,7 @@ impl AgentRuntime {
                     // enforcement rather than silently widening to the
                     // provider's full tool surface.
                     external_tools: session.external_tools.clone(),
+                    env,
                 },
             ) {
                 Ok(handle) => handle,
@@ -318,6 +356,7 @@ impl AgentRuntime {
                             access: AccessMode::ReadOnly,
                             cwd: session.cwd.clone(),
                             monitoring: descriptor.integration.monitoring.is_some(),
+                            serving: session.integration.clone(),
                         },
                     );
                 }

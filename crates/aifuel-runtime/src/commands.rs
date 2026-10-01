@@ -16,8 +16,8 @@ use crate::runtime::{AgentRuntime, LiveSession};
 use crate::{MAX_REPLAY_BYTES, MAX_REPLAY_EVENTS};
 use aifuel_core::{
     AccessMode, AgentEventKind, AgentRuntimeError, AgentSessionHandle, ApprovalDecision, CommandId,
-    ConsumerId, ExecutionAvailability, ModelDescriptor, ModelSelection, Receipt, ReceiptCode,
-    RequestId, RunId, Seq, SessionId, SessionStatus, StartOptions, UserInput,
+    ConsumerId, ExecutionAvailability, IntegrationId, ModelDescriptor, ModelSelection, Receipt,
+    ReceiptCode, RequestId, RunId, Seq, SessionId, SessionStatus, StartOptions, UserInput,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -39,12 +39,12 @@ impl AgentRuntime {
         resume_cursor: Option<String>,
         external_tools: Vec<String>,
     ) -> CommandOutcome {
-        let Some(descriptor) = self.registry.descriptor_for(&selection.integration_id) else {
+        let Some((descriptor, instance)) = self.registry.serving(&selection.integration_id) else {
             return CommandOutcome::rejected(
                 command_id,
                 ReceiptCode::InvalidSelection,
                 format!(
-                    "no Provider Integration is registered as {}",
+                    "no Provider Integration or Instance is registered as {}",
                     selection.integration_id
                 ),
             );
@@ -66,20 +66,48 @@ impl AgentRuntime {
                 ),
             );
         }
+        // The instance's environment spec resolves against the Credential
+        // Store now: a missing or mismatched Managed Credential fails the
+        // command before any provider process exists, and the resolved
+        // overlay travels inside `StartOptions` only - the persisted
+        // session row carries the instance id, never the values.
+        let env = match instance {
+            Some(instance) => match instance.resolve_env(self.registry.credentials()) {
+                Ok(env) => env,
+                Err(error) => {
+                    return CommandOutcome::rejected(
+                        command_id,
+                        ReceiptCode::InvalidSelection,
+                        format!("instance {}: {error}", instance.id),
+                    );
+                }
+            },
+            None => std::collections::BTreeMap::new(),
+        };
+        // Adapters and descriptors serve base integration identities, so the
+        // adapter-facing selection carries the base id. The persisted
+        // selection keeps the id the host sent, so `model.select` and
+        // reconcile see `claude.work`, not a silently rewritten `claude`.
+        let adapter_selection = ModelSelection {
+            integration_id: descriptor.integration.id.clone(),
+            model: selection.model.clone(),
+            effort: selection.effort,
+        };
         // Resolve before start, per the contract: a selection that cannot
         // resolve - or resolves to a model that cannot run - fails
         // `invalid_selection` here rather than failing a run later.
-        if let Err(error) = resolve_ready(&*adapter, &selection) {
+        if let Err(error) = resolve_ready(&*adapter, &adapter_selection) {
             return CommandOutcome::rejected(command_id, error.code, error.message);
         }
         let handle = match adapter.start(
             &descriptor.integration,
             StartOptions {
                 cwd: cwd.clone(),
-                selection: selection.clone(),
+                selection: adapter_selection,
                 access,
                 resume_cursor,
                 external_tools: external_tools.clone(),
+                env,
             },
         ) {
             Ok(handle) => handle,
@@ -147,6 +175,7 @@ impl AgentRuntime {
                 access,
                 cwd,
                 monitoring: descriptor.integration.monitoring.is_some(),
+                serving: selection.integration_id.clone(),
             },
         );
         CommandOutcome::ok(Receipt::ok(
@@ -344,7 +373,7 @@ impl AgentRuntime {
         session_id: SessionId,
         input: UserInput,
     ) -> CommandOutcome {
-        let Some((adapter, handle)) = self.live_session(&session_id) else {
+        let Some((adapter, handle, _)) = self.live_session(&session_id) else {
             return self.not_live(&command_id, &session_id);
         };
         match adapter.send(&handle, input) {
@@ -365,7 +394,7 @@ impl AgentRuntime {
         session_id: SessionId,
         run_id: RunId,
     ) -> CommandOutcome {
-        let Some((adapter, handle)) = self.live_session(&session_id) else {
+        let Some((adapter, handle, _)) = self.live_session(&session_id) else {
             return self.not_live(&command_id, &session_id);
         };
         match adapter.cancel(&handle, run_id) {
@@ -387,7 +416,7 @@ impl AgentRuntime {
         decision: ApprovalDecision,
         consumer_id: &ConsumerId,
     ) -> CommandOutcome {
-        let Some((adapter, handle)) = self.live_session(&session_id) else {
+        let Some((adapter, handle, _)) = self.live_session(&session_id) else {
             return self.not_live(&command_id, &session_id);
         };
         {
@@ -425,15 +454,48 @@ impl AgentRuntime {
         session_id: SessionId,
         selection: ModelSelection,
     ) -> CommandOutcome {
-        let Some((adapter, handle)) = self.live_session(&session_id) else {
+        let Some((adapter, handle, serving)) = self.live_session(&session_id) else {
             return self.not_live(&command_id, &session_id);
+        };
+        // The selection must name the identity the session was created
+        // through. `model.select` is not a session re-creation: switching
+        // `claude.work` to `claude` (or between two instances of one base)
+        // would change the provider's environment mid-session, so a
+        // different id - even its own base - is `invalid_selection` rather
+        // than a silent swap. An unknown id fails the same way.
+        let Some((base, _)) = self.registry.serving(&selection.integration_id) else {
+            return CommandOutcome::rejected(
+                command_id,
+                ReceiptCode::InvalidSelection,
+                format!(
+                    "no Provider Integration or Instance is registered as {}",
+                    selection.integration_id
+                ),
+            );
+        };
+        if selection.integration_id != serving {
+            return CommandOutcome::rejected(
+                command_id,
+                ReceiptCode::InvalidSelection,
+                format!(
+                    "the session was created through {serving}; {} is a different Provider Integration or Instance",
+                    selection.integration_id
+                ),
+            );
+        }
+        // The adapter-facing selection carries the base integration id,
+        // matching what `session.create` started the adapter with.
+        let adapter_selection = ModelSelection {
+            integration_id: base.integration.id.clone(),
+            model: selection.model.clone(),
+            effort: selection.effort,
         };
         // The same readiness gate as `session.create`: a selection that
         // resolves to a model that cannot run fails `invalid_selection`.
-        if let Err(error) = resolve_ready(&*adapter, &selection) {
+        if let Err(error) = resolve_ready(&*adapter, &adapter_selection) {
             return CommandOutcome::rejected(command_id, error.code, error.message);
         }
-        if let Err(error) = adapter.set_selection(&handle, selection.clone()) {
+        if let Err(error) = adapter.set_selection(&handle, adapter_selection) {
             return CommandOutcome::rejected(command_id, error.code, error.message);
         }
         if let Err(error) = self
@@ -449,17 +511,25 @@ impl AgentRuntime {
         self.head_seq_outcome(command_id, session_id)
     }
 
-    /// The live adapter handle for a session the facade created.
+    /// The live adapter handle for a session the facade created, plus the
+    /// Integration Identity - base or instance - the session was created
+    /// through.
     fn live_session(
         &self,
         session_id: &SessionId,
-    ) -> Option<(Arc<dyn RuntimeAdapter>, AgentSessionHandle)> {
+    ) -> Option<(Arc<dyn RuntimeAdapter>, AgentSessionHandle, IntegrationId)> {
         self.inner
             .lock()
             .expect("runtime mutex")
             .live
             .get(session_id)
-            .map(|live| (Arc::clone(&live.adapter), live.handle.clone()))
+            .map(|live| {
+                (
+                    Arc::clone(&live.adapter),
+                    live.handle.clone(),
+                    live.serving.clone(),
+                )
+            })
     }
 
     /// The receipt for a session-scoped command that found no live session:

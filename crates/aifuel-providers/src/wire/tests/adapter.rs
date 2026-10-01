@@ -115,6 +115,7 @@ fn request() -> RunRequest {
         access: AccessMode::ReadOnly,
         resume: None,
         timeout: None,
+        env: Default::default(),
         interaction_handler: None,
     }
 }

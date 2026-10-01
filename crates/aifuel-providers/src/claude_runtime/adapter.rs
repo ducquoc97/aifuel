@@ -148,6 +148,7 @@ impl AgentAdapter for ClaudeAdapter {
             model: (!options.selection.model.is_empty()).then(|| options.selection.model.clone()),
             effort: options.selection.effort,
             resume_cursor: options.resume_cursor,
+            env: options.env,
         };
         // A `--resume` session's provider id is the persisted cursor
         // itself, so the session reports it from construction rather

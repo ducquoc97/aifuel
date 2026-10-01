@@ -32,6 +32,9 @@ pub struct FakeAdapter {
     quota: Option<QuotaSummary>,
     /// The `external_tools` list each `start` received, in order.
     start_tools: Mutex<Vec<Vec<String>>>,
+    /// The `env` overlay each `start` received, in order - the observable
+    /// record that an instance's resolved environment reached the adapter.
+    start_envs: Mutex<Vec<BTreeMap<String, String>>>,
     /// The declared capability evidence `agent_info` reports, so tests can
     /// stand the fake up where a shim's declared-capability gates consult
     /// the listing.
@@ -51,6 +54,7 @@ impl FakeAdapter {
             fail_start: false,
             quota: None,
             start_tools: Mutex::new(Vec::new()),
+            start_envs: Mutex::new(Vec::new()),
             declared: Vec::new(),
         }
     }
@@ -92,6 +96,13 @@ impl FakeAdapter {
     /// observable record that the facade passed host tools through.
     pub fn recorded_tools(&self) -> Vec<Vec<String>> {
         self.start_tools.lock().expect("tools mutex").clone()
+    }
+
+    /// The `env` overlays `start` calls received, in order - the observable
+    /// record that an instance's resolved environment crossed the adapter
+    /// boundary.
+    pub fn recorded_envs(&self) -> Vec<BTreeMap<String, String>> {
+        self.start_envs.lock().expect("env mutex").clone()
     }
 
     /// The honest capability set most tests want: streaming plus resume.
@@ -207,6 +218,10 @@ impl AgentAdapter for FakeAdapter {
             .lock()
             .expect("tools mutex")
             .push(options.external_tools.clone());
+        self.start_envs
+            .lock()
+            .expect("env mutex")
+            .push(options.env.clone());
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let session_id = SessionId::new(format!("fake-session-{}-{id}", std::process::id()));
         // A reconcile resume seeds the persisted cursor the way the real

@@ -132,6 +132,7 @@ impl AgentAdapter for AcpAdapter {
                 model: (!options.selection.model.is_empty())
                     .then(|| options.selection.model.clone()),
                 resume_cursor: options.resume_cursor.filter(|cursor| !cursor.is_empty()),
+                env: options.env,
             },
             setup_tx,
         )?;

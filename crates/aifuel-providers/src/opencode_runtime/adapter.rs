@@ -156,6 +156,7 @@ impl AgentAdapter for OpenCodeAdapter {
                 cwd,
                 access: options.access,
                 resume_cursor: options.resume_cursor,
+                env: options.env,
             },
             setup_tx,
         )?;

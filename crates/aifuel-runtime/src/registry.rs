@@ -13,8 +13,10 @@ use aifuel_core::{
     ReceiptCode,
 };
 use aifuel_providers::{
-    AdapterDiscovery, EvidenceContext, IntegrationDescriptor, integration_summary,
+    AdapterDiscovery, EvidenceContext, InstanceDescriptor, IntegrationDescriptor,
+    integration_summary,
 };
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The capabilities an integration reports when no adapter serves it:
@@ -31,11 +33,16 @@ const UNSERVED_CAPABILITIES: AdapterCapabilities = AdapterCapabilities {
 };
 
 /// The runtime's compiled adapter set over the registered Integration
-/// descriptors.
+/// descriptors and Provider Integration instances.
 pub(crate) struct Registry {
     adapters: Vec<Arc<dyn RuntimeAdapter>>,
     descriptors: Vec<IntegrationDescriptor>,
     discovery: AdapterDiscovery,
+    /// Provider Integration instances keyed by selector id. An instance id
+    /// resolves to its base integration's descriptor and adapter; the
+    /// instance itself carries only the environment spec and credential
+    /// binding the session start resolves.
+    instances: BTreeMap<IntegrationId, InstanceDescriptor>,
 }
 
 impl Registry {
@@ -43,22 +50,59 @@ impl Registry {
         adapters: Vec<Arc<dyn RuntimeAdapter>>,
         descriptors: Vec<IntegrationDescriptor>,
         discovery: AdapterDiscovery,
+        instances: Vec<InstanceDescriptor>,
     ) -> Self {
         Self {
             adapters,
             descriptors,
             discovery,
+            instances: instances
+                .into_iter()
+                .map(|instance| (instance.id.clone(), instance))
+                .collect(),
         }
     }
 
-    /// The adapter serving one Integration Identity, when one is registered.
+    /// Resolve one Integration Identity to its serving descriptor and the
+    /// instance overlay it carries, when any. An instance id yields its
+    /// base integration's descriptor plus the instance; a base integration
+    /// id yields the descriptor alone.
+    ///
+    /// Instance ids are exact identities only: a bare provider name never
+    /// resolves to an instance, so `claude` keeps meaning the `claude`
+    /// integration rather than a configuration user's `claude.work`.
+    pub(crate) fn serving(
+        &self,
+        integration: &IntegrationId,
+    ) -> Option<(&IntegrationDescriptor, Option<&InstanceDescriptor>)> {
+        if let Some(instance) = self.instances.get(integration) {
+            let base = self
+                .descriptors
+                .iter()
+                .find(|descriptor| *descriptor.id() == instance.integration);
+            return base.map(|descriptor| (descriptor, Some(instance)));
+        }
+        self.descriptor_for(integration)
+            .map(|descriptor| (descriptor, None))
+    }
+
+    /// The Credential Store environment and credential references resolve
+    /// against. Execution-time reads only; listing paths never call it.
+    pub(crate) fn credentials(&self) -> &aifuel_providers::CredentialStore {
+        &self.discovery.credentials
+    }
+
+    /// The adapter serving one Integration Identity - the base
+    /// integration's adapter when `integration` is an instance id, since
+    /// instances never widen or narrow the serving adapter.
     pub(crate) fn adapter_for(
         &self,
         integration: &IntegrationId,
     ) -> Option<Arc<dyn RuntimeAdapter>> {
+        let (descriptor, _) = self.serving(integration)?;
         self.adapters
             .iter()
-            .find(|adapter| adapter.integration() == *integration)
+            .find(|adapter| adapter.integration() == *descriptor.id())
             .cloned()
     }
 
@@ -108,10 +152,10 @@ impl Registry {
         &self,
         integration: &IntegrationId,
     ) -> Result<Vec<ModelDescriptor>, AgentRuntimeError> {
-        let descriptor = self.descriptor_for(integration).ok_or_else(|| {
+        let (descriptor, _) = self.serving(integration).ok_or_else(|| {
             AgentRuntimeError::new(
                 ReceiptCode::InvalidSelection,
-                format!("no Provider Integration is registered as {integration}"),
+                format!("no Provider Integration or Instance is registered as {integration}"),
             )
         })?;
         let adapter = self.adapter_for(integration).ok_or_else(|| {

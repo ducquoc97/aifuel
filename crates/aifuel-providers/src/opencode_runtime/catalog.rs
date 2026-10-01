@@ -61,7 +61,10 @@ pub(super) fn discover() -> CatalogResult {
 async fn discover_async() -> Option<CatalogResult> {
     let cwd = std::env::temp_dir();
     let deadline = Instant::now() + CATALOG_TIMEOUT;
-    let mut serve = serve::spawn_serve(&cwd).ok()?;
+    // The catalog probe is not an instance run: it spawns with the
+    // inherited environment only. Instance overlays belong to the session
+    // spawn path (`session.create`), not to model listing.
+    let mut serve = serve::spawn_serve(&cwd, &std::collections::BTreeMap::new()).ok()?;
     let result = probe(&mut serve, &cwd, deadline).await;
     if let Some(child) = serve.child.as_mut() {
         let _ = kill_and_wait(child).await;

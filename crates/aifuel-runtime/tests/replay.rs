@@ -26,6 +26,7 @@ fn reopen(dir: &std::path::Path, adapter: FakeAdapter) -> (RunStore, AgentRuntim
         store.clone(),
         vec![Arc::new(adapter)],
         vec![fake_descriptor()],
+        Vec::new(),
         fake_discovery(dir),
     )
     .expect("runtime reopens");
@@ -410,6 +411,7 @@ fn interrupted_sessions_redeclare_their_external_tools_on_resume() {
         store.clone(),
         vec![resuming.clone()],
         vec![fake_descriptor()],
+        Vec::new(),
         fake_discovery(&dir),
     )
     .expect("runtime reopens");

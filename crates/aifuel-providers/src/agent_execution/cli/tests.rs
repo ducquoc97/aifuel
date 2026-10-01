@@ -91,6 +91,7 @@ fn read_only_project_request() -> RunRequest {
         access: AccessMode::ReadOnly,
         resume: None,
         timeout: None,
+        env: Default::default(),
         interaction_handler: None,
     }
 }

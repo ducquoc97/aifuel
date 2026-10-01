@@ -133,6 +133,13 @@ pub struct RunRequest {
     pub access: AccessMode,
     pub resume: Option<String>,
     pub timeout: Option<Duration>,
+    /// Process environment overlay resolved for the selected Provider
+    /// Integration instance, applied to the provider process at spawn. The
+    /// values may hold credential material resolved from the Credential
+    /// Store: they are never serialized, persisted, or printed - `Debug`
+    /// reports variable names only. A request built by hand leaves this
+    /// empty; only the runtime's instance resolution fills it.
+    pub env: BTreeMap<String, String>,
     /// Optional owner callback for provider-native questions and approvals.
     pub interaction_handler: Option<Arc<dyn AgentInteractionHandler>>,
 }
@@ -223,6 +230,7 @@ impl fmt::Debug for RunRequest {
             .field("access", &self.access)
             .field("resume", &self.resume)
             .field("timeout", &self.timeout)
+            .field("env", &self.env.keys().collect::<Vec<_>>())
             .finish_non_exhaustive()
     }
 }
