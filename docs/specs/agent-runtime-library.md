@@ -85,6 +85,9 @@ type AgentCommand =
   | { type: "integrations.list";  commandId }
   | { type: "models.list";        commandId; integrationId };
 
+- `externalTools` is an exact-enforcement contract, not a hint: the serving adapter either restricts the provider session to exactly the declared AI Fuel Gateway tools or rejects `unsupported` before any provider transport starts. Where enforcement is a provider-side tool allowlist (Codex's `mcp_servers` thread config), the adapter gates session readiness on the provider reporting the gateway connected with exactly the selected set, on both session start and resume; the declared set is persisted on the session row so a startup continuation redeclares it rather than silently widening.
+- `run.start`'s receipt carries the accepted `runId` so a host can issue `run.cancel` without waiting on `run.started` - the run is registered before the receipt flushes.
+
 type AccessMode = "read_only" | "workspace_write" | "full";   // aifuel --access
 
 interface UserInput {
@@ -143,13 +146,13 @@ type SessionStatus =
 ### Host restart and resume
 
 - On graceful shutdown the runtime marks its own in-flight Agent Sessions `interrupted` and persists each session's provider resume cursor where the adapter supports it. Each Agent Session row records a process-instance owner so two runtimes sharing one store never mark or adopt each other's live sessions.
-- On startup it reconciles only persisted sessions whose recorded owner is gone, mirroring T3 Code's `reconcileProviderSessions`: where the adapter declares `resume`, the runtime attempts provider-side continuation, claims the session's owner, and emits `session.status` (`working` on success, `interrupted` on failure). Sessions on adapters without `resume` stay `interrupted` permanently; continuing work means a new session.
+- On startup it reconciles only persisted sessions whose recorded owner is gone, mirroring T3 Code's `reconcileProviderSessions`: where the adapter declares `resume`, the runtime attempts provider-side continuation, claims the session's owner, and emits `session.status` (`working` on success, `interrupted` on failure). The claim is a compare-and-swap on the dead owner observed at enumeration and lands before any provider attach, so two runtimes racing one orphaned session cannot double-attach it. Sessions on adapters without `resume` stay `interrupted` permanently; continuing work means a new session.
 - Interruption is recorded as a fact in the Session Event Log and continuation is attempted, never assumed.
 
 ## Approvals
 
 - Approval Request kinds: `tool_permission`, `plan_approval`, `question`, `mcp_elicitation`. Each carries `title`, `detail`, explicit `options`, and `requiresConfirm`. Requests translated from a typed provider interaction also retain its `interactionKind`, normalized `questions`, native `parameters`, and `nativeMethod`, so a host can reconstruct the provider-native ask and answer it directly.
-- `ApprovalDecision` is a union: `optionId` for declared options, `text` for free-form input, `answers` carrying one answer list per question id for multi-question asks, and `elicitation` carrying the raw MCP elicitation JSON.
+- `ApprovalDecision` is a union: `optionId` for declared options, `text` for free-form input, `answers` carrying one answer list per question id for multi-question asks, and `elicitation` carrying the raw MCP elicitation JSON. Answers bind to the questions the request declared - an answer id the request never asked is rejected rather than forwarded. Decision content can carry credential material (an elicitation exists to collect it), so the durable log stores `approval.resolved` with the decision's content scrubbed - which questions were answered survives, what was answered does not - while the full decision still reaches live consumers.
 - `requiresConfirm` means the Host Application should re-authenticate the user (biometric, PIN, confirm dialog). The runtime cannot verify device biometrics; it records which consumer answered.
 - Pending Approval Requests are durable in the event log: they survive consumer disconnects and appear in `SessionSnapshot` until resolved.
 - Answering is never implicit. The runtime never auto-approves, consistent with the existing rule that permission requests are never auto-approved. A consumer that disappears leaves the request pending, not granted.
@@ -211,7 +214,7 @@ trait AgentAdapter {
 }
 ```
 
-- `AdapterCapabilities` flags: `streaming`, `resume`, `approvals`, `checkpoints`, `effort`, `images`, `todos`. Declarations are honest, per the compiled-adapter registry rules: an adapter that cannot surface permission requests declares `approvals: false`, and hosts hide the affordance rather than fake it.
+- `AdapterCapabilities` flags: `streaming`, `resume`, `approvals`, `checkpoints`, `effort`, `images`, `todos`, `external_tools`. Declarations are honest, per the compiled-adapter registry rules: an adapter that cannot surface permission requests declares `approvals: false`, and hosts hide the affordance rather than fake it.
 - One `AcpAdapter` covers every ACP-speaking agent, which is why it is its own row rather than a per-vendor adapter.
 - The existing six compiled CLI adapters remain the `CliAdapter` fallback path; nothing in the current run pipeline is discarded.
 
@@ -237,3 +240,4 @@ trait AgentAdapter {
 1. P0 - contract and facade. `AgentCommand`/`AgentEvent`/`Receipt`/`SessionSnapshot` types, the in-process `AgentRuntime` facade over the existing run machinery, `CliAdapter` as the honest fallback, `integrations.list`, `models.list` merging Advertised/Entitled/Available, session.subscribe replay from the run store.
 2. P1 - deep adapters and durability. `CodexAdapter` over app-server and `ClaudeAdapter` over stream-json with live approvals, Checkpoints, `quota.observed`, and the stdio JSON-RPC bridge (`aifuel runtime`).
 3. P2 - coverage. `AcpAdapter`, `OpenCodeAdapter`, `checkpoint.restore`, `model.select` mid-session, image attachments.
+4. P3 - thin hosts. Structured approval answers and elicitation, `externalTools` enforcement with provider-side readiness, session-owner scoped reconcile, and `RuntimeExecutionAdapter`: a shim implementing the legacy execution contract over `AgentRuntime` so `aifuel run` and `aifuel mcp execution` drive real runtime sessions without discarding owner routing, deadlines, or `RunResult` semantics.
