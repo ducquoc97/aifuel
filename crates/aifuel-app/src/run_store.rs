@@ -16,24 +16,69 @@ use crate::run_management::{event_size, now};
 use crate::session_store::{PersistedSession, SessionStore};
 use aifuel_core::{MAX_EVENT_BYTES_PER_RUN, RunEvent, RunEventKind, RunState, RunStatus};
 use rusqlite::{Connection, OptionalExtension, params};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use helpers::{invalid_text, pid_alive};
 use schema::{
-    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, SCHEMA, SCHEMA_VERSION, TERMINAL_EVENT_KINDS,
-    TERMINAL_STATES,
+    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5,
+    MIGRATION_V6, SCHEMA, SCHEMA_VERSION, TERMINAL_EVENT_KINDS, TERMINAL_STATES,
 };
 
 pub use error::RunStoreError;
 pub(crate) use records::{CompletedRun, StartedRun, StoredEventPage, StoredRun};
+pub use records::{ReplayPage, StoredAgentSession};
 
 /// History writes are best-effort: an active run must not fail because its
 /// metadata could not be persisted, but a silent drop hides a degraded
 /// install, so failures are reported on stderr instead.
-pub(crate) fn warn_store_write(error: &RunStoreError) {
+pub fn warn_store_write(error: &RunStoreError) {
     eprintln!("aifuel: run history write failed: {error}");
+}
+
+/// Distinguishes stores opened in quick succession inside one process when
+/// minting agent-session owner ids.
+static OWNER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// The process-local set of live agent-session owners, counting how many
+/// runtimes registered each id. An `AgentRuntime` registers its store's
+/// owner while it drives sessions and the id leaves the set when every
+/// registration drops, so another runtime in this process can tell a live
+/// host's sessions from an exited host's without trusting pid reuse.
+fn live_owners() -> &'static Mutex<BTreeMap<String, usize>> {
+    static LIVE: OnceLock<Mutex<BTreeMap<String, usize>>> = OnceLock::new();
+    LIVE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// The liveness token for one agent-session owner id. While the guard lives
+/// the owner counts as live for same-process session reconciliation;
+/// dropping it marks the owner's sessions adoptable by the next opener.
+#[derive(Debug)]
+pub struct OwnerGuard {
+    id: String,
+}
+
+impl OwnerGuard {
+    /// The registered owner id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl Drop for OwnerGuard {
+    fn drop(&mut self) {
+        let mut live = live_owners().lock().expect("live owners mutex");
+        if let Some(count) = live.get_mut(&self.id) {
+            *count -= 1;
+            if *count == 0 {
+                live.remove(&self.id);
+            }
+        }
+    }
 }
 
 /// A shared handle to the per-user run history database.
@@ -45,6 +90,10 @@ pub(crate) fn warn_store_write(error: &RunStoreError) {
 pub struct RunStore {
     connection: Arc<Mutex<Connection>>,
     owner_pid: u32,
+    /// The owner id stamped on `agent_sessions` rows this store writes: a
+    /// process id plus an open-instance stamp, so two stores in one process
+    /// own disjoint session sets and a reopened runtime owns its own.
+    owner: String,
 }
 
 impl RunStore {
@@ -82,18 +131,89 @@ impl RunStore {
             "1" => {
                 connection.execute_batch(MIGRATION_V1)?;
                 connection.execute_batch(MIGRATION_V2)?;
+                connection.execute_batch(MIGRATION_V3)?;
+                connection.execute_batch(MIGRATION_V4)?;
+                connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
             }
-            "2" => connection.execute_batch(MIGRATION_V2)?,
+            "2" => {
+                connection.execute_batch(MIGRATION_V2)?;
+                connection.execute_batch(MIGRATION_V3)?;
+                connection.execute_batch(MIGRATION_V4)?;
+                connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
+            }
+            "3" => {
+                connection.execute_batch(MIGRATION_V3)?;
+                connection.execute_batch(MIGRATION_V4)?;
+                connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
+            }
+            "4" => {
+                connection.execute_batch(MIGRATION_V4)?;
+                connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
+            }
+            "5" => {
+                connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
+            }
+            "6" => connection.execute_batch(MIGRATION_V6)?,
             version if version == SCHEMA_VERSION.to_string() => {}
             version => return Err(RunStoreError::UnsupportedSchema(version.to_owned())),
         }
         connection.execute_batch(SCHEMA)?;
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         let store = Self {
             connection: Arc::new(Mutex::new(connection)),
             owner_pid: std::process::id(),
+            owner: format!(
+                "{}:{:x}:{}",
+                std::process::id(),
+                stamp,
+                OWNER_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ),
         };
         store.reconcile_orphaned_runs()?;
         Ok(store)
+    }
+
+    /// Register this store's agent-session owner id as live in this
+    /// process. An `AgentRuntime` calls it once at assemble and holds the
+    /// guard for its lifetime; the id leaves the live set when every
+    /// registration drops, marking the owner's sessions adoptable.
+    pub fn register_owner(&self) -> OwnerGuard {
+        *live_owners()
+            .lock()
+            .expect("live owners mutex")
+            .entry(self.owner.clone())
+            .or_default() += 1;
+        OwnerGuard {
+            id: self.owner.clone(),
+        }
+    }
+
+    /// Whether the recorded session owner is gone: `None` predates owner
+    /// scoping and reconciles like a dead pid; a foreign pid reads dead
+    /// through the same liveness probe `runs` uses; a same-pid id is live
+    /// only while a runtime in this process holds its registration. An
+    /// unparseable id is left untouched rather than guessed at.
+    fn session_owner_dead(&self, owner: Option<&str>) -> bool {
+        let Some(owner) = owner else { return true };
+        let Some((pid, _)) = owner.split_once(':') else {
+            return false;
+        };
+        match pid.parse::<u32>() {
+            Ok(pid) if pid == self.owner_pid => !live_owners()
+                .lock()
+                .expect("live owners mutex")
+                .contains_key(owner),
+            Ok(pid) => pid > 0 && !pid_alive(pid),
+            Err(_) => false,
+        }
     }
 
     /// Insert the accepted-run row before the first event is appended.
@@ -491,10 +611,12 @@ impl RunStore {
     }
 }
 
+mod commands;
 mod error;
 mod helpers;
 mod records;
 mod schema;
+mod session_log;
 
 #[cfg(test)]
 mod tests;

@@ -266,7 +266,7 @@ impl RunManager {
             kind: kind.clone(),
             interaction_kind: request.kind,
             description: request.description,
-            native_method: Some(request.method),
+            native_method: (!request.method.is_empty()).then_some(request.method),
             questions: request.questions,
             question_ids,
             parameters: Some(request.parameters),

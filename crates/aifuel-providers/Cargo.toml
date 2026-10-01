@@ -21,3 +21,4 @@ tokio.workspace = true
 
 [dev-dependencies]
 aifuel-app = { path = "../aifuel-app" }
+tiny_http.workspace = true

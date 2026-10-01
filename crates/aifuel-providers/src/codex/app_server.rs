@@ -14,6 +14,11 @@ use aifuel_core::{
 use mcp::{app_server_config, wait_for_mcp_tools};
 use process_wrap::tokio::TokioChildWrapper;
 use protocol::{expect_successful_response, protocol_error, read_message, send};
+// The session driver shares the app-server framing seam instead of
+// growing a parallel client.
+pub(crate) use mcp::{mcp_server_config, mcp_tools_are_ready};
+pub(crate) use protocol::read_message as protocol_read_message;
+pub(crate) use protocol::send as protocol_send;
 use serde_json::{Value, json};
 use settings::reported_run_settings;
 use std::fs;
@@ -102,7 +107,7 @@ pub(crate) async fn execute(
     })
 }
 
-fn spawn_app_server(cwd: &Path) -> Result<Box<dyn TokioChildWrapper>, AgentRunError> {
+pub(crate) fn spawn_app_server(cwd: &Path) -> Result<Box<dyn TokioChildWrapper>, AgentRunError> {
     for candidate in program_candidates("codex") {
         let mut command = owned_command(&candidate, |command| {
             command
@@ -159,6 +164,7 @@ where
     let sandbox = match request.access {
         AccessMode::ReadOnly => "read-only",
         AccessMode::WorkspaceWrite => "workspace-write",
+        AccessMode::Full => "danger-full-access",
     };
     let config = app_server_config(request)?;
     let thread_method = if request.resume.is_some() {
@@ -228,19 +234,28 @@ where
         .await?;
     }
 
-    send(stdin, json!({
-        "id":2,
-        "method":"turn/start",
-        "params":{
-            "threadId":thread_id,
-            "input":[{"type":"text","text":request.prompt}],
-            "model":request.model,
-            "effort":request.effort,
-            "approvalPolicy":"on-request",
-            "sandboxPolicy": if request.access == AccessMode::ReadOnly { json!({"type":"readOnly"}) } else { json!({"type":"workspaceWrite"}) },
-            "cwd":cwd
-        }
-    }), Some(setup_deadline)).await?;
+    send(
+        stdin,
+        json!({
+            "id":2,
+            "method":"turn/start",
+            "params":{
+                "threadId":thread_id,
+                "input":[{"type":"text","text":request.prompt}],
+                "model":request.model,
+                "effort":request.effort,
+                "approvalPolicy":"on-request",
+                "sandboxPolicy": match request.access {
+                    AccessMode::ReadOnly => json!({"type":"readOnly"}),
+                    AccessMode::WorkspaceWrite => json!({"type":"workspaceWrite"}),
+                    AccessMode::Full => json!({"type":"dangerFullAccess"}),
+                },
+                "cwd":cwd
+            }
+        }),
+        Some(setup_deadline),
+    )
+    .await?;
     expect_successful_response(stdout, 2, setup_deadline, cancellation).await?;
 
     let mut answer = String::new();

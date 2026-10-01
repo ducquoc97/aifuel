@@ -10,7 +10,9 @@ use std::process::Stdio;
 use crate::support::{TestDirectory, path_with};
 
 #[cfg(unix)]
-use crate::support::{ai_fuel_config_dir, install_fake_codex_app_server};
+use crate::support::{
+    ai_fuel_config_dir, install_fake_codex_app_server, seed_codex_authentication,
+};
 
 #[cfg(unix)]
 #[test]
@@ -41,6 +43,7 @@ fn stdin_prompt_and_working_directory_reach_the_verified_codex_adapter() {
     )
     .expect("execution policy should be writable");
     let app_server_log = install_fake_codex_app_server(directory.path());
+    seed_codex_authentication(&home);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([

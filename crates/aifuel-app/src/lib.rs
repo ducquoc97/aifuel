@@ -39,7 +39,9 @@ pub use gateway::{
     StreamableHttpServerDefinition, default_cwd,
 };
 pub use run_management::{AgentExecutionAdapters, RunManager, RunManagerPolicy};
-pub use run_store::{RunStore, RunStoreError};
+pub use run_store::{
+    OwnerGuard, ReplayPage, RunStore, RunStoreError, StoredAgentSession, warn_store_write,
+};
 pub use selection::{
     AccountContext, CatalogEvidenceStore, CatalogFreshness, CatalogLookup, CatalogModel,
     CatalogProvenance, CatalogRefreshResult, CatalogScope, CatalogSnapshot, ContentRetention,

@@ -9,7 +9,7 @@ use tokio::time::timeout;
 
 pub(super) const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
-pub(super) async fn send<W>(
+pub(crate) async fn send<W>(
     stdin: &mut W,
     message: Value,
     deadline: Option<Instant>,
@@ -54,7 +54,7 @@ where
     }
 }
 
-pub(super) async fn read_message<R>(
+pub(crate) async fn read_message<R>(
     stdout: &mut BufReader<R>,
     deadline: Option<Instant>,
     cancellation: &RunCancellationToken,

@@ -6,6 +6,9 @@ use aifuel_core::{
 };
 use std::path::PathBuf;
 
+mod commands;
+mod session_log;
+
 fn started_run(run_id: &str) -> StartedRun {
     StartedRun {
         run_id: run_id.to_owned(),
@@ -660,7 +663,11 @@ fn version_two_databases_gain_the_usage_column() {
             |row| row.get(0),
         )
         .expect("schema version reads");
-    assert_eq!(version, "3", "the migration advances the schema version");
+    assert_eq!(
+        version,
+        SCHEMA_VERSION.to_string(),
+        "the migration advances the schema version"
+    );
 
     // A row written before the column existed reads back as no usage.
     let old = store

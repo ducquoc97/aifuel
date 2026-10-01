@@ -328,7 +328,10 @@ fn parse_tools(args: &Value) -> Result<Option<Vec<String>>, RunManagementError> 
             })?;
         result.push(tool.to_owned());
     }
-    Ok(Some(result))
+    // An explicit empty array selects no tools, the same as omitting the
+    // argument - the CLI normalizes identically, so an absent enforcement
+    // request never trips the capability gate.
+    Ok((!result.is_empty()).then_some(result))
 }
 
 fn resolve_request(
@@ -491,4 +494,24 @@ fn resolve_request(
         },
         sources,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An explicit empty `external_tools` array selects no tools, identical
+    /// to omitting the argument - it must not trip capability enforcement.
+    #[test]
+    fn an_empty_external_tools_list_means_no_restriction() {
+        assert_eq!(parse_tools(&json!({})).expect("absent"), None);
+        assert_eq!(
+            parse_tools(&json!({"external_tools": []})).expect("empty"),
+            None
+        );
+        assert_eq!(
+            parse_tools(&json!({"external_tools": ["docs__search"]})).expect("one"),
+            Some(vec!["docs__search".to_owned()])
+        );
+    }
 }

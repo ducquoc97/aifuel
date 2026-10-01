@@ -10,6 +10,7 @@ dependencies = [
  "aifuel-core",
  "aifuel-mcp",
  "aifuel-providers",
+ "aifuel-runtime",
  "chrono",
  "serde",
  "serde_json",
@@ -71,8 +72,20 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tiny_http",
  "tokio",
  "toml_edit",
+]
+
+[[package]]
+name = "aifuel-runtime"
+version = "0.1.0"
+dependencies = [
+ "aifuel-app",
+ "aifuel-core",
+ "aifuel-providers",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

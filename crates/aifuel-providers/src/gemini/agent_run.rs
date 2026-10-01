@@ -39,6 +39,7 @@ fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
         match request.access {
             AccessMode::ReadOnly => "plan".to_owned(),
             AccessMode::WorkspaceWrite => "auto_edit".to_owned(),
+            AccessMode::Full => "yolo".to_owned(),
         },
         "--output-format".to_owned(),
         match request.output {

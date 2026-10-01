@@ -9,12 +9,16 @@ use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 
 pub(super) fn app_server_config(request: &RunRequest) -> Result<Value, AgentRunError> {
+    mcp_server_config(request.external_tools.as_deref().unwrap_or(&[]))
+}
+
+/// The `mcp_servers` config block for one exact Gateway tool selection:
+/// empty when no tools were requested, otherwise a single AI Fuel
+/// Gateway entry that launches `aifuel mcp gateway` filtered to those
+/// tools. Shared by the one-shot run path and the session handshake.
+pub(crate) fn mcp_server_config(tools: &[String]) -> Result<Value, AgentRunError> {
     let mut mcp_servers = serde_json::Map::new();
-    if let Some(tools) = request
-        .external_tools
-        .as_ref()
-        .filter(|tools| !tools.is_empty())
-    {
+    if !tools.is_empty() {
         let executable = std::env::current_exe().map_err(AgentRunError::Io)?;
         mcp_servers.insert(
             AIFUEL_GATEWAY_REGISTRATION_NAME.to_owned(),
@@ -68,7 +72,7 @@ where
     }
 }
 
-pub(super) fn mcp_tools_are_ready(
+pub(crate) fn mcp_tools_are_ready(
     response: &Value,
     expected_tools: &[String],
 ) -> Result<bool, AgentRunError> {

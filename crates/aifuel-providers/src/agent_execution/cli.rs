@@ -92,7 +92,7 @@ impl CliExecutionAdapter {
 
     fn integration_info(&self) -> AgentIntegrationInfo {
         super::inspection::inspect_agent(
-            self.provider,
+            ProviderId::from(self.provider),
             self.program,
             self.version_probe_args,
             self.authentication_probe_args,
@@ -143,6 +143,14 @@ impl CliExecutionAdapter {
         {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{} cannot enforce workspace-write access",
+                self.provider
+            )));
+        }
+        // Full access subsumes workspace-write: an adapter that cannot
+        // enforce the narrower boundary cannot claim the wider one either.
+        if request.access == AccessMode::Full && !self.capabilities.supports_workspace_write {
+            return Err(AgentRunError::InvalidRequest(format!(
+                "{} cannot enforce full access",
                 self.provider
             )));
         }

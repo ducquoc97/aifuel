@@ -46,7 +46,9 @@ fn start_resolve_and_result_share_the_owner_local_contract() {
 
 #[test]
 fn provider_questions_are_typed_and_parameters_remain_separate() {
-    let manager = RunManager::new(vec![Arc::new(InputAdapter)]);
+    let manager = RunManager::new(vec![Arc::new(InputAdapter {
+        method: "item/tool/requestUserInput",
+    })]);
     let started = manager.start_run(request()).expect("run starts");
     let mut pending = None;
     for _ in 0..100 {
@@ -76,6 +78,35 @@ fn provider_questions_are_typed_and_parameters_remain_separate() {
     manager
         .answer_input(&started.run_id, &pending.input_id, "workspace")
         .expect("typed input answer resumes the run");
+    assert_eq!(
+        wait_for_terminal(&manager, &started.run_id).state,
+        RunState::Succeeded
+    );
+    manager.shutdown();
+}
+
+/// A protocol-level ask carries no provider-native method name: recording
+/// `""` would read as a real method downstream, so it must be absent.
+#[test]
+fn an_empty_native_method_is_absent_on_the_pending_input() {
+    let manager = RunManager::new(vec![Arc::new(InputAdapter { method: "" })]);
+    let started = manager.start_run(request()).expect("run starts");
+    let mut pending = None;
+    for _ in 0..100 {
+        pending = manager
+            .get_run(&started.run_id)
+            .expect("run remains owner-local")
+            .pending_input;
+        if pending.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    let pending = pending.expect("native input is published");
+    assert_eq!(pending.native_method, None);
+    manager
+        .answer_input(&started.run_id, &pending.input_id, "workspace")
+        .expect("the ordinary answer still resumes the run");
     assert_eq!(
         wait_for_terminal(&manager, &started.run_id).state,
         RunState::Succeeded
@@ -253,6 +284,38 @@ fn workspace_write_runs_conflict_across_manager_instances() {
     first
         .cancel_run(&started.run_id)
         .expect("first write cancels");
+    wait.store(false, Ordering::Release);
+    first.shutdown();
+    second.shutdown();
+}
+
+#[test]
+fn full_access_runs_take_the_workspace_lock_too() {
+    // `full` mutates the workspace like `workspace-write`, so overlapping
+    // full-access runs serialize on the same directory lock.
+    let workspace = std::env::temp_dir();
+    let wait = Arc::new(AtomicBool::new(true));
+    let first = RunManager::new(vec![Arc::new(ProbeAdapter {
+        provider: ProviderKey::Claude,
+        wait: Arc::clone(&wait),
+    })]);
+    let second = RunManager::new(vec![Arc::new(ProbeAdapter {
+        provider: ProviderKey::Claude,
+        wait: Arc::clone(&wait),
+    })]);
+    let mut request = request();
+    request.access = AccessMode::Full;
+    request.working_directory = Some(workspace);
+    let started = first
+        .start_run(request.clone())
+        .expect("first full-access run starts");
+    let error = second
+        .start_run(request)
+        .expect_err("overlapping full-access runs must conflict");
+    assert_eq!(error.code, RunManagementErrorCode::WriteConflict);
+    first
+        .cancel_run(&started.run_id)
+        .expect("first run cancels");
     wait.store(false, Ordering::Release);
     first.shutdown();
     second.shutdown();

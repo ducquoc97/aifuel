@@ -4,6 +4,7 @@ members = [
     "crates/aifuel-app",
     "crates/aifuel-providers",
     "crates/aifuel-mcp",
+    "crates/aifuel-runtime",
     "crates/aifuel",
 ]
 resolver = "2"

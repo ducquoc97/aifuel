@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 mod agent_integration;
 mod agent_mcp_registration;
+mod agent_runtime;
 mod execution;
 mod integration;
 mod run_management;
@@ -19,6 +20,16 @@ pub use agent_integration::{
 };
 pub use agent_mcp_registration::{
     AIFUEL_GATEWAY_REGISTRATION_NAME, AgentMcpRegistrationAdapter, AgentMcpRegistrationError,
+};
+pub use agent_runtime::{
+    AGENT_RUNTIME_SCHEMA_VERSION, AdapterCapabilities, AgentAdapter, AgentCommand, AgentEvent,
+    AgentEventKind, AgentEventStream, AgentRuntimeError, AgentSessionHandle, ApprovalDecision,
+    ApprovalKind, ApprovalOption, ApprovalRequest, Attachment, AttachmentKind,
+    CheckpointDescriptor, CheckpointId, CommandId, ConsumerId, Effort, ExecutionAvailability,
+    FileDiff, IntegrationAuthKind, IntegrationStatus, IntegrationSummary, MessageStream,
+    ModelDescriptor, ModelSelection, PendingApproval, QuotaSummary, Receipt, ReceiptCode,
+    ReceiptOutcome, RequestId, RunId, RunOutcome, Seq, SessionId, SessionSnapshot, SessionStatus,
+    StartOptions, TodoItem, TodoItemStatus, UserInput,
 };
 pub use execution::{
     AccessMode, AgentExecutionAdapter, AgentInputQuestion, AgentInteractionHandler,

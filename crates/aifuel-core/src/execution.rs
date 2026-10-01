@@ -11,12 +11,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccessMode {
     #[serde(rename = "read-only")]
     ReadOnly,
     #[serde(rename = "workspace-write")]
     WorkspaceWrite,
+    /// Unrestricted access: the provider auto-approves every action.
+    #[serde(rename = "full")]
+    Full,
 }
 
 impl AccessMode {
@@ -25,6 +28,7 @@ impl AccessMode {
         match self {
             Self::ReadOnly => "read-only",
             Self::WorkspaceWrite => "workspace-write",
+            Self::Full => "full",
         }
     }
 
@@ -32,8 +36,9 @@ impl AccessMode {
         match value {
             "read-only" => Ok(Self::ReadOnly),
             "workspace-write" => Ok(Self::WorkspaceWrite),
+            "full" => Ok(Self::Full),
             _ => Err(format!(
-                "invalid access mode {value:?}; expected read-only or workspace-write"
+                "invalid access mode {value:?}; expected read-only, workspace-write, or full"
             )),
         }
     }
@@ -132,7 +137,7 @@ pub struct RunRequest {
     pub interaction_handler: Option<Arc<dyn AgentInteractionHandler>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentInteractionKind {
     OrdinaryInput,
@@ -143,7 +148,7 @@ pub enum AgentInteractionKind {
 }
 
 /// One normalized question for an Agent Run owner to present to a user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentInputQuestion {
     pub id: String,
     pub text: String,

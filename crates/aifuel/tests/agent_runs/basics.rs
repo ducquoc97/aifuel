@@ -9,6 +9,7 @@ use std::{
 
 use crate::support::{
     TestDirectory, install_fake_codex_app_server, install_fake_command, path_with,
+    seed_codex_authentication,
 };
 
 #[test]
@@ -106,6 +107,7 @@ fn account_selection_remains_explicitly_unsupported_for_each_current_adapter() {
 fn codex_jsonl_run_keeps_its_model_and_access_argument_contract() {
     let directory = TestDirectory::new("codex-options");
     let log_path = install_fake_codex_app_server(directory.path());
+    seed_codex_authentication(directory.path());
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([
             "run",
@@ -163,6 +165,7 @@ fn codex_jsonl_run_keeps_its_model_and_access_argument_contract() {
 fn codex_cli_run_uses_the_local_approval_command_and_resumes() {
     let directory = TestDirectory::new("codex-local-approval");
     let log_path = install_fake_codex_app_server(directory.path());
+    seed_codex_authentication(directory.path());
     let binary = env!("CARGO_BIN_EXE_aifuel");
     let mut child = Command::new(binary)
         .args([

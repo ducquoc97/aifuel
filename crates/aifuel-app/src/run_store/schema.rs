@@ -6,7 +6,7 @@
 //! only for `events.data`, which stays `NULL` unless the owning manager
 //! enables content retention.
 
-pub(super) const SCHEMA_VERSION: u32 = 3;
+pub(super) const SCHEMA_VERSION: u32 = 7;
 
 /// The `meta` table is created before any versioned migration so the schema
 /// version can be read even on a database that predates the migration.
@@ -72,6 +72,35 @@ CREATE TABLE IF NOT EXISTS events (
     data TEXT,
     PRIMARY KEY (run_id, seq)
 );
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    integration TEXT NOT NULL,
+    model TEXT,
+    effort TEXT,
+    cwd TEXT NOT NULL,
+    status TEXT NOT NULL,
+    resume_cursor TEXT,
+    owner TEXT,
+    external_tools TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_events (
+    session_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    run_id TEXT,
+    created_at REAL NOT NULL,
+    schema_version INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS session_events_run ON session_events(session_id, run_id, seq);
+CREATE TABLE IF NOT EXISTS commands (
+    command_id TEXT PRIMARY KEY,
+    receipt_json TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
 ";
 
 /// Schema version 1 stored only the provider key on runs and used it as the
@@ -106,6 +135,69 @@ UPDATE meta SET value = '2' WHERE key = 'schema_version';
 pub(super) const MIGRATION_V2: &str = "
 ALTER TABLE runs ADD COLUMN usage TEXT;
 UPDATE meta SET value = '3' WHERE key = 'schema_version';
+";
+
+/// Schema version 3 predates the Session Event Log: `session_events` holds
+/// the durable per-session contract event sequence and `agent_sessions` the
+/// persisted session read-model projection. Both are pure additions, so the
+/// version stamp is all the migration needs; the schema batch that follows
+/// creates the tables.
+pub(super) const MIGRATION_V3: &str = "
+UPDATE meta SET value = '4' WHERE key = 'schema_version';
+";
+
+/// Schema version 4 predates the command receipt log: `commands` holds the
+/// serialized Receipt recorded for each dispatched command id so retries
+/// answer idempotently. A pure addition, so the version stamp is all the
+/// migration needs; the schema batch creates the table.
+pub(super) const MIGRATION_V4: &str = "
+UPDATE meta SET value = '5' WHERE key = 'schema_version';
+";
+
+/// Schema version 5 predates Agent Session ownership: `owner` records the
+/// process instance that created the session so startup reconciliation and
+/// shutdown marking only touch sessions whose owner is gone. Versions
+/// before 4 have no `agent_sessions` table at all, so the migration creates
+/// it first to keep `ALTER TABLE` valid on every upgrade path; rows written
+/// before owner scoping keep `NULL` and reconcile as orphaned.
+pub(super) const MIGRATION_V5: &str = "
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    integration TEXT NOT NULL,
+    model TEXT,
+    effort TEXT,
+    cwd TEXT NOT NULL,
+    status TEXT NOT NULL,
+    resume_cursor TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+ALTER TABLE agent_sessions ADD COLUMN owner TEXT;
+UPDATE meta SET value = '6' WHERE key = 'schema_version';
+";
+
+/// Schema version 6 predates persisted session tool enforcement:
+/// `external_tools` holds the JSON tool list `session.create` declared so a
+/// startup resume can redeclare the same exact set instead of silently
+/// continuing on the provider's full tool surface. Versions before 5 have
+/// no `agent_sessions` table at all, so the migration creates it first to
+/// keep `ALTER TABLE` valid on every upgrade path; rows written before the
+/// column existed keep `NULL` and resume with no tool enforcement, the
+/// same honest posture they ran under.
+pub(super) const MIGRATION_V6: &str = "
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    integration TEXT NOT NULL,
+    model TEXT,
+    effort TEXT,
+    cwd TEXT NOT NULL,
+    status TEXT NOT NULL,
+    resume_cursor TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+ALTER TABLE agent_sessions ADD COLUMN external_tools TEXT;
+UPDATE meta SET value = '7' WHERE key = 'schema_version';
 ";
 
 pub(super) const TERMINAL_STATES: &str = "'succeeded', 'failed', 'timed_out', 'cancelled'";
