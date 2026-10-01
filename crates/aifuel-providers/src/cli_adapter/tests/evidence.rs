@@ -134,6 +134,13 @@ fn cli_fallback_adapters_cover_the_compiled_set() {
             supported(AgentCapability::Streaming)
         );
         assert_eq!(capabilities.resume, supported(AgentCapability::Resume));
+        // External tool enforcement follows the wrapped executor's declared
+        // evidence like every other capability - an executor that can
+        // enforce an exact selection must not read as unable.
+        assert_eq!(
+            capabilities.external_tools,
+            supported(AgentCapability::ExternalMcpTools)
+        );
         assert!(!capabilities.checkpoints);
     }
 }

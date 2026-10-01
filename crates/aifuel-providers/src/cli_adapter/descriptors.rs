@@ -48,7 +48,7 @@ pub fn execution_capabilities(execution: &dyn AgentExecutionAdapter) -> AdapterC
         effort: supported(AgentCapability::Effort),
         images: false,
         todos: false,
-        external_tools: false,
+        external_tools: supported(AgentCapability::ExternalMcpTools),
     }
 }
 
