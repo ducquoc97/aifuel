@@ -144,7 +144,8 @@ impl EventQueue {
 /// would hold events in the connection's buffer until the stream ends.
 fn stream_events(request: Request, queue: Arc<EventQueue>, receiver: mpsc::Receiver<Queued>) {
     let mut writer = request.into_writer();
-    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n";
+    let head =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n";
     if writer
         .write_all(head.as_bytes())
         .and_then(|()| writer.flush())
@@ -266,7 +267,13 @@ fn handle(shared: &Shared, request: Request) {
         (&Method::Post, "/mcp") => handle_post(shared, request),
         (&Method::Get, "/mcp") => handle_get(shared, request),
         (&Method::Delete, "/mcp") => handle_delete(shared, request),
-        _ => respond(request, 404, b"not found".to_vec(), Some("text/plain"), Vec::new()),
+        _ => respond(
+            request,
+            404,
+            b"not found".to_vec(),
+            Some("text/plain"),
+            Vec::new(),
+        ),
     }
 }
 
@@ -277,7 +284,13 @@ fn handle_post(shared: &Shared, mut request: Request) {
         .take(shared.max_message_bytes as u64 + 1)
         .read_to_end(&mut body);
     if body_result.is_err() {
-        respond_rpc(request, 400, Value::Null, -32700, "could not read the request body");
+        respond_rpc(
+            request,
+            400,
+            Value::Null,
+            -32700,
+            "could not read the request body",
+        );
         return;
     }
     if body.len() > shared.max_message_bytes {
@@ -293,7 +306,13 @@ fn handle_post(shared: &Shared, mut request: Request) {
     let message: Value = match serde_json::from_slice::<Value>(&body) {
         Ok(message) if message.is_object() => message,
         _ => {
-            respond_rpc(request, 400, Value::Null, -32700, "invalid JSON-RPC message");
+            respond_rpc(
+                request,
+                400,
+                Value::Null,
+                -32700,
+                "invalid JSON-RPC message",
+            );
             return;
         }
     };
@@ -313,8 +332,7 @@ fn handle_post(shared: &Shared, mut request: Request) {
             respond_message(request, session.handle(&message), None);
         }
         None => {
-            let is_initialize = message.get("method").and_then(Value::as_str)
-                == Some("initialize")
+            let is_initialize = message.get("method").and_then(Value::as_str) == Some("initialize")
                 && message.get("id").is_some();
             if !is_initialize {
                 respond_rpc(
@@ -355,8 +373,7 @@ fn handle_get(shared: &Shared, request: Request) {
         respond(
             request,
             400,
-            b"an MCP session is required; POST initialize first"
-                .to_vec(),
+            b"an MCP session is required; POST initialize first".to_vec(),
             Some("text/plain"),
             Vec::new(),
         );

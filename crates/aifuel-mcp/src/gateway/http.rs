@@ -120,7 +120,9 @@ impl HttpSession for GatewayHttpSession {
         };
         {
             let inbound = self.shared.inbound.lock().expect("gateway inbound mutex");
-            let queued = inbound.as_ref().is_some_and(|sender| sender.send(parsed).is_ok());
+            let queued = inbound
+                .as_ref()
+                .is_some_and(|sender| sender.send(parsed).is_ok());
             if !queued {
                 if let Some(key) = &request_key {
                     self.shared

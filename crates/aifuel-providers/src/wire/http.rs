@@ -6,7 +6,8 @@
 use crate::{CredentialStoreError, ResolvedAuth};
 use aifuel_core::{AgentRunError, AuthBinding, EndpointConfig, KeyDelivery};
 use reqwest::header::{
-    ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER, USER_AGENT,
+    ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER,
+    USER_AGENT,
 };
 use std::io;
 use std::str::FromStr;

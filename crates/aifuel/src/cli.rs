@@ -288,7 +288,9 @@ fn print_help() {
 
 fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("Usage: aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...] [--http [--host H] [--port P]]");
+        println!(
+            "Usage: aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...] [--http [--host H] [--port P]]"
+        );
         println!();
         println!("Serves the selected external MCP server over standard input and output.");
         println!("With --http it listens for streamable-HTTP MCP sessions on /mcp instead.");
@@ -327,11 +329,7 @@ fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
     if agent.trim().is_empty() {
         return Err("--agent MCP_HOST_ID cannot be empty".to_owned());
     }
-    if !http
-        && args
-            .iter()
-            .any(|arg| arg == "--host" || arg == "--port")
-    {
+    if !http && args.iter().any(|arg| arg == "--host" || arg == "--port") {
         return Err("--host and --port require aifuel mcp gateway --http".to_owned());
     }
 

@@ -51,18 +51,12 @@ where
             .map_err(|error| format!("could not start MCP runtime: {error}"))?,
     );
     let facade = Arc::new(facade);
-    crate::http::serve(
-        "aifuel mcp",
-        host,
-        port,
-        MAX_MESSAGE_BYTES,
-        move |_| {
-            Ok(MonitoringHttpSession {
-                facade: Arc::clone(&facade),
-                runtime: Arc::clone(&runtime),
-            })
-        },
-    )
+    crate::http::serve("aifuel mcp", host, port, MAX_MESSAGE_BYTES, move |_| {
+        Ok(MonitoringHttpSession {
+            facade: Arc::clone(&facade),
+            runtime: Arc::clone(&runtime),
+        })
+    })
 }
 
 struct MonitoringHttpSession<C> {

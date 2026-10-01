@@ -38,12 +38,7 @@ impl HttpResponse {
 }
 
 /// One blocking HTTP/1.1 exchange against `POST/GET/DELETE /mcp`.
-fn request(
-    port: u16,
-    method: &str,
-    session: Option<&str>,
-    body: Option<&Value>,
-) -> HttpResponse {
+fn request(port: u16, method: &str, session: Option<&str>, body: Option<&Value>) -> HttpResponse {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("server should accept");
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
@@ -51,9 +46,8 @@ fn request(
     let payload = body
         .map(|message| serde_json::to_vec(message).expect("message should serialize"))
         .unwrap_or_default();
-    let mut head = format!(
-        "{method} /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n"
-    );
+    let mut head =
+        format!("{method} /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n");
     if let Some(session) = session {
         head.push_str(&format!("MCP-Session-Id: {session}\r\n"));
         head.push_str("MCP-Protocol-Version: 2025-11-25\r\n");
@@ -72,7 +66,9 @@ fn request(
     let mut received = Vec::new();
     let mut chunk = [0_u8; 8192];
     loop {
-        let count = stream.read(&mut chunk).expect("response should be readable");
+        let count = stream
+            .read(&mut chunk)
+            .expect("response should be readable");
         if count == 0 {
             break;
         }
@@ -131,9 +127,7 @@ fn decode_chunked(raw: &[u8]) -> Vec<u8> {
             break;
         };
         let size = usize::from_str_radix(
-            std::str::from_utf8(&rest[..size_end])
-                .unwrap_or("0")
-                .trim(),
+            std::str::from_utf8(&rest[..size_end]).unwrap_or("0").trim(),
             16,
         )
         .unwrap_or(0);
@@ -152,9 +146,7 @@ fn decode_chunked(raw: &[u8]) -> Vec<u8> {
 }
 
 fn header_end(buffer: &[u8]) -> Option<usize> {
-    buffer
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 fn parse_headers(head: &[u8]) -> HashMap<String, String> {
@@ -312,8 +304,7 @@ fn mcp_serves_status_over_streamable_http() {
 #[test]
 fn mcp_serves_execution_over_streamable_http() {
     let directory = TestDirectory::new("mcp-http-execution");
-    let (child, port) =
-        start_http_mcp(&directory, &["mcp", "execution", "--http", "--port", "0"]);
+    let (child, port) = start_http_mcp(&directory, &["mcp", "execution", "--http", "--port", "0"]);
     let _server = ServerGuard(child);
 
     let session = initialize_and_notify(port);
@@ -380,7 +371,9 @@ fn mcp_serves_gateway_over_streamable_http() {
         .expect("server log should be creatable");
     let mut command = Command::new(env!("CARGO_BIN_EXE_aifuel"));
     command
-        .args(["mcp", "gateway", "--agent", "codex", "--http", "--port", "0"])
+        .args([
+            "mcp", "gateway", "--agent", "codex", "--http", "--port", "0",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::from(log));
@@ -452,7 +445,9 @@ fn mcp_serves_gateway_over_streamable_http() {
     let mut head = Vec::new();
     let mut chunk = [0_u8; 1024];
     while header_end(&head).is_none() {
-        let count = stream.read(&mut chunk).expect("SSE head should be readable");
+        let count = stream
+            .read(&mut chunk)
+            .expect("SSE head should be readable");
         assert!(count > 0, "SSE response should stay open");
         head.extend_from_slice(&chunk[..count]);
     }
