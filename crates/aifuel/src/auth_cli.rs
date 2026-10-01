@@ -24,7 +24,7 @@ pub fn run(args: &[String]) -> Result<u8, String> {
     }
 }
 
-fn credential_store() -> Result<CredentialStore, String> {
+pub(crate) fn credential_store() -> Result<CredentialStore, String> {
     let home = crate::user_home_dir()?;
     Ok(CredentialStore::new(
         crate::user_config_dir(&home)?.join("aifuel"),
@@ -131,8 +131,9 @@ fn list(args: &[String]) -> Result<u8, String> {
 }
 
 /// The credential source one integration's execution config declares, with
-/// live presence for env vars and store references.
-fn describe_source(
+/// live presence for env vars and store references. Shared with the
+/// dashboard Connect panel, which reports the same per-integration state.
+pub(crate) fn describe_source(
     descriptor: &aifuel_providers::IntegrationDescriptor,
     stored: &std::collections::BTreeMap<&CredentialRef, &CredentialMetadata>,
 ) -> String {
@@ -294,7 +295,8 @@ fn set_key(args: &[String]) -> Result<u8, String> {
 /// Authentication Binding declares plus that integration's id as the
 /// credential destination; anything else is treated as a raw Credential
 /// Reference. An ambiguous selector is an error, never a raw reference.
-fn resolve_credential_ref(
+/// Shared with the dashboard Connect panel's key submission.
+pub(crate) fn resolve_credential_ref(
     target: &str,
 ) -> Result<(CredentialRef, Option<aifuel_core::IntegrationId>), String> {
     use aifuel_providers::ResolveError;
@@ -381,7 +383,20 @@ fn remove(args: &[String]) -> Result<u8, String> {
     }
     println!("Removed credential {target}.");
 
+    for warning in removal_warnings(&reference)? {
+        eprintln!("aifuel: warning - {warning}");
+    }
+    Ok(0)
+}
+
+/// The warnings `aifuel auth remove` reports after deleting `reference`:
+/// integrations still binding it fail authentication until a replacement is
+/// stored, or keep authenticating when their declared env var remains set.
+/// Shared with the dashboard Connect panel's credential removal.
+pub(crate) fn removal_warnings(reference: &CredentialRef) -> Result<Vec<String>, String> {
+    let target = reference.as_str();
     let registry = crate::integration_registry()?;
+    let mut warnings = Vec::new();
     for descriptor in registry.list() {
         let id = descriptor.integration.id.as_str();
         match &descriptor.integration.execution {
@@ -391,11 +406,11 @@ fn remove(args: &[String]) -> Result<u8, String> {
                     ..
                 }
                 | AuthBinding::OAuth { credential, .. } => {
-                    if credential == &reference {
-                        eprintln!(
-                            "aifuel: warning - integration {id} still binds credential {target} \
-                             and will fail authentication until a replacement is stored"
-                        );
+                    if credential == reference {
+                        warnings.push(format!(
+                            "integration {id} still binds credential {target} and will fail \
+                             authentication until a replacement is stored"
+                        ));
                     }
                 }
                 AuthBinding::ApiKey {
@@ -405,18 +420,17 @@ fn remove(args: &[String]) -> Result<u8, String> {
                         },
                     ..
                 } => {
-                    if credential == &reference {
+                    if credential == reference {
                         if aifuel_providers::env_override(var).is_some() {
-                            eprintln!(
-                                "aifuel: warning - removing {target} leaves env var {var} active; \
-                                 integration {id} keeps authenticating from the environment"
-                            );
+                            warnings.push(format!(
+                                "removing {target} leaves env var {var} active; integration {id} \
+                                 keeps authenticating from the environment"
+                            ));
                         } else {
-                            eprintln!(
-                                "aifuel: warning - integration {id} still binds credential \
-                                 {target} and will fail authentication until a replacement is \
-                                 stored or {var} is exported"
-                            );
+                            warnings.push(format!(
+                                "integration {id} still binds credential {target} and will fail \
+                                 authentication until a replacement is stored or {var} is exported"
+                            ));
                         }
                     }
                 }
@@ -425,7 +439,7 @@ fn remove(args: &[String]) -> Result<u8, String> {
             ExecutionConfig::Cli { .. } => {}
         }
     }
-    Ok(0)
+    Ok(warnings)
 }
 
 fn next(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {

@@ -1,4 +1,5 @@
 pub mod auth_cli;
+pub mod connect;
 pub mod launcher;
 pub mod mcp_catalog;
 mod model_catalog;
