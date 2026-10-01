@@ -5,7 +5,9 @@
 
 use crate::{CredentialStoreError, ResolvedAuth};
 use aifuel_core::{AgentRunError, AuthBinding, EndpointConfig, KeyDelivery};
-use reqwest::header::{HeaderName, HeaderValue};
+use reqwest::header::{
+    ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
+};
 use std::io;
 use std::str::FromStr;
 use std::time::Duration;
@@ -84,6 +86,86 @@ pub(super) fn validate_configuration(
             "credential delivery header {name:?} is not a valid header name"
         )));
     }
+    Ok(())
+}
+
+/// The transport headers every wire request sends: a JSON body, an SSE
+/// accept, and the aifuel user agent. Protocol modules add their own
+/// protocol headers on top.
+pub(super) fn transport_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static(concat!("aifuel/", env!("CARGO_PKG_VERSION"))),
+    );
+    headers
+}
+
+/// The configured endpoint headers, applied over the transport defaults so
+/// endpoint config can adjust documented protocol headers such as
+/// `anthropic-version`.
+pub(super) fn apply_configured_headers(
+    headers: &mut HeaderMap,
+    endpoint: &EndpointConfig,
+) -> Result<(), AgentRunError> {
+    for (name, value) in &endpoint.extra_headers {
+        let name = HeaderName::from_str(name).map_err(|_| {
+            AgentRunError::InvalidRequest(format!(
+                "endpoint header {name:?} is not a valid header name"
+            ))
+        })?;
+        let value = HeaderValue::from_str(value).map_err(|_| {
+            AgentRunError::InvalidRequest(format!(
+                "endpoint header {name:?} is not a valid header value"
+            ))
+        })?;
+        headers.insert(name, value);
+    }
+    Ok(())
+}
+
+/// The managed Authentication Binding, applied last so endpoint config
+/// cannot override managed credential material on the wire.
+pub(super) fn apply_auth(
+    headers: &mut HeaderMap,
+    auth: &ResolvedAuth,
+) -> Result<(), AgentRunError> {
+    match auth {
+        ResolvedAuth::None => {}
+        ResolvedAuth::ApiKey { key, delivery } => match delivery {
+            KeyDelivery::Bearer => {
+                insert_sensitive(headers, AUTHORIZATION, &format!("Bearer {key}"))?
+            }
+            KeyDelivery::Header { name } => {
+                let name = HeaderName::from_str(name).map_err(|_| {
+                    AgentRunError::InvalidRequest(format!(
+                        "credential delivery header {name:?} is not a valid header name"
+                    ))
+                })?;
+                insert_sensitive(headers, name, key)?;
+            }
+        },
+        ResolvedAuth::OAuth { access_token, .. } => {
+            insert_sensitive(headers, AUTHORIZATION, &format!("Bearer {access_token}"))?
+        }
+    }
+    Ok(())
+}
+
+/// Insert credential material as a sensitive header so reqwest strips it on
+/// any redirect and never prints it in header `Debug` output.
+fn insert_sensitive(
+    headers: &mut HeaderMap,
+    name: HeaderName,
+    value: &str,
+) -> Result<(), AgentRunError> {
+    let mut value = HeaderValue::from_str(value).map_err(|_| {
+        AgentRunError::InvalidRequest("credential material is not a valid header value".to_owned())
+    })?;
+    value.set_sensitive(true);
+    headers.insert(name, value);
     Ok(())
 }
 

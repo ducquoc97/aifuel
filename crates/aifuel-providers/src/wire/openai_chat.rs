@@ -1,13 +1,12 @@
 //! The `openai_chat` Wire Api: request shaping and stream-payload verdicts
 //! for OpenAI-compatible chat completions endpoints.
 
+use super::http;
+use super::stream::DataVerdict;
 use crate::ResolvedAuth;
-use aifuel_core::{AgentRunError, EndpointConfig, KeyDelivery, TokenUsage};
-use reqwest::header::{
-    ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
-};
+use aifuel_core::{AgentRunError, EndpointConfig, TokenUsage};
+use reqwest::header::HeaderMap;
 use serde_json::{Value, json};
-use std::str::FromStr;
 
 /// The data payload that terminates a chat-completions stream.
 const DONE_PAYLOAD: &str = "[DONE]";
@@ -40,99 +39,10 @@ pub(crate) fn request_headers(
     endpoint: &EndpointConfig,
     auth: &ResolvedAuth,
 ) -> Result<HeaderMap, AgentRunError> {
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static(concat!("aifuel/", env!("CARGO_PKG_VERSION"))),
-    );
-    for (name, value) in &endpoint.extra_headers {
-        let name = HeaderName::from_str(name).map_err(|_| {
-            AgentRunError::InvalidRequest(format!(
-                "endpoint header {name:?} is not a valid header name"
-            ))
-        })?;
-        let value = HeaderValue::from_str(value).map_err(|_| {
-            AgentRunError::InvalidRequest(format!(
-                "endpoint header {name:?} is not a valid header value"
-            ))
-        })?;
-        headers.insert(name, value);
-    }
-    match auth {
-        ResolvedAuth::None => {}
-        ResolvedAuth::ApiKey { key, delivery } => match delivery {
-            KeyDelivery::Bearer => {
-                insert_sensitive(&mut headers, AUTHORIZATION, &format!("Bearer {key}"))?
-            }
-            KeyDelivery::Header { name } => {
-                let name = HeaderName::from_str(name).map_err(|_| {
-                    AgentRunError::InvalidRequest(format!(
-                        "credential delivery header {name:?} is not a valid header name"
-                    ))
-                })?;
-                insert_sensitive(&mut headers, name, key)?;
-            }
-        },
-        ResolvedAuth::OAuth { access_token, .. } => insert_sensitive(
-            &mut headers,
-            AUTHORIZATION,
-            &format!("Bearer {access_token}"),
-        )?,
-    }
+    let mut headers = http::transport_headers();
+    http::apply_configured_headers(&mut headers, endpoint)?;
+    http::apply_auth(&mut headers, auth)?;
     Ok(headers)
-}
-
-/// Insert credential material as a sensitive header so reqwest strips it on
-/// any redirect and never prints it in header `Debug` output.
-fn insert_sensitive(
-    headers: &mut HeaderMap,
-    name: HeaderName,
-    value: &str,
-) -> Result<(), AgentRunError> {
-    let mut value = HeaderValue::from_str(value).map_err(|_| {
-        AgentRunError::InvalidRequest("credential material is not a valid header value".to_owned())
-    })?;
-    value.set_sensitive(true);
-    headers.insert(name, value);
-    Ok(())
-}
-
-/// What one `data:` payload means for the run.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum DataVerdict {
-    /// Public answer text; `terminal` marks a chunk that also finished the
-    /// turn (a `finish_reason` on a chunk that still carried content). A
-    /// terminal chunk can still carry inline `usage` accounting.
-    Delta {
-        text: String,
-        terminal: bool,
-        model: Option<String>,
-        usage: Option<TokenUsage>,
-    },
-    /// A `finish_reason` chunk with no content: the turn is done, but an
-    /// `include_usage` endpoint still sends a usage-only chunk next, so the
-    /// stream keeps reading until `[DONE]` or EOF.
-    Finish {
-        model: Option<String>,
-        usage: Option<TokenUsage>,
-    },
-    /// The `[DONE]` terminator: nothing follows it.
-    Complete {
-        model: Option<String>,
-        usage: Option<TokenUsage>,
-    },
-    /// The provider reported a failure mid-stream.
-    Failed { message: String },
-    /// The provider reported token accounting for the run.
-    Usage {
-        usage: TokenUsage,
-        model: Option<String>,
-    },
-    /// A payload carrying no answer content: role priming or a keepalive
-    /// body.
-    Ignored { model: Option<String> },
 }
 
 /// Classify one event payload. `event` is the SSE `event:` field when the

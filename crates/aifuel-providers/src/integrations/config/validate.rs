@@ -92,7 +92,7 @@ pub(super) fn build_descriptor(
         };
         if !crate::wire::serves(protocol) {
             return Err(invalid(format!(
-                "wire_api '{wire_api}' names a compiled protocol with no execution engine in this build; serveable: openai-chat"
+                "wire_api '{wire_api}' names a compiled protocol with no execution engine in this build; serveable: openai-chat, anthropic-messages"
             )));
         }
         let auth = entry

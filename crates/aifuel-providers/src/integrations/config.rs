@@ -37,9 +37,9 @@
 //! adapter by id, or `endpoint` plus `wire_api` plus `auth` configure an
 //! HTTP integration. `name`, `endpoint.headers`,
 //! `endpoint.request_timeout_seconds`, and `monitoring` are optional;
-//! `name` defaults to the id. `wire_api` is `openai-chat` - the other
-//! compiled protocol names are recognized but rejected because no execution
-//! engine serves them in this build. `auth.kind` is one of:
+//! `name` defaults to the id. `wire_api` is `openai-chat` or
+//! `anthropic-messages` - `openai-responses` is recognized but rejected
+//! because no execution engine serves it in this build. `auth.kind` is one of:
 //!
 //! - `"none"` - no credential; the field list must end there.
 //! - `"api-key-env"` - resolve the key from the named `var` at run time. The

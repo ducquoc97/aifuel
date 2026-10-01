@@ -57,7 +57,7 @@ pub(crate) fn reject_unsupported(
         .is_none_or(|model| model.trim().is_empty())
     {
         return Err(AgentRunError::InvalidRequest(format!(
-            "{integration} requires a model: the openai_chat Wire Api has no \
+            "{integration} requires a model: this Wire Api endpoint has no \
              provider-side default"
         )));
     }

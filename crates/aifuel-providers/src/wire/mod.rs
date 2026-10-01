@@ -2,8 +2,9 @@
 //! requests against a configured endpoint, per
 //! `docs/specs/provider-integrations.md`.
 //!
-//! The P1 surface is `WireApi::OpenAiChat` only: one streamed
-//! chat-completions request per run. Honest limits of this path:
+//! The served surface is `WireApi::OpenAiChat` and
+//! `WireApi::AnthropicMessages`: one streamed request per run. Honest
+//! limits of this path:
 //!
 //! - AI Fuel executes no provider-side tools, so read-only access is
 //!   honestly enforceable and workspace-write access is never claimed.
@@ -13,6 +14,7 @@
 //!   reason, is a failure rather than a silent success; partial output is
 //!   preserved.
 
+mod anthropic_messages;
 mod capabilities;
 mod http;
 mod openai_chat;
@@ -42,11 +44,12 @@ const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// run deadline.
 const POLL_TICK: Duration = Duration::from_millis(50);
 
-/// Whether this build compiles an execution engine for `protocol`. P1
-/// serves `OpenAiChat` only; config validation rejects other protocols
-/// rather than registering an integration that can never execute.
+/// Whether this build compiles an execution engine for `protocol`. The
+/// served set is `OpenAiChat` and `AnthropicMessages`; config validation
+/// rejects other protocols rather than registering an integration that can
+/// never execute.
 pub fn serves(protocol: WireApi) -> bool {
-    matches!(protocol, WireApi::OpenAiChat)
+    matches!(protocol, WireApi::OpenAiChat | WireApi::AnthropicMessages)
 }
 
 /// The failures constructing a [`WireExecutionAdapter`] can report. None of
@@ -54,7 +57,7 @@ pub fn serves(protocol: WireApi) -> bool {
 #[derive(Debug)]
 pub enum WireAdapterError {
     /// The integration's execution configuration is not an
-    /// `ExecutionConfig::Http` binding for `WireApi::OpenAiChat`.
+    /// `ExecutionConfig::Http` binding for a served Wire Api.
     IncompatibleExecution(String),
     /// The endpoint or authentication configuration cannot produce a
     /// well-formed request: an unparseable base URL, a non-http(s) scheme,
@@ -88,7 +91,7 @@ impl std::error::Error for WireAdapterError {
 }
 
 /// An [`AgentExecutionAdapter`] serving one HTTP Provider Integration over
-/// an OpenAI-compatible Wire Api.
+/// a compiled Wire Api engine.
 ///
 /// One adapter is constructed per configured integration; it never falls
 /// back to another integration and never replays a request whose outcome is
@@ -97,13 +100,16 @@ pub struct WireExecutionAdapter {
     integration: IntegrationId,
     provider: ProviderId,
     endpoint: EndpointConfig,
+    protocol: WireApi,
     auth: AuthBinding,
     credentials: CredentialStore,
     client: std::sync::OnceLock<reqwest::Client>,
 }
 
 impl WireExecutionAdapter {
-    /// An adapter for one `WireApi::OpenAiChat` HTTP integration.
+    /// An adapter for one HTTP integration over a served [`WireApi`].
+    /// A protocol with no compiled engine is rejected rather than
+    /// approximated.
     ///
     /// `credentials` resolves the [`AuthBinding`] per run; it is a cheap
     /// handle rooted at the AI Fuel config directory, not retained
@@ -112,14 +118,22 @@ impl WireExecutionAdapter {
         integration: IntegrationId,
         provider: ProviderId,
         endpoint: EndpointConfig,
+        protocol: WireApi,
         auth: AuthBinding,
         credentials: CredentialStore,
     ) -> Result<Self, WireAdapterError> {
+        if !serves(protocol) {
+            return Err(WireAdapterError::IncompatibleExecution(format!(
+                "integration {integration} speaks wire protocol {protocol:?}, which has no \
+                 execution engine in this build"
+            )));
+        }
         http::validate_configuration(&endpoint, &auth)?;
         Ok(Self {
             integration,
             provider,
             endpoint,
+            protocol,
             auth,
             credentials,
             client: std::sync::OnceLock::new(),
@@ -139,9 +153,9 @@ impl WireExecutionAdapter {
         Ok(self.client.get_or_init(|| client))
     }
 
-    /// An adapter for the HTTP `openai_chat` execution configuration of one
-    /// Provider Integration. CLI integrations and other Wire Api protocols
-    /// are rejected rather than approximated.
+    /// An adapter for the HTTP execution configuration of one Provider
+    /// Integration. CLI integrations and Wire Api protocols with no
+    /// compiled engine are rejected rather than approximated.
     pub fn from_integration(
         integration: &Integration,
         credentials: CredentialStore,
@@ -149,22 +163,16 @@ impl WireExecutionAdapter {
         match &integration.execution {
             ExecutionConfig::Http {
                 endpoint,
-                protocol: WireApi::OpenAiChat,
+                protocol,
                 auth,
             } => Self::new(
                 integration.id.clone(),
                 integration.provider.clone(),
                 endpoint.clone(),
+                *protocol,
                 auth.clone(),
                 credentials,
             ),
-            ExecutionConfig::Http { protocol, .. } => {
-                Err(WireAdapterError::IncompatibleExecution(format!(
-                    "integration {} speaks wire protocol {protocol:?}, which the \
-                     openai_chat adapter does not serve",
-                    integration.id
-                )))
-            }
             ExecutionConfig::Cli { .. } => Err(WireAdapterError::IncompatibleExecution(format!(
                 "integration {} is a CLI integration; the provider CLI owns its \
                  credential and execution",
@@ -225,10 +233,14 @@ impl WireExecutionAdapter {
     ) -> Result<RunResult, AgentRunError> {
         let started_at = Instant::now();
         let deadline = request.timeout.map(|timeout| started_at + timeout);
-        let url = openai_chat::completions_url(&self.endpoint.base_url);
-        let headers = openai_chat::request_headers(&self.endpoint, &auth)?;
         let model = request.model.as_deref().expect("validate requires a model");
-        let body = openai_chat::request_body(model, &request.prompt);
+        let prepared = PreparedRequest::for_protocol(
+            self.protocol,
+            &self.endpoint,
+            &auth,
+            model,
+            &request.prompt,
+        )?;
         let send_timeout = self
             .endpoint
             .request_timeout_seconds
@@ -236,9 +248,9 @@ impl WireExecutionAdapter {
 
         let send = self
             .client()?
-            .post(&url)
-            .headers(headers)
-            .json(&body)
+            .post(&prepared.url)
+            .headers(prepared.headers)
+            .json(&prepared.body)
             .send();
         let mut send = std::pin::pin!(send);
         let mut ticks = tokio::time::interval(POLL_TICK);
@@ -294,6 +306,7 @@ impl WireExecutionAdapter {
 
         let outcome = drive_stream(
             &mut response,
+            prepared.classify,
             deadline,
             STREAM_IDLE_TIMEOUT,
             POLL_TICK,
@@ -395,6 +408,44 @@ impl WireExecutionAdapter {
                 .clone()
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
         }
+    }
+}
+
+/// The pieces of one run's request a served Wire Api supplies: where to
+/// send it, the headers and JSON body, and the event classifier the stream
+/// driver applies. Construction is the single dispatch point so the run
+/// path below reads protocol-agnostic.
+struct PreparedRequest {
+    url: String,
+    headers: reqwest::header::HeaderMap,
+    body: serde_json::Value,
+    classify: stream::Classifier,
+}
+
+impl PreparedRequest {
+    fn for_protocol(
+        protocol: WireApi,
+        endpoint: &EndpointConfig,
+        auth: &ResolvedAuth,
+        model: &str,
+        prompt: &str,
+    ) -> Result<Self, AgentRunError> {
+        Ok(match protocol {
+            WireApi::OpenAiChat => Self {
+                url: openai_chat::completions_url(&endpoint.base_url),
+                headers: openai_chat::request_headers(endpoint, auth)?,
+                body: openai_chat::request_body(model, prompt),
+                classify: openai_chat::classify_event,
+            },
+            WireApi::AnthropicMessages => Self {
+                url: anthropic_messages::messages_url(&endpoint.base_url),
+                headers: anthropic_messages::request_headers(endpoint, auth)?,
+                body: anthropic_messages::request_body(model, prompt),
+                classify: anthropic_messages::classify_event,
+            },
+            // Construction (`serves`) guarantees a served protocol.
+            other => unreachable!("wire adapter built for unserved protocol {other:?}"),
+        })
     }
 }
 
