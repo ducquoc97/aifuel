@@ -111,7 +111,8 @@ pub fn store_key(integration: &str, material: &str) -> Result<(), String> {
 }
 
 /// Delete the Managed Credential `credential` names - the same operation
-/// `aifuel auth remove <credential>` performs, returning its warnings about
+/// `aifuel auth remove <credential>` performs, returning its notices: pool
+/// members that kept an integration authenticating, and warnings about
 /// integrations that still bind the reference or keep an env var active.
 pub fn remove_credential(credential: &str) -> Result<Vec<String>, String> {
     let reference = CredentialRef::new(credential);
@@ -121,5 +122,6 @@ pub fn remove_credential(credential: &str) -> Result<Vec<String>, String> {
     if !removed {
         return Err(format!("no managed credential named {credential}"));
     }
-    crate::auth_cli::removal_warnings(&reference)
+    let (notes, warnings) = crate::auth_cli::removal_warnings(&reference)?;
+    Ok(notes.into_iter().chain(warnings).collect())
 }

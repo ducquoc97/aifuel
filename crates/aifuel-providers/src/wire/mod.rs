@@ -18,16 +18,18 @@ mod anthropic_messages;
 mod capabilities;
 mod http;
 mod openai_chat;
+mod pool;
 pub(crate) mod sse;
 mod stream;
 
-use crate::{CredentialStore, ResolvedAuth};
+use crate::{ApiKeyState, CredentialStore, ResolvedAuth};
 use aifuel_core::{
     AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter, AgentRunError,
     AgentRunOutputHandler, AuthBinding, EndpointConfig, ExecutionConfig, ExecutionMode,
     Integration, IntegrationId, ProviderId, RunCancellationToken, RunRequest, RunResult, RunStatus,
     WireApi,
 };
+use pool::{KeyAttempt, merge_notes};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
@@ -95,7 +97,11 @@ impl std::error::Error for WireAdapterError {
 ///
 /// One adapter is constructed per configured integration; it never falls
 /// back to another integration and never replays a request whose outcome is
-/// ambiguous.
+/// ambiguous. Within an `AuthBinding::ApiKey` it rotates through the Key
+/// Pool: a `429` cools the key down (`Retry-After` honored, else a modest
+/// exponential step) and the request continues with the next healthy
+/// member, and a `401`/`403` marks the key invalid. Persisted health makes
+/// a cooled key survive restarts; a success clears the member's state.
 pub struct WireExecutionAdapter {
     integration: IntegrationId,
     provider: ProviderId,
@@ -201,12 +207,9 @@ impl WireExecutionAdapter {
         // Credential resolution is blocking file I/O; this synchronous
         // caller context is a permitted place for it, and the resolved
         // material crosses into the async worker by value, not by reference
-        // to the store. Resolving for this integration enforces the
+        // to the store. Resolving for this integration enforces each
         // credential's recorded destination binding.
-        let auth = self
-            .credentials
-            .resolve(&self.auth, &self.integration)
-            .map_err(http::auth_error)?;
+        let attempts = self.resolve_attempts().map_err(http::auth_error)?;
         let request = request.clone();
         let cancellation = cancellation.clone();
         std::thread::scope(|scope| {
@@ -216,7 +219,12 @@ impl WireExecutionAdapter {
                     .enable_time()
                     .build()
                     .map_err(|error| AgentRunError::Io(io::Error::other(error)))?;
-                runtime.block_on(self.execute_async(&request, &cancellation, output_handler, auth))
+                runtime.block_on(self.execute_async(
+                    &request,
+                    &cancellation,
+                    output_handler,
+                    attempts,
+                ))
             });
             worker.join().map_err(|_| {
                 AgentRunError::InvalidRequest("wire execution worker panicked".to_owned())
@@ -224,37 +232,28 @@ impl WireExecutionAdapter {
         })
     }
 
-    async fn execute_async(
+    /// Send the request once with `auth` and return the endpoint's
+    /// response, whatever its status. The send outcome is never retried on
+    /// ambiguity - the request may already have reached the endpoint and
+    /// been billed - and cancellation, the run deadline, and the configured
+    /// request timeout are polled while the send is in flight.
+    async fn request_response(
         &self,
-        request: &RunRequest,
+        prepared: &PreparedRequest,
+        deadline: Option<Instant>,
+        send_timeout: Option<Duration>,
         cancellation: &RunCancellationToken,
-        output_handler: Option<&dyn AgentRunOutputHandler>,
-        auth: ResolvedAuth,
-    ) -> Result<RunResult, AgentRunError> {
-        let started_at = Instant::now();
-        let deadline = request.timeout.map(|timeout| started_at + timeout);
-        let model = request.model.as_deref().expect("validate requires a model");
-        let prepared = PreparedRequest::for_protocol(
-            self.protocol,
-            &self.endpoint,
-            &auth,
-            model,
-            &request.prompt,
-        )?;
-        let send_timeout = self
-            .endpoint
-            .request_timeout_seconds
-            .map(Duration::from_secs);
-
+    ) -> Result<reqwest::Response, AgentRunError> {
         let send = self
             .client()?
             .post(&prepared.url)
-            .headers(prepared.headers)
+            .headers(prepared.headers.clone())
             .json(&prepared.body)
             .send();
         let mut send = std::pin::pin!(send);
+        let attempt_started = Instant::now();
         let mut ticks = tokio::time::interval(POLL_TICK);
-        let mut response = loop {
+        loop {
             let mut outcome = None;
             tokio::select! {
                 result = &mut send => outcome = Some(result),
@@ -268,7 +267,7 @@ impl WireExecutionAdapter {
                         ));
                     }
                     if let Some(timeout) = send_timeout
-                        && started_at.elapsed() >= timeout
+                        && attempt_started.elapsed() >= timeout
                     {
                         return Err(AgentRunError::Timeout(format!(
                             "the endpoint did not respond within the configured {}s request timeout",
@@ -277,13 +276,88 @@ impl WireExecutionAdapter {
                     }
                 }
             }
-            // The send outcome is not retried on ambiguity: the request may
-            // already have reached the endpoint and been billed.
             if let Some(result) = outcome {
-                break result.map_err(|error| AgentRunError::Io(io::Error::other(error)))?;
+                return result.map_err(|error| AgentRunError::Io(io::Error::other(error)));
             }
+        }
+    }
+
+    async fn execute_async(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+        output_handler: Option<&dyn AgentRunOutputHandler>,
+        mut attempts: Vec<KeyAttempt>,
+    ) -> Result<RunResult, AgentRunError> {
+        let started_at = Instant::now();
+        let deadline = request.timeout.map(|timeout| started_at + timeout);
+        let model = request.model.as_deref().expect("validate requires a model");
+        let send_timeout = self
+            .endpoint
+            .request_timeout_seconds
+            .map(Duration::from_secs);
+
+        // Pool bookkeeping that outlives one attempt: rotation notes join
+        // the run's diagnostics so `aifuel run` output reports that a
+        // credential was rotated and why.
+        let mut pool_notes: Vec<String> = Vec::new();
+
+        let (mut response, index, prepared) = loop {
+            let Some(index) = attempts.iter().position(KeyAttempt::usable) else {
+                // Every member cooled or went invalid before this run (the
+                // state persists across restarts): sending would just earn
+                // another 429, so the run fails fast instead.
+                return Err(AgentRunError::InvalidRequest(
+                    self.pool_exhausted_message(&attempts),
+                ));
+            };
+            attempts[index].attempted = true;
+            // Each pooled key carries its own resolved material, so the
+            // request is prepared per attempt: headers embed that key.
+            // Credential material that cannot form a valid header can never
+            // authenticate; skip it like a rejection rather than blocking
+            // healthier pool members.
+            let prepared = match PreparedRequest::for_protocol(
+                self.protocol,
+                &self.endpoint,
+                &attempts[index].auth,
+                model,
+                &request.prompt,
+            ) {
+                Ok(prepared) => prepared,
+                Err(AgentRunError::InvalidRequest(reason)) => {
+                    pool_notes.push(format!("a pooled credential was unusable: {reason}"));
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let response = match self
+                .request_response(&prepared, deadline, send_timeout, cancellation)
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => return Err(error),
+            };
+            let status = response.status();
+            if matches!(status.as_u16(), 401 | 403 | 429) {
+                self.record_key_failure(
+                    &attempts[index],
+                    status.as_u16(),
+                    response.headers(),
+                    &mut pool_notes,
+                );
+                if attempts.iter().any(KeyAttempt::usable) {
+                    pool_notes.push(format!(
+                        "the endpoint answered HTTP {status} for a pooled key; \
+                         the run rotated to the next healthy key"
+                    ));
+                    continue;
+                }
+            }
+            break (response, index, prepared);
         };
 
+        let auth = &attempts[index].auth;
         if !response.status().is_success() {
             let status = response.status();
             // Endpoint error bodies reach run diagnostics only after
@@ -291,10 +365,12 @@ impl WireExecutionAdapter {
             // the Authorization header back into its own error body.
             let diagnostics = read_bounded_body(&mut response)
                 .await
-                .map(|body| http::redact(body, &auth));
+                .map(|body| http::redact(body, auth));
             // HTTP 402 (payment/quota) and 429 (rate limit) are
             // provider-reported allowance exhaustion, an explicit signal
-            // the run failed on the Quota Pool rather than the request.
+            // the run failed on the Quota Pool rather than the request. A
+            // pooled run that rotated past every member still ends on the
+            // last response, so the flag reflects the final answer.
             let quota_exhausted = matches!(status.as_u16(), 402 | 429)
                 || diagnostics
                     .as_deref()
@@ -306,9 +382,20 @@ impl WireExecutionAdapter {
                 String::new(),
                 None,
                 Some(format!("the endpoint returned HTTP {status}")),
-                diagnostics,
+                merge_notes(diagnostics, pool_notes),
                 None,
                 quota_exhausted,
+            ));
+        }
+
+        // A success is fresher evidence than any recorded failure state:
+        // clear it so the member resumes full pool duty.
+        if let Some(reference) = &attempts[index].reference
+            && attempts[index].state != ApiKeyState::default()
+            && let Err(error) = self.credentials.clear_key_state(reference)
+        {
+            pool_notes.push(format!(
+                "the failure state of credential {reference} could not be cleared: {error}"
             ));
         }
 
@@ -336,7 +423,7 @@ impl WireExecutionAdapter {
             StreamEnd::Failed(message) => (
                 RunStatus::Failed,
                 false,
-                Some(http::redact(message.clone(), &auth)),
+                Some(http::redact(message.clone(), auth)),
             ),
             StreamEnd::Cancelled => (
                 RunStatus::Cancelled,
@@ -359,7 +446,7 @@ impl WireExecutionAdapter {
             outcome.output,
             outcome.model,
             error,
-            diagnostics,
+            merge_notes(diagnostics, pool_notes),
             outcome.usage,
             false,
         ))

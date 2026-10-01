@@ -4,9 +4,21 @@
 //! Integration - provider-owned (CLI), a named environment variable, a
 //! managed Credential Reference, or none - and write API-key records into the
 //! Credential Store. Secret material is never printed.
+//!
+//! API-key Managed Credentials form Key Pools: `set-key` on an integration
+//! appends a member (`<ref>` first, then `<ref>/2`, `<ref>/3`, ...), and the
+//! HTTP execution path rotates through the pool when a key is rate-limited.
+//! `auth list` shows pool membership and per-key health; `auth remove`
+//! deletes one member.
 
 use aifuel_core::{ApiKeySource, AuthBinding, CredentialRef, ExecutionConfig};
-use aifuel_providers::{CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore};
+use aifuel_providers::{CredentialKind, CredentialStore};
+
+mod list;
+
+// The Connect panel reuses `auth list`'s per-integration credential-state
+// wording so the dashboard and CLI describe one source of truth.
+pub(crate) use list::describe_source;
 
 /// Run `aifuel auth <subcommand>`.
 pub fn run(args: &[String]) -> Result<u8, String> {
@@ -15,7 +27,7 @@ pub fn run(args: &[String]) -> Result<u8, String> {
             print_help();
             Ok(0)
         }
-        Some("list") => list(&args[1..]),
+        Some("list") => list::run(&args[1..]),
         Some("set-key") => set_key(&args[1..]),
         Some("remove") => remove(&args[1..]),
         Some(unknown) => Err(format!(
@@ -29,194 +41,6 @@ pub(crate) fn credential_store() -> Result<CredentialStore, String> {
     Ok(CredentialStore::new(
         crate::user_config_dir(&home)?.join("aifuel"),
     ))
-}
-
-fn list(args: &[String]) -> Result<u8, String> {
-    let mut json = false;
-    for arg in args {
-        match arg.as_str() {
-            "--json" => json = true,
-            "--help" | "-h" => {
-                println!("Usage: aifuel auth list [--json]");
-                println!("Reports the credential source per integration; never prints values.");
-                return Ok(0);
-            }
-            unknown => return Err(format!("unknown argument {unknown:?} for auth list")),
-        }
-    }
-
-    let registry = crate::integration_registry()?;
-    let store = credential_store()?;
-    let entries = store.list().map_err(|error| error.to_string())?;
-    let stored: std::collections::BTreeMap<&aifuel_core::CredentialRef, &CredentialMetadata> =
-        entries
-            .iter()
-            .map(|(reference, meta)| (reference, meta))
-            .collect();
-    let discovery = aifuel_providers::DiscoveryContext::from_environment()
-        .map_err(|error| error.to_string())?;
-    let evidence = registry.evidence_context(&discovery, &store);
-
-    if json {
-        let integrations: Vec<serde_json::Value> = registry
-            .list()
-            .map(|descriptor| {
-                let source = describe_source(descriptor, &stored);
-                let free_note =
-                    aifuel_providers::free_tier_note(descriptor.integration.provider.as_str());
-                serde_json::json!({
-                    "integration": descriptor.integration.id.as_str(),
-                    "provider": descriptor.integration.provider.as_str(),
-                    "credential_source": source,
-                    "discovered": describe_discovery(descriptor, &evidence),
-                    "has_free": free_note.is_some(),
-                    "free_note": free_note,
-                })
-            })
-            .collect();
-        let credentials: Vec<serde_json::Value> = entries
-            .iter()
-            .map(|(reference, meta)| {
-                serde_json::json!({
-                    "credential": reference.as_str(),
-                    "kind": match meta.kind {
-                        CredentialKind::ApiKey => "api_key",
-                        CredentialKind::OAuth => "oauth",
-                    },
-                    "expiry": describe_expiry(meta),
-                    "account_id": meta.account_id,
-                })
-            })
-            .collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "integrations": integrations,
-                "credentials": credentials,
-            }))
-            .map_err(|error| format!("could not encode JSON: {error}"))?
-        );
-        return Ok(0);
-    }
-
-    println!("Integrations:");
-    for descriptor in registry.list() {
-        let integration = &descriptor.integration;
-        let name = (integration.name != integration.id.as_str())
-            .then(|| format!(" ({})", integration.name))
-            .unwrap_or_default();
-        let free = aifuel_providers::free_tier_note(integration.provider.as_str())
-            .map(|note| format!(" free: {note}"))
-            .unwrap_or_default();
-        println!(
-            "  {:<24} {:<12} {}{}{}",
-            integration.id.as_str(),
-            describe_discovery(descriptor, &evidence),
-            describe_source(descriptor, &stored),
-            name,
-            free
-        );
-    }
-    println!();
-    if entries.is_empty() {
-        println!("No managed credentials stored.");
-    } else {
-        println!("Managed credentials:");
-        for (reference, meta) in &entries {
-            let kind = match meta.kind {
-                CredentialKind::ApiKey => "api-key",
-                CredentialKind::OAuth => "oauth",
-            };
-            println!(
-                "  {:<24} {:<8} {}",
-                reference.as_str(),
-                kind,
-                describe_expiry(meta)
-            );
-        }
-    }
-    Ok(0)
-}
-
-/// The credential source one integration's execution config declares, with
-/// live presence for env vars and store references. Shared with the
-/// dashboard Connect panel, which reports the same per-integration state.
-pub(crate) fn describe_source(
-    descriptor: &aifuel_providers::IntegrationDescriptor,
-    stored: &std::collections::BTreeMap<&CredentialRef, &CredentialMetadata>,
-) -> String {
-    match &descriptor.integration.execution {
-        ExecutionConfig::Cli { .. } => "provider CLI credential".to_owned(),
-        ExecutionConfig::Http { auth, .. } => match auth {
-            AuthBinding::None => "none".to_owned(),
-            AuthBinding::ApiKey {
-                source: ApiKeySource::Env { var },
-                ..
-            } => {
-                if aifuel_providers::env_override(var).is_some() {
-                    format!("env {var} (set)")
-                } else {
-                    format!("env {var} (absent)")
-                }
-            }
-            AuthBinding::ApiKey {
-                source: ApiKeySource::Store { credential },
-                ..
-            }
-            | AuthBinding::OAuth { credential, .. } => {
-                if stored.contains_key(credential) {
-                    format!("managed credential {} (present)", credential.as_str())
-                } else {
-                    format!("managed credential {} (absent)", credential.as_str())
-                }
-            }
-            AuthBinding::ApiKey {
-                source:
-                    ApiKeySource::EnvOrStore {
-                        var, credential, ..
-                    },
-                ..
-            } => {
-                let env_set = aifuel_providers::env_override(var).is_some();
-                let stored_present = stored.contains_key(credential);
-                match (env_set, stored_present) {
-                    (true, true) => format!(
-                        "managed credential {} (present); env {var} also set",
-                        credential.as_str()
-                    ),
-                    (false, true) => {
-                        format!("managed credential {} (present)", credential.as_str())
-                    }
-                    (true, false) => format!("env {var} (set)"),
-                    (false, false) => format!(
-                        "env {var} (absent) or managed credential {} (absent)",
-                        credential.as_str()
-                    ),
-                }
-            }
-        },
-    }
-}
-
-/// The integration's local discovery evidence state, checked side-effect-free
-/// (filesystem markers, environment presence, credential-store metadata).
-fn describe_discovery(
-    descriptor: &aifuel_providers::IntegrationDescriptor,
-    context: &aifuel_providers::EvidenceContext<'_>,
-) -> String {
-    match descriptor.discover(context) {
-        Ok(aifuel_core::DiscoveryState::Present) => "present".to_owned(),
-        Ok(aifuel_core::DiscoveryState::Absent) => "absent".to_owned(),
-        Err(error) => format!("check failed: {error}"),
-    }
-}
-
-fn describe_expiry(meta: &CredentialMetadata) -> String {
-    match meta.expiry {
-        CredentialExpiry::None => "no expiry".to_owned(),
-        CredentialExpiry::Valid { until } => format!("expires {until}"),
-        CredentialExpiry::Expired { at } => format!("expired at {at}"),
-    }
 }
 
 fn set_key(args: &[String]) -> Result<u8, String> {
@@ -234,7 +58,9 @@ fn set_key(args: &[String]) -> Result<u8, String> {
                 println!(
                     "TARGET is an Integration id or a Credential Reference. The key is stored in"
                 );
-                println!("the AI Fuel Credential Store and never printed.");
+                println!("the AI Fuel Credential Store and never printed. Repeating set-key on an");
+                println!("integration appends to its key pool; a Credential Reference target");
+                println!("overwrites that exact member.");
                 return Ok(0);
             }
             "--key" => key = Some(next(args, &mut index, "--key")?),
@@ -284,17 +110,48 @@ fn set_key(args: &[String]) -> Result<u8, String> {
 
     let store = credential_store()?;
     match &destination {
-        Some(integration) => store.set_api_key_for(&reference, &material, integration),
-        None => store.set_api_key(&reference, &material),
-    }
-    .map_err(|error| error.to_string())?;
-    match &destination {
-        Some(integration) => println!(
-            "Stored API key as credential {} bound to integration {}.",
-            reference.as_str(),
-            integration.as_str()
-        ),
-        None => println!("Stored API key as credential {}.", reference.as_str()),
+        Some(integration) => {
+            // An integration target appends to the pool bound under its
+            // Credential Reference: `openai:api-key`, then
+            // `openai:api-key/2`, and so on.
+            let (member, created) = store
+                .add_pool_api_key(&reference, &material, integration)
+                .map_err(|error| error.to_string())?;
+            if !created {
+                println!(
+                    "Credential {} already stores that key; its failure state was cleared.",
+                    member.as_str()
+                );
+            } else if member == reference {
+                println!(
+                    "Stored API key as credential {} bound to integration {}.",
+                    reference.as_str(),
+                    integration.as_str()
+                );
+            } else {
+                println!(
+                    "Added API key to the {} pool as credential {} bound to integration {}.",
+                    reference.as_str(),
+                    member.as_str(),
+                    integration.as_str()
+                );
+            }
+        }
+        None => {
+            // A raw Credential Reference overwrites that exact slot. An
+            // existing record's destination binding is preserved so a
+            // re-stored member stays bound to its integration.
+            let bound = store
+                .get(&reference)
+                .map_err(|error| error.to_string())?
+                .and_then(|credential| credential.destination().cloned());
+            match bound {
+                Some(integration) => store.set_api_key_for(&reference, &material, &integration),
+                None => store.set_api_key(&reference, &material),
+            }
+            .map_err(|error| error.to_string())?;
+            println!("Stored API key as credential {}.", reference.as_str());
+        }
     }
     Ok(0)
 }
@@ -391,29 +248,65 @@ fn remove(args: &[String]) -> Result<u8, String> {
     }
     println!("Removed credential {target}.");
 
-    for warning in removal_warnings(&reference)? {
+    let (notes, warnings) = removal_warnings(&reference)?;
+    for note in notes {
+        println!("{note}");
+    }
+    for warning in warnings {
         eprintln!("aifuel: warning - {warning}");
     }
     Ok(0)
 }
 
-/// The warnings `aifuel auth remove` reports after deleting `reference`:
-/// integrations still binding it fail authentication until a replacement is
+/// What `aifuel auth remove` reports after deleting `reference`, split by
+/// severity: informational notes report what kept working (surviving Key
+/// Pool members), warnings report what will break - integrations still
+/// binding the now-empty pool fail authentication until a replacement is
 /// stored, or keep authenticating when their declared env var remains set.
 /// Shared with the dashboard Connect panel's credential removal.
-pub(crate) fn removal_warnings(reference: &CredentialRef) -> Result<Vec<String>, String> {
+pub(crate) fn removal_warnings(
+    reference: &CredentialRef,
+) -> Result<(Vec<String>, Vec<String>), String> {
     let target = reference.as_str();
     let registry = crate::integration_registry()?;
+    let store = credential_store()?;
+    let entries = store.list().map_err(|error| error.to_string())?;
+    let mut notes = Vec::new();
     let mut warnings = Vec::new();
     for descriptor in registry.list() {
         let id = descriptor.integration.id.as_str();
+        // Removing one pool member strands the binding only when no member
+        // remains; surviving members keep the integration authenticating.
+        let remaining = |credential: &CredentialRef| -> usize {
+            entries
+                .iter()
+                .filter(|(r, meta)| {
+                    meta.kind == CredentialKind::ApiKey
+                        && aifuel_providers::is_pool_member(credential, r)
+                })
+                .count()
+        };
         match &descriptor.integration.execution {
             ExecutionConfig::Http { auth, .. } => match auth {
                 AuthBinding::ApiKey {
                     source: ApiKeySource::Store { credential },
                     ..
+                } if aifuel_providers::is_pool_member(credential, reference) => {
+                    let remaining = remaining(credential);
+                    if remaining > 0 {
+                        notes.push(format!(
+                            "The key pool of credential {credential} bound to integration {id} \
+                             retains {remaining} key(s)."
+                        ));
+                    } else {
+                        warnings.push(format!(
+                            "integration {id} binds credential {credential}, whose pool now \
+                             holds no keys; it will fail authentication until a replacement is \
+                             stored"
+                        ));
+                    }
                 }
-                | AuthBinding::OAuth { credential, .. } => {
+                AuthBinding::OAuth { credential, .. } => {
                     if credential == reference {
                         warnings.push(format!(
                             "integration {id} still binds credential {target} and will fail \
@@ -427,19 +320,24 @@ pub(crate) fn removal_warnings(reference: &CredentialRef) -> Result<Vec<String>,
                             var, credential, ..
                         },
                     ..
-                } => {
-                    if credential == reference {
-                        if aifuel_providers::env_override(var).is_some() {
-                            warnings.push(format!(
-                                "removing {target} leaves env var {var} active; integration {id} \
-                                 keeps authenticating from the environment"
-                            ));
-                        } else {
-                            warnings.push(format!(
-                                "integration {id} still binds credential {target} and will fail \
-                                 authentication until a replacement is stored or {var} is exported"
-                            ));
-                        }
+                } if aifuel_providers::is_pool_member(credential, reference) => {
+                    let remaining = remaining(credential);
+                    if remaining > 0 {
+                        notes.push(format!(
+                            "The key pool of credential {credential} bound to integration {id} \
+                             retains {remaining} key(s)."
+                        ));
+                    } else if aifuel_providers::env_override(var).is_some() {
+                        warnings.push(format!(
+                            "removing {target} leaves env var {var} active; integration {id} \
+                             keeps authenticating from the environment"
+                        ));
+                    } else {
+                        warnings.push(format!(
+                            "integration {id} binds credential {credential}, whose pool now \
+                             holds no keys; it will fail authentication until a replacement is \
+                             stored or {var} is exported"
+                        ));
                     }
                 }
                 _ => {}
@@ -447,7 +345,7 @@ pub(crate) fn removal_warnings(reference: &CredentialRef) -> Result<Vec<String>,
             ExecutionConfig::Cli { .. } => {}
         }
     }
-    Ok(warnings)
+    Ok((notes, warnings))
 }
 
 fn next(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
@@ -465,4 +363,9 @@ fn print_help() {
     println!("Inspects and manages AI Fuel Managed Credentials. Secret values are");
     println!("never printed. Built-in API-key integrations read named environment");
     println!("variables; managed references serve configured and OAuth integrations.");
+    println!();
+    println!("API-key credentials form Key Pools: repeating set-key on an integration");
+    println!("appends a member (TARGET, TARGET/2, TARGET/3, ...), auth list shows each");
+    println!("member's health, and auth remove deletes one member. A rate-limited key");
+    println!("cools down while the run rotates to the next healthy member.");
 }

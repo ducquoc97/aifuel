@@ -48,8 +48,9 @@ pub use cli_adapter::{
 };
 pub use codex_runtime::{CodexAdapter, codex_adapter};
 pub use credentials::{
-    CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore, CredentialStoreError,
-    ManagedCredential, OAuthTokens, ResolvedAuth, env_override, valid_env_var_name,
+    ApiKeyState, CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore,
+    CredentialStoreError, KeyHealth, ManagedCredential, OAuthTokens, PoolKey, ResolvedAuth,
+    env_override, is_pool_member, valid_env_var_name,
 };
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
 pub use integrations::{

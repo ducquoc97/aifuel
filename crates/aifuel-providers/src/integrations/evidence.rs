@@ -100,14 +100,19 @@ impl EvidenceSource {
                 // resolution cannot disagree about "present".
                 DiscoveryState::Absent
             }),
-            Self::ManagedEntry(reference) => match context.credentials.metadata(reference) {
-                Ok(Some(_)) => Ok(DiscoveryState::Present),
-                Ok(None) => Ok(DiscoveryState::Absent),
-                // A store that cannot be read (for example a malformed
-                // credentials.json) means presence cannot be determined:
-                // report a Discovery Failure rather than guessing.
-                Err(_) => Err(DiscoveryError::SourceUnavailable),
-            },
+            // A pool whose base member was removed but that still holds
+            // `reference/…` members resolves normally, so presence counts
+            // the whole pool, not only the base slot.
+            Self::ManagedEntry(reference) => {
+                match context.credentials.contains_credential(reference) {
+                    Ok(true) => Ok(DiscoveryState::Present),
+                    Ok(false) => Ok(DiscoveryState::Absent),
+                    // A store that cannot be read (for example a malformed
+                    // credentials.json) means presence cannot be determined:
+                    // report a Discovery Failure rather than guessing.
+                    Err(_) => Err(DiscoveryError::SourceUnavailable),
+                }
+            }
             Self::ConfiguredEndpoint { marker_directories } => {
                 if context.configured.contains(integration) {
                     return Ok(DiscoveryState::Present);
