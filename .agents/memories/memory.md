@@ -30,3 +30,11 @@
 - Keep Agent Run execution independent from Provider Discovery, quota monitoring, and Agent MCP Registration. A user-selected provider runs only through its matching registered execution adapter; unsupported capability requests stay explicit.
 - The execution adapter owns any child process it starts. Cancellation must stop and reap the process, and completed results retain captured output without inventing provider session, account, or effective-model identity.
 - Verify the real `aifuel run` process with controlled provider executables and a temporary home. A credential file marker establishes local presence only; authenticated prompt acceptance requires a separate live result, recorded without changing saved user configuration.
+
+## Dashboard
+
+- The dashboard mutates credentials through the same Credential Store and helper semantics as `aifuel auth` (`describe_source`, `resolve_credential_ref`, `removal_warnings`) - share them rather than duplicating status wording.
+- tiny_http can RST the connection when a response is sent while request body bytes remain unread; drain the body (bounded) before answering a rejected or unmatched request.
+- `AIFUEL_HOME` steers only the DiscoveryContext home; the Credential Store follows `XDG_CONFIG_HOME`/`HOME`, so dashboard tests and manual runs must override those to isolate the store.
+- `cargo run` under a sandboxed HOME breaks rustup's toolchain resolution; pin `RUSTUP_HOME`/`CARGO_HOME` to the real dotdirs when exercising the dashboard with a fake HOME.
+- Requiring `application/json` bodies on mutation endpoints doubles as CSRF hardening - a cross-site HTML form cannot produce that content type, complementing the loopback Host/Origin/Sec-Fetch-Site check.
