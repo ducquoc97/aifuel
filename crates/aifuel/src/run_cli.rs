@@ -1,5 +1,6 @@
 use crate as aifuel;
 use crate::launcher;
+mod auto;
 mod selection;
 
 use aifuel_app::selection::{
@@ -25,8 +26,9 @@ pub fn run(args: &[String]) -> Result<u8, String> {
         return Ok(0);
     }
     let selected = parse_run_args(args)?;
-    let request = selected.request;
-    if let (Some(evidence), Some(model)) = (selected.model_evidence, request.model.as_deref()) {
+    if let (Some(evidence), Some(model)) =
+        (selected.model_evidence, selected.request.model.as_deref())
+    {
         let message = match evidence {
             aifuel::selection_cli::PickerModelEvidence::Catalog => format!(
                 "aifuel: model {model:?} has a cached catalog record; advertisement, account entitlement, and execution availability remain separate evidence"
@@ -37,6 +39,10 @@ pub fn run(args: &[String]) -> Result<u8, String> {
         };
         eprintln!("{message}");
     }
+    if selected.request.integration.as_str() == aifuel_core::AUTO_PROVIDER {
+        return auto::run(&selected);
+    }
+    let request = selected.request;
     let output_format = request.output;
     let result = match launcher::execute(&request) {
         Ok(result) => result,
@@ -65,6 +71,7 @@ pub fn run(args: &[String]) -> Result<u8, String> {
                 request.resume.is_some() && request.model.is_none(),
                 request.resume.is_some() && request.effort.is_none(),
             ),
+            None,
         )?
     );
 
@@ -83,7 +90,14 @@ fn render_run_result(
     output_format: launcher::OutputFormat,
     model_evidence: Option<aifuel::selection_cli::PickerModelEvidence>,
 ) -> Result<String, String> {
-    render_run_result_with_sources(result, output_format, model_evidence, None, (false, false))
+    render_run_result_with_sources(
+        result,
+        output_format,
+        model_evidence,
+        None,
+        (false, false),
+        None,
+    )
 }
 
 fn render_run_result_with_sources(
@@ -92,6 +106,7 @@ fn render_run_result_with_sources(
     model_evidence: Option<aifuel::selection_cli::PickerModelEvidence>,
     selection_sources: Option<&SelectionSources>,
     deferred_sources: (bool, bool),
+    routing: Option<&auto::RouteReport>,
 ) -> Result<String, String> {
     match output_format {
         launcher::OutputFormat::Text => {
@@ -114,6 +129,10 @@ fn render_run_result_with_sources(
                     .map_err(|error| format!("could not encode selection sources: {error}"))?;
                 omit_deferred_sources(&mut value["selection_sources"], deferred_sources);
             }
+            if let Some(routing) = routing {
+                value["routing"] = serde_json::to_value(routing)
+                    .map_err(|error| format!("could not encode routing report: {error}"))?;
+            }
             let encoded = serde_json::to_string_pretty(&value)
                 .map_err(|error| format!("could not encode run result: {error}"))?;
             Ok(format!("{encoded}\n"))
@@ -128,6 +147,10 @@ fn render_run_result_with_sources(
                 result_event["selection_sources"] = serde_json::to_value(sources)
                     .map_err(|error| format!("could not encode selection sources: {error}"))?;
                 omit_deferred_sources(&mut result_event["selection_sources"], deferred_sources);
+            }
+            if let Some(routing) = routing {
+                result_event["routing"] = serde_json::to_value(routing)
+                    .map_err(|error| format!("could not encode routing report: {error}"))?;
             }
             let encoded = serde_json::to_string(&result_event)
                 .map_err(|error| format!("could not encode run result: {error}"))?;
@@ -389,6 +412,13 @@ fn parse_timeout(value: &str) -> Result<Option<Duration>, String> {
 fn print_run_help() {
     println!("Usage: aifuel run --integration INTEGRATION_ID [OPTIONS]");
     println!();
+    println!(
+        "  --integration|--provider ID           target integration or provider; `auto` is reserved:"
+    );
+    println!(
+        "                                        rank the Discovered Providers by quota headroom"
+    );
+    println!("                                        and fall back on failures before execution");
     println!("  --prompt TEXT                         prompt text");
     println!("  --prompt-file PATH                    read prompt from a file");
     println!("  --model MODEL_ID                      explicit model");

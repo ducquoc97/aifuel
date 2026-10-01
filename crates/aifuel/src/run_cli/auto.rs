@@ -1,0 +1,507 @@
+//! `aifuel run --provider auto`: rank the Discovered Providers by quota
+//! headroom - the shared `StatusReport::route_candidates` ordering, most
+//! remaining allowance in the authoritative window first and soonest reset
+//! as tie-break - and run the prompt on the best one. Fallback starts a
+//! fresh Agent Run on the next ranked Provider only while a failure stayed
+//! before execution: no verified Agent Integration, a launch/request
+//! error, or provider-reported quota exhaustion. A run that reached its
+//! provider - a timeout or an ordinary mid-run failure - ends the chain,
+//! and a resumed session is pinned to its owning Provider so `auto` never
+//! falls back away from it.
+
+use super::{ParsedRunRequest, render_run_result_with_sources};
+use crate::launcher;
+use aifuel_core::{IntegrationId, ManagedRunResult, ProviderId, ProviderKey, RunState, RunStatus};
+use std::collections::BTreeSet;
+
+/// One ranked Discovered Provider plus the Integration Identity its
+/// attempt binds - the first registered integration for the provider, in
+/// deterministic registry order (built-ins precede configured entries).
+struct RouteCandidate {
+    provider: ProviderKey,
+    integration: IntegrationId,
+}
+
+/// How one attempt in the chain ended, recorded on the result's `routing`
+/// object so scripts can see every fallback.
+#[derive(Debug, serde::Serialize)]
+pub(super) struct RouteAttempt {
+    provider: String,
+    integration: String,
+    /// `succeeded`, `failed`, `timed_out`, `cancelled`,
+    /// `unsupported_integration`, `launch_error`, or `quota_exhausted`.
+    outcome: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+/// The routing decision a `run --provider auto` invocation made, emitted
+/// as `routing` on structured output. `selected` names the Provider whose
+/// attempt produced the reported outcome; `candidates` is the ranked list
+/// the chain was allowed to try.
+#[derive(Debug, Default, serde::Serialize)]
+pub(super) struct RouteReport {
+    pub requested: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<String>,
+    pub resumed: bool,
+    #[serde(default)]
+    pub attempts: Vec<RouteAttempt>,
+}
+
+impl RouteReport {
+    fn new() -> Self {
+        Self {
+            requested: aifuel_core::AUTO_PROVIDER,
+            ..Self::default()
+        }
+    }
+}
+
+/// How an attempt closed for routing purposes. `Stop` renders the outcome
+/// and exits with the code a single-provider run maps to it; `Retry`
+/// records the failure and moves to the next ranked Provider.
+enum Verdict {
+    Stop(u8),
+    Retry,
+}
+
+pub(super) fn run(selected: &ParsedRunRequest) -> Result<u8, String> {
+    let request = &selected.request;
+    let mut report = RouteReport::new();
+
+    if let Some(session_id) = request.resume.as_deref() {
+        // A session is Provider-scoped: `auto --resume` resolves the
+        // stored owner and runs there - one attempt, never a fallback.
+        let manager = crate::execution_run_manager()?;
+        let stored = manager
+            .session_selection(session_id)
+            .map_err(|error| error.to_string())?;
+        let mut request = request.clone();
+        request.integration = stored.integration.clone();
+        report.resumed = true;
+        report.selected = Some(stored.provider.as_str().to_owned());
+        report.candidates = vec![stored.provider.as_str().to_owned()];
+        eprintln!("aifuel: auto resolved the session to {}", stored.provider);
+        return finish(launcher::execute(&request), &request, selected, &mut report);
+    }
+
+    let candidates = provider_candidates(request.model.as_deref())?;
+    report.candidates = candidates
+        .iter()
+        .map(|candidate| candidate.provider.as_str().to_owned())
+        .collect();
+    if candidates.is_empty() {
+        return Err(match request.model.as_deref() {
+            Some(model) => format!(
+                "'auto' found no Discovered Provider advertising model {model:?}; refresh evidence with `aifuel model refresh` or select a provider explicitly"
+            ),
+            None => {
+                "'auto' found no Discovered Provider; `aifuel status` shows which credential sources are present"
+                    .to_owned()
+            }
+        });
+    }
+
+    // The chain's last attempt is kept so an exhausted chain still reports
+    // its final outcome the way a single-provider run would.
+    let mut last_result: Option<ManagedRunResult> = None;
+    let mut last_error: Option<(u8, String)> = None;
+    for candidate in &candidates {
+        if let Some(previous) = report.attempts.last() {
+            eprintln!(
+                "aifuel: {} could not run ({}); auto trying {}",
+                previous.provider,
+                previous.detail.as_deref().unwrap_or(previous.outcome),
+                candidate.provider
+            );
+        } else {
+            eprintln!("aifuel: auto selected {}", candidate.provider);
+        }
+        let mut request = request.clone();
+        request.integration = candidate.integration.clone();
+        match launcher::execute(&request) {
+            Ok(result) => {
+                let verdict = attempt_verdict(&result);
+                report.attempts.push(RouteAttempt {
+                    provider: candidate.provider.as_str().to_owned(),
+                    integration: candidate.integration.as_str().to_owned(),
+                    outcome: attempt_outcome(&result),
+                    detail: result.error.clone().or_else(|| result.diagnostics.clone()),
+                });
+                match verdict {
+                    Verdict::Stop(code) => {
+                        report.selected = Some(candidate.provider.as_str().to_owned());
+                        print!("{}", render(&result, selected, &report)?);
+                        return Ok(code);
+                    }
+                    Verdict::Retry => {
+                        last_result = Some(result);
+                    }
+                }
+            }
+            Err(error) => {
+                let verdict = error_verdict(&error);
+                report.attempts.push(RouteAttempt {
+                    provider: candidate.provider.as_str().to_owned(),
+                    integration: candidate.integration.as_str().to_owned(),
+                    outcome: error_outcome(&error),
+                    detail: Some(error.to_string()),
+                });
+                match verdict {
+                    Verdict::Retry => {
+                        last_error = Some((exit_for_error(&error), error.to_string()));
+                    }
+                    Verdict::Stop(code) => {
+                        report.selected = Some(candidate.provider.as_str().to_owned());
+                        eprintln!("aifuel: {error}");
+                        emit_routing_failure(selected, &report, &error.to_string());
+                        return Ok(code);
+                    }
+                }
+            }
+        }
+    }
+
+    // Every candidate failed on a retriable cause; the chain reports the
+    // last attempt's own terminal outcome.
+    if let Some(result) = last_result {
+        report.selected = candidates
+            .last()
+            .map(|candidate| candidate.provider.as_str().to_owned());
+        print!("{}", render(&result, selected, &report)?);
+        return Ok(4);
+    }
+    let (code, message) = last_error.expect("an exhausted chain recorded its last failure");
+    eprintln!("aifuel: {message}");
+    emit_routing_failure(selected, &report, &message);
+    Ok(code)
+}
+
+/// Render an attempt's result through the shared result formatters with
+/// the routing report attached.
+fn render(
+    result: &ManagedRunResult,
+    selected: &ParsedRunRequest,
+    report: &RouteReport,
+) -> Result<String, String> {
+    render_run_result_with_sources(
+        result,
+        selected.request.output,
+        selected.model_evidence,
+        Some(&selected.selection_sources),
+        (
+            selected.request.resume.is_some() && selected.request.model.is_none(),
+            selected.request.resume.is_some() && selected.request.effort.is_none(),
+        ),
+        Some(report),
+    )
+}
+
+/// Finish a single-attempt path (the resume pin): one result, no
+/// fallback - `request` is the resolved request actually attempted.
+fn finish(
+    outcome: Result<ManagedRunResult, launcher::LaunchError>,
+    request: &launcher::RunRequest,
+    selected: &ParsedRunRequest,
+    report: &mut RouteReport,
+) -> Result<u8, String> {
+    match outcome {
+        Ok(result) => {
+            report.attempts.push(RouteAttempt {
+                provider: result.provider.as_str().to_owned(),
+                integration: result.integration.as_str().to_owned(),
+                outcome: attempt_outcome(&result),
+                detail: result.error.clone().or_else(|| result.diagnostics.clone()),
+            });
+            let code = match attempt_verdict(&result) {
+                Verdict::Stop(code) => code,
+                // A quota-exhausted resumed run cannot move: the session is
+                // pinned to its owning Provider, so it reports like a
+                // single-provider failure.
+                Verdict::Retry => 4,
+            };
+            print!("{}", render(&result, selected, report)?);
+            Ok(code)
+        }
+        Err(error) => {
+            report.attempts.push(RouteAttempt {
+                provider: report
+                    .selected
+                    .clone()
+                    .unwrap_or_else(|| aifuel_core::AUTO_PROVIDER.to_owned()),
+                integration: request.integration.as_str().to_owned(),
+                outcome: error_outcome(&error),
+                detail: Some(error.to_string()),
+            });
+            eprintln!("aifuel: {error}");
+            emit_routing_failure(selected, report, &error.to_string());
+            Ok(exit_for_error(&error))
+        }
+    }
+}
+
+/// The Discovered Providers ranked for routing, each bound to its first
+/// registered Integration. `--model` keeps only providers whose cached
+/// model catalog advertises the model.
+fn provider_candidates(model: Option<&str>) -> Result<Vec<RouteCandidate>, String> {
+    let facade = crate::monitoring_facade()?;
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("could not start the status collection runtime: {error}"))?;
+    let report = runtime.block_on(facade.status(false));
+    let mut ranked = report.route_candidates();
+    if let Some(model) = model {
+        let advertised = advertised_providers(model)?;
+        ranked.retain(|provider| advertised.contains(provider));
+    }
+    let registry = crate::integration_registry()?;
+    Ok(ranked
+        .into_iter()
+        .filter_map(|provider| {
+            let provider_id = ProviderId::from(provider);
+            registry
+                .list()
+                .find(|descriptor| *descriptor.provider() == provider_id)
+                .map(|descriptor| RouteCandidate {
+                    provider,
+                    integration: descriptor.id().clone(),
+                })
+        })
+        .collect())
+}
+
+/// Providers whose cached model catalog advertises `model`: the catalog
+/// marks `advertisement` Supported only for a model the provider itself
+/// listed, so a missing cache narrows to no provider rather than guessing.
+fn advertised_providers(model: &str) -> Result<BTreeSet<ProviderKey>, String> {
+    Ok(crate::run_selection::load_picker_models()?
+        .into_iter()
+        .filter(|entry| {
+            entry.model_id == model
+                && entry.advertisement == aifuel_core::CapabilityState::Supported
+        })
+        .map(|entry| entry.provider)
+        .collect())
+}
+
+/// Classify a completed attempt: only provider-reported quota exhaustion
+/// is retriable after a run was accepted; timeouts and ordinary failures
+/// reached execution and stop the chain.
+fn attempt_verdict(result: &ManagedRunResult) -> Verdict {
+    if result.state == RunState::TimedOut || result.status == Some(RunStatus::Timeout) {
+        Verdict::Stop(5)
+    } else if result.status == Some(RunStatus::Succeeded) {
+        Verdict::Stop(0)
+    } else if result.status == Some(RunStatus::Failed) && reported_quota_exhaustion(result) {
+        Verdict::Retry
+    } else {
+        Verdict::Stop(4)
+    }
+}
+
+/// Classify a failed attempt: a missing Agent Integration and
+/// launch/request errors are pre-execution failures the next Provider can
+/// still answer; timeouts and owner cancellation are not.
+fn error_verdict(error: &launcher::LaunchError) -> Verdict {
+    match error {
+        launcher::LaunchError::UnsupportedIntegration(_) => Verdict::Retry,
+        launcher::LaunchError::Timeout(_) | launcher::LaunchError::Cancelled => {
+            Verdict::Stop(exit_for_error(error))
+        }
+        _ => Verdict::Retry,
+    }
+}
+
+/// The exit code a single-provider run maps this error to.
+fn exit_for_error(error: &launcher::LaunchError) -> u8 {
+    match error {
+        launcher::LaunchError::UnsupportedIntegration(_) => 3,
+        launcher::LaunchError::Timeout(_) => 5,
+        _ => 2,
+    }
+}
+
+/// The attempt outcome label recorded on the routing report.
+fn attempt_outcome(result: &ManagedRunResult) -> &'static str {
+    if result.state == RunState::TimedOut || result.status == Some(RunStatus::Timeout) {
+        "timed_out"
+    } else if result.status == Some(RunStatus::Succeeded) {
+        "succeeded"
+    } else if result.status == Some(RunStatus::Failed) && reported_quota_exhaustion(result) {
+        "quota_exhausted"
+    } else if result.status == Some(RunStatus::Cancelled) {
+        "cancelled"
+    } else {
+        "failed"
+    }
+}
+
+/// The outcome label for an attempt that never produced a run.
+fn error_outcome(error: &launcher::LaunchError) -> &'static str {
+    match error {
+        launcher::LaunchError::UnsupportedIntegration(_) => "unsupported_integration",
+        launcher::LaunchError::Timeout(_) => "timed_out",
+        launcher::LaunchError::Cancelled => "cancelled",
+        _ => "launch_error",
+    }
+}
+
+/// Whether the provider itself reported quota or rate-limit exhaustion:
+/// the structured `quota_exhausted` failure category, or exhaustion
+/// wording in the run's error surface for providers that report it only
+/// as prose.
+fn reported_quota_exhaustion(result: &ManagedRunResult) -> bool {
+    result.closed_reason.as_deref() == Some("quota_exhausted")
+        || result.error.as_deref().is_some_and(provider_quota_wording)
+        || result
+            .diagnostics
+            .as_deref()
+            .is_some_and(provider_quota_wording)
+}
+
+/// A bounded phrase list matching the ways providers spell quota and
+/// rate-limit exhaustion in error text.
+fn provider_quota_wording(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    [
+        "rate limit",
+        "rate-limit",
+        "ratelimit",
+        "usage limit",
+        "quota",
+        "too many requests",
+        "insufficient_quota",
+        "insufficient quota",
+        "insufficient credits",
+        "http 429",
+        "status 429",
+        " 429 ",
+        "exceeded your current",
+    ]
+    .iter()
+    .any(|phrase| text.contains(phrase))
+}
+
+/// When the chain ends without a run to render, structured output modes
+/// still report the routing decision on stdout.
+fn emit_routing_failure(selected: &ParsedRunRequest, report: &RouteReport, message: &str) {
+    match selected.request.output {
+        launcher::OutputFormat::Json => println!(
+            "{}",
+            serde_json::json!({"error": message, "routing": report})
+        ),
+        launcher::OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({"type": "run_error", "error": message, "routing": report})
+        ),
+        launcher::OutputFormat::Text => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aifuel_core::{ProviderId, RunState};
+
+    fn result(
+        status: RunStatus,
+        closed_reason: Option<&str>,
+        error: Option<&str>,
+    ) -> ManagedRunResult {
+        ManagedRunResult {
+            schema_version: aifuel_core::RUN_MANAGEMENT_SCHEMA_VERSION,
+            run_id: "run".to_owned(),
+            state: RunState::from(status),
+            integration: IntegrationId::new("codex"),
+            provider: ProviderId::new("codex"),
+            requested_model: None,
+            requested_effort: None,
+            effective_model: None,
+            effective_effort: None,
+            local_session_id: None,
+            session_id: None,
+            status: Some(status),
+            closed_reason: closed_reason.map(str::to_owned),
+            account_id: None,
+            exit_code: Some(1),
+            output: None,
+            error: error.map(str::to_owned),
+            diagnostics: None,
+            usage: None,
+            content_available: false,
+            output_truncated: false,
+            diagnostics_truncated: false,
+            output_bytes: 0,
+            diagnostics_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn provider_reported_quota_failure_is_retriable() {
+        // A depleted pool the provider announced is pre-execution
+        // evidence: the next ranked provider still has untested allowance.
+        let exhausted = result(RunStatus::Failed, Some("quota_exhausted"), None);
+        assert!(matches!(attempt_verdict(&exhausted), Verdict::Retry));
+        assert_eq!(attempt_outcome(&exhausted), "quota_exhausted");
+
+        let wording = result(
+            RunStatus::Failed,
+            Some("provider_failed"),
+            Some("You have hit your usage limit, try again after reset"),
+        );
+        assert!(matches!(attempt_verdict(&wording), Verdict::Retry));
+        assert_eq!(attempt_outcome(&wording), "quota_exhausted");
+    }
+
+    #[test]
+    fn ordinary_run_failures_and_timeouts_end_the_chain() {
+        // Execution reached the provider: neither a mid-run failure nor a
+        // deadline can move to another provider's session.
+        let failed = result(
+            RunStatus::Failed,
+            Some("provider_failed"),
+            Some("exit code 1"),
+        );
+        assert!(matches!(attempt_verdict(&failed), Verdict::Stop(4)));
+
+        let timed_out = result(RunStatus::Timeout, None, Some("agent run timed out"));
+        assert!(matches!(attempt_verdict(&timed_out), Verdict::Stop(5)));
+
+        let succeeded = result(RunStatus::Succeeded, None, None);
+        assert!(matches!(attempt_verdict(&succeeded), Verdict::Stop(0)));
+    }
+
+    #[test]
+    fn launch_failures_are_retriable_and_timeouts_are_not() {
+        assert!(matches!(
+            error_verdict(&launcher::LaunchError::UnsupportedIntegration(
+                IntegrationId::new("claude")
+            )),
+            Verdict::Retry
+        ));
+        assert!(matches!(
+            error_verdict(&launcher::LaunchError::InvalidRequest(
+                "the claude binary is missing".to_owned()
+            )),
+            Verdict::Retry
+        ));
+        assert!(matches!(
+            error_verdict(&launcher::LaunchError::Timeout(
+                "the run deadline elapsed".to_owned()
+            )),
+            Verdict::Stop(5)
+        ));
+    }
+
+    #[test]
+    fn quota_wording_matches_only_exhaustion_phrasing() {
+        assert!(provider_quota_wording("the endpoint returned HTTP 429"));
+        assert!(provider_quota_wording("You exceeded your current quota"));
+        assert!(!provider_quota_wording(
+            "the provider exited with exit code 1"
+        ));
+        assert!(!provider_quota_wording("authentication failed"));
+    }
+}
