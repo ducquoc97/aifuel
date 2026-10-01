@@ -82,7 +82,7 @@ Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex
 - `--account ID` - explicit account
 - `--access read-only|workspace-write|full` - permission profile (default: read-only)
 - `--working-directory PATH` (or `--cwd`) - project directory for the run
-- `--resume SESSION_ID` - continue a known session; explicit `--model`/`--effort` override stored values
+- `--resume SESSION_ID` - continue a known session (`session_id` or `local_session_id` from a run's output); explicit `--model`/`--effort` override stored values
 - `--external-tool NAME` - allow one exact gateway tool (repeatable)
 - `--output text|json|jsonl` - result format (default: text)
 - `--timeout 30s|10m|1h` - optional deadline; `0` means none
