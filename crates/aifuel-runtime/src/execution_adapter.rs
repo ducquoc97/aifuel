@@ -414,7 +414,14 @@ impl AgentExecutionAdapter for RuntimeExecutionAdapter {
             )));
         }
         let capabilities = self.adapter.capabilities();
-        if request.external_tools.is_some() && !capabilities.external_tools {
+        // An empty selection declares no tools - it reads the same as a
+        // missing one at every boundary, so it gates identically.
+        if request
+            .external_tools
+            .as_ref()
+            .is_some_and(|tools| !tools.is_empty())
+            && !capabilities.external_tools
+        {
             return Err(AgentRunError::InvalidRequest(format!(
                 "{provider} cannot enforce an exact external MCP tool selection"
             )));
