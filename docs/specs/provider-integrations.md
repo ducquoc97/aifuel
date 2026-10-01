@@ -39,6 +39,10 @@ _Avoid_: Provider credential, native credential, shared login
 An opaque identifier naming one Managed Credential in the Credential Store. Integrations bind credentials by reference so secrets never appear in config, run records, or reports.
 _Avoid_: Token value, inline key, credential path
 
+**Key Pool**:
+The set of API-key Managed Credentials an `AuthBinding::ApiKey` may draw on: the record at the bound Credential Reference plus every record whose reference extends it (`ref`, `ref/2`, `ref/3`, ...). Execution rotates through the pool when a key is rate-limited or rejected.
+_Avoid_: Shared key, credential bundle
+
 **Wire Api**:
 The named HTTP request/response protocol an endpoint speaks: OpenAI chat completions, OpenAI responses, or Anthropic messages. A Wire Api is protocol evidence, not a provider identity.
 _Avoid_: Provider type, endpoint format, API kind
@@ -118,6 +122,27 @@ enum WireApi {
 
 - The store holds only Managed Credentials. It never contains provider CLI credentials, prompts, or run data.
 
+#### Key Pools
+
+An API-key Authentication Binding names one Credential Reference, but the pool bound to it is the record at that reference plus every record whose reference extends it with a `/` suffix (`openai:api-key`, `openai:api-key/2`, `openai:api-key/3`). Membership is inferred from the reference namespace, so the schema stays a flat map and pre-pool single-key files load unchanged.
+
+Each API-key record may carry an optional `state` member describing its last observed failure:
+
+```json
+{
+  "openai:api-key": {
+    "type": "api",
+    "key": "...",
+    "destination": "openai:api-key",
+    "state": { "cooling_until": 1735689600, "cooling_step_seconds": 30 }
+  }
+}
+```
+
+- `cooling_until` / `cooling_step_seconds` record a rate-limit cooldown and the backoff step that produced it; `invalid_at` records a terminal credential rejection (`401`/`403`). A missing `state` is a healthy key, so records written before pools existed need no migration.
+- Cooldown state persists with its expiry timestamp so it survives restarts; an expired cooldown reads healthy again without a write. A successful request clears the state.
+- Every pool member carries the binding's `destination` and obeys the same destination check as the base record.
+
 ### Transaction rules
 
 All of the following are normative:
@@ -136,7 +161,8 @@ All of the following are normative:
 ### Environment precedence and auth commands
 
 - Each integration declares which environment variables it accepts (for example `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Env-var precedence is explicit per integration in its config, not a global guess across provider names.
-- `aifuel auth set-key <integration>` writes an API-key Managed Credential and binds it to that integration. `aifuel auth list` reports the effective credential source per integration - managed ref, named env var, CLI-owned, or none - and never prints values. `aifuel auth remove <credential>` deletes a Managed Credential.
+- `aifuel auth set-key <integration>` writes an API-key Managed Credential and binds it to that integration. Repeating `set-key` on one integration appends to its Key Pool (`openai:api-key`, then `openai:api-key/2`, ...); a raw Credential Reference target overwrites exactly that member, and re-storing identical material revives the member instead of duplicating it.
+- `aifuel auth list` reports the effective credential source per integration - managed ref or Key Pool with a per-key health rollup, named env var, CLI-owned, or none - and never prints values. `aifuel auth remove <credential>` deletes one pool member at a time and warns only when the pool is left empty.
 - `aifuel auth remove` warns when removing a managed credential leaves an env-var credential active for the same integration, since the user may believe they signed out.
 
 ## Discovery Changes
@@ -156,6 +182,16 @@ All of the following are normative:
 - Normalized run events: text delta, usage, completion, cancellation, failure. A stream that ends (EOF) without a terminal completion event is a failure, not success; this matches the existing rule that exit zero on a structured protocol is not proof of a completed turn.
 - Stream decoding handles fragmented UTF-8 at chunk boundaries, multiline SSE events, and provider-specific keepalive lines. Buffering is bounded with backpressure so an unbounded stream cannot grow memory without limit. An idle timeout applies between events, independent of the optional overall deadline. Partial output is preserved and reported.
 - AI Fuel never auto-replays an inference request after an ambiguous disconnect. The request may have been consumed and billed; replay is a user decision. This mirrors the existing no-replay rule for start/resume delivery uncertainty.
+
+#### Key Pool rotation
+
+For an `AuthBinding::ApiKey` the wire adapter sends the request with the first healthy pool member in Credential Reference order (first-healthy is the documented strategy; there is no round-robin cursor to keep in sync across processes).
+
+- `429` marks the key that received it cooling - honoring `Retry-After` when present, else a modest exponential backoff per key - and the run continues on the next healthy member. Only that key cools.
+- `401` and `403` mark the key invalid and rotate the same way; invalid keys need `auth set-key` (or a raw re-store of the same material) to recover.
+- A successful response clears the serving key's recorded failure state.
+- When no healthy member remains the run fails before any request with a pool-exhaustion error; a cooling key whose deadline passed is healthy again.
+- Rotation applies only to API-key bindings and only on those statuses. Transport failures, mid-stream failures, and non-API-key bindings keep the single-attempt no-replay rule.
 
 ## Monitoring Contract
 

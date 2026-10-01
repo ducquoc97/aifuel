@@ -120,6 +120,10 @@ _Avoid_: User credential, app password
 The opaque identity under which a Managed Credential is stored and shared by integrations. It names the credential slot, not the credential material itself.
 _Avoid_: Credential value, stored secret
 
+**Key Pool**:
+The set of API-key Managed Credentials one Authentication Binding may draw on: the record at the bound Credential Reference plus every record whose reference extends it with a `/` suffix. A rate-limited key cools down while execution rotates to the next healthy member.
+_Avoid_: Shared key, credential bundle
+
 **Authentication Binding**:
 The association between an execution configuration and the credential it applies to requests: none, an API key, or a managed OAuth credential. A configured endpoint does not imply one.
 _Avoid_: Auth mode baked into a provider

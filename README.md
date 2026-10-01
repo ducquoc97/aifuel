@@ -44,7 +44,7 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | `aifuel run --provider ID --prompt "..."` | One explicit prompt through an installed provider CLI |
 | `aifuel profile list\|save\|remove` | Named defaults for `run` (provider, model, effort, access, timeout) |
 | `aifuel model list\|refresh` | Cached provider model catalog, refreshed on demand |
-| `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations |
+| `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations; repeated `set-key` builds a key pool that rotates past rate limits |
 | `aifuel approve --run ID --input ID --decision accept\|decline\|cancel` | Answer a pending permission request for a local run |
 | `aifuel mcp` | Read-only MCP status server over stdio |
 | `aifuel mcp execution` | MCP server that manages Agent Runs over stdio |
