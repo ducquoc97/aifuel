@@ -168,11 +168,7 @@ async fn on_server_request(
                     .iter()
                     .map(|option| option.id.clone())
                     .collect(),
-                question_ids: request
-                    .questions
-                    .iter()
-                    .map(|question| question.id.clone())
-                    .collect(),
+                question_ids: request.question_ids(),
             },
         );
     }

@@ -212,6 +212,7 @@ pub(super) fn permission_request(
     request.native_method = message
         .get("method")
         .and_then(Value::as_str)
+        .filter(|method| !method.is_empty())
         .map(str::to_owned);
     request.parameters = Some(params);
     (options, request)

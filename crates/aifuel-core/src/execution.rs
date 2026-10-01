@@ -171,6 +171,18 @@ pub struct AgentInteractionRequest {
     pub requires_expanded_access: bool,
 }
 
+impl AgentInteractionRequest {
+    /// The question ids an answer must cover, in request order. Owners and
+    /// adapters both need the same list when recording or replying to the
+    /// request.
+    pub fn question_ids(&self) -> Vec<String> {
+        self.questions
+            .iter()
+            .map(|question| question.id.clone())
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionApprovalDecision {
     Accept,
