@@ -19,7 +19,12 @@ fn agent_session_selection() -> ModelSelection {
 fn register_agent_session(store: &RunStore, session_id: &str) -> SessionId {
     let session_id = SessionId::new(session_id);
     store
-        .record_agent_session(&session_id, &agent_session_selection(), Path::new("/repo"))
+        .record_agent_session(
+            &session_id,
+            &agent_session_selection(),
+            Path::new("/repo"),
+            &[],
+        )
         .expect("agent session registers");
     session_id
 }
@@ -394,12 +399,18 @@ fn orphaned_sessions_adopt_only_dead_owners() {
 
     // Once the live owner's registration drops, its session reconciles
     // too, and the sweep's claim re-stamps the adopted row.
+    let owner_a_id = owner_a.id().to_owned();
     drop(owner_a);
     let marked = store_b
         .reconcile_orphaned_sessions()
         .expect("reconcile reruns");
     assert_eq!(marked, vec![live.clone()]);
-    store_b.claim_agent_session(&live).expect("claim writes");
+    assert!(
+        store_b
+            .claim_agent_session(&live, Some(&owner_a_id))
+            .expect("claim writes"),
+        "the observed owner still matches"
+    );
     assert_eq!(
         store_b
             .agent_session(&live)
@@ -635,5 +646,282 @@ fn version_five_databases_gain_the_owner_column() {
         .collect();
     assert!(orphan_ids.contains(&SessionId::new("s-old")));
     assert!(!orphan_ids.contains(&session_id));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn claims_apply_only_to_the_observed_owner() {
+    // Two runtimes enumerate the same orphaned session and both read the
+    // dead owner's id; whichever claims second must fail the
+    // compare-and-swap rather than steal the row from the winner.
+    let path = store_path("owner-claim-cas");
+    let store_a = RunStore::open(&path).expect("store opens");
+    let owner_a = store_a.register_owner();
+    let session = register_agent_session(&store_a, "s-1");
+    mark_working(&store_a, &session);
+    let owner_a_id = owner_a.id().to_owned();
+    drop(owner_a);
+    drop(store_a);
+
+    let store_b = RunStore::open(&path).expect("second store opens");
+    let owner_b = store_b.register_owner();
+    let store_c = RunStore::open(&path).expect("third store opens");
+    let _owner_c = store_c.register_owner();
+
+    // Both observe the same stale owner before either claims.
+    assert_eq!(
+        store_b
+            .agent_session(&session)
+            .expect("session reads")
+            .expect("session exists")
+            .owner
+            .as_deref(),
+        Some(owner_a_id.as_str())
+    );
+    assert!(
+        store_b
+            .claim_agent_session(&session, Some(&owner_a_id))
+            .expect("first claim runs"),
+        "the first claimer wins the row"
+    );
+    assert!(
+        !store_c
+            .claim_agent_session(&session, Some(&owner_a_id))
+            .expect("second claim runs"),
+        "a stale observed owner fails the compare-and-swap"
+    );
+    assert_eq!(
+        store_c
+            .agent_session(&session)
+            .expect("session reads")
+            .expect("session exists")
+            .owner
+            .as_deref(),
+        Some(owner_b.id()),
+        "the loser's claim leaves the winner's owner stamp intact"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn external_tools_roundtrip_through_the_session_record() {
+    // The declared tools persist beside the selection so a later runtime
+    // can redeclare the same enforcement when it resumes the session.
+    let path = store_path("session-tools");
+    let store = RunStore::open(&path).expect("store opens");
+    let session_id = SessionId::new("s-tools");
+    store
+        .record_agent_session(
+            &session_id,
+            &agent_session_selection(),
+            Path::new("/repo"),
+            &["docs__search".to_owned(), "docs__fetch".to_owned()],
+        )
+        .expect("agent session registers");
+
+    let session = store
+        .agent_session(&session_id)
+        .expect("session reads")
+        .expect("session exists");
+    assert_eq!(
+        session.external_tools,
+        vec!["docs__search".to_owned(), "docs__fetch".to_owned()]
+    );
+    // The sweep reads the same projection.
+    let listed = store
+        .agent_sessions()
+        .expect("sessions list")
+        .into_iter()
+        .find(|session| session.session_id == session_id)
+        .expect("session listed");
+    assert_eq!(listed.external_tools, session.external_tools);
+
+    // A session registered without tools reads back empty, not NULL-spoiled.
+    let plain = register_agent_session(&store, "s-plain");
+    assert_eq!(
+        store
+            .agent_session(&plain)
+            .expect("session reads")
+            .expect("session exists")
+            .external_tools,
+        Vec::<String>::new()
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn resolved_approvals_are_scrubbed_in_the_durable_log() {
+    // Answers, free text, and elicitation content can carry credentials:
+    // the durable row must record that the request resolved, not what the
+    // answer contained. Live consumers still receive the full decision on
+    // the returned event.
+    let path = store_path("session-approval-scrub");
+    let store = RunStore::open(&path).expect("store opens");
+    let session_id = register_agent_session(&store, "s-1");
+    store
+        .append(&session_id, run_started("run-a"))
+        .expect("event appends");
+    let request = ApprovalRequest {
+        kind: ApprovalKind::McpElicitation,
+        title: "credentials".to_owned(),
+        detail: String::new(),
+        options: Vec::new(),
+        requires_confirm: false,
+        interaction_kind: None,
+        questions: Vec::new(),
+        parameters: None,
+        native_method: None,
+    };
+    store
+        .append(
+            &session_id,
+            AgentEventKind::ApprovalRequested {
+                run_id: RunId::new("run-a"),
+                request_id: RequestId::new("req-secret"),
+                request,
+            },
+        )
+        .expect("event appends");
+    let decision = ApprovalDecision::Answers(std::collections::BTreeMap::from([
+        ("password".to_owned(), vec!["hunter2".to_owned()]),
+        ("token".to_owned(), vec!["sk-live".to_owned()]),
+    ]));
+    let live = store
+        .append(
+            &session_id,
+            AgentEventKind::ApprovalResolved {
+                request_id: RequestId::new("req-secret"),
+                decision: decision.clone(),
+                answered_by: "dashboard".to_owned(),
+            },
+        )
+        .expect("event appends");
+
+    // The live event carries the answer so the answering flow can hand it
+    // back to the waiting provider call.
+    let AgentEventKind::ApprovalResolved {
+        decision: live_decision,
+        ..
+    } = live.kind
+    else {
+        panic!("the returned event keeps its kind");
+    };
+    assert_eq!(live_decision, decision);
+
+    // The durable row keeps the question ids - needed to match the request
+    // on replay - but none of the answered values.
+    let page = store
+        .replay(&session_id, 0, 100, usize::MAX)
+        .expect("replay reads");
+    let AgentEventKind::ApprovalResolved {
+        decision: persisted,
+        answered_by,
+        ..
+    } = &page.events.last().expect("the resolved fact replayed").kind
+    else {
+        panic!("the last fact is the resolution");
+    };
+    assert_eq!(answered_by, "dashboard");
+    let ApprovalDecision::Answers(persisted) = persisted else {
+        panic!("the decision kind survives scrubbing");
+    };
+    assert_eq!(
+        persisted.keys().collect::<Vec<_>>(),
+        vec!["password", "token"],
+        "the asked question ids remain"
+    );
+    assert!(
+        persisted.values().all(|values| values.is_empty()),
+        "no answer content is durable"
+    );
+
+    // Raw storage agrees: the secret is nowhere in the row payload.
+    let raw: String = store
+        .connection
+        .lock()
+        .expect("run store mutex")
+        .query_row(
+            "SELECT data FROM session_events WHERE session_id = ?1 AND kind = 'approval.resolved'",
+            params![session_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("raw row reads");
+    assert!(!raw.contains("hunter2"));
+    assert!(!raw.contains("sk-live"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn version_six_databases_gain_the_external_tools_column() {
+    let path = store_path("migrate-v6");
+    // Seed the version-6 shape: `agent_sessions` without the
+    // `external_tools` column, holding one in-flight row.
+    {
+        let connection = rusqlite::Connection::open(&path).expect("seed db opens");
+        connection
+            .execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO meta (key, value) VALUES ('schema_version', '6');
+                CREATE TABLE agent_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    integration TEXT NOT NULL,
+                    model TEXT,
+                    effort TEXT,
+                    cwd TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    resume_cursor TEXT,
+                    owner TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                INSERT INTO agent_sessions
+                    (session_id, integration, cwd, status, created_at, updated_at)
+                VALUES ('s-old', 'claude', '/repo', 'working', 1, 1);",
+            )
+            .expect("seed schema applies");
+    }
+
+    let store = RunStore::open(&path).expect("store opens");
+    let version: String = store
+        .connection
+        .lock()
+        .expect("run store mutex")
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("schema version reads");
+    assert_eq!(
+        version,
+        SCHEMA_VERSION.to_string(),
+        "the migration advances the schema version"
+    );
+
+    // Rows written before tool declarations read back with no tools.
+    let session = store
+        .agent_session(&SessionId::new("s-old"))
+        .expect("session reads")
+        .expect("session exists");
+    assert_eq!(session.external_tools, Vec::<String>::new());
+
+    // New writes persist the declared tools on the migrated table.
+    let session_id = SessionId::new("s-new");
+    store
+        .record_agent_session(
+            &session_id,
+            &agent_session_selection(),
+            Path::new("/repo"),
+            &["docs__search".to_owned()],
+        )
+        .expect("agent session registers");
+    assert_eq!(
+        store
+            .agent_session(&session_id)
+            .expect("session reads")
+            .expect("session exists")
+            .external_tools,
+        vec!["docs__search".to_owned()]
+    );
     let _ = std::fs::remove_file(path);
 }

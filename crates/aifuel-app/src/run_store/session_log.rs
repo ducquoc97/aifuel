@@ -16,8 +16,9 @@ use super::records::{ReplayPage, StoredAgentSession};
 use super::{RunStore, RunStoreError};
 use crate::run_management::now;
 use aifuel_core::{
-    AGENT_RUNTIME_SCHEMA_VERSION, AgentEvent, AgentEventKind, CheckpointDescriptor, Effort,
-    IntegrationId, ModelSelection, PendingApproval, Seq, SessionId, SessionSnapshot, SessionStatus,
+    AGENT_RUNTIME_SCHEMA_VERSION, AgentEvent, AgentEventKind, ApprovalDecision,
+    CheckpointDescriptor, Effort, IntegrationId, ModelSelection, PendingApproval, Seq, SessionId,
+    SessionSnapshot, SessionStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use std::collections::BTreeSet;
@@ -30,18 +31,22 @@ const IN_FLIGHT_STATUSES: &str = "'working', 'waiting_approval', 'compacting'";
 /// The `agent_sessions` read columns, shared by the single-row and listing
 /// queries so both decode the same layout.
 const AGENT_SESSION_COLUMNS: &str =
-    "session_id, integration, model, effort, cwd, status, resume_cursor, owner";
+    "session_id, integration, model, effort, cwd, status, resume_cursor, owner, external_tools";
 
 impl RunStore {
     /// Insert the Agent Session row the Session Event Log projects over,
     /// stamped with this store's owner. Called once when `session.create`
     /// is accepted; re-registering keeps the recorded status and
-    /// `created_at` while refreshing the selection and owner.
+    /// `created_at` while refreshing the selection and owner. The declared
+    /// `external_tools` persist so a startup resume can redeclare the same
+    /// exact enforcement instead of continuing on the provider's full tool
+    /// surface.
     pub fn record_agent_session(
         &self,
         session_id: &SessionId,
         selection: &ModelSelection,
         cwd: &Path,
+        external_tools: &[String],
     ) -> Result<(), RunStoreError> {
         let connection = self.connection.lock().expect("run store mutex");
         upsert_agent_session(
@@ -51,18 +56,27 @@ impl RunStore {
             Some(selection),
             cwd,
             &self.owner,
+            Some(external_tools),
         )
     }
 
     /// Re-stamp the session's owner to this store's id when the startup
-    /// resume sweep adopts it. The row reads live-owned from then on, so
-    /// this runtime's shutdown marks it and other opens leave it alone.
-    pub fn claim_agent_session(&self, session_id: &SessionId) -> Result<(), RunStoreError> {
-        self.connection.lock().expect("run store mutex").execute(
-            "UPDATE agent_sessions SET owner = ?2, updated_at = ?3 WHERE session_id = ?1",
-            params![session_id.as_str(), self.owner, now()],
-        )?;
-        Ok(())
+    /// resume sweep adopts it. The claim is a compare-and-swap on the owner
+    /// observed at enumeration: `IS` compares NULL-safe, so the update only
+    /// lands while the row still carries that dead owner - a session
+    /// another runtime claimed first reports `false` and must not be
+    /// attached. The row reads live-owned from then on, so this runtime's
+    /// shutdown marks it and other opens leave it alone.
+    pub fn claim_agent_session(
+        &self,
+        session_id: &SessionId,
+        expected_owner: Option<&str>,
+    ) -> Result<bool, RunStoreError> {
+        Ok(self.connection.lock().expect("run store mutex").execute(
+            "UPDATE agent_sessions SET owner = ?2, updated_at = ?3
+                WHERE session_id = ?1 AND owner IS ?4",
+            params![session_id.as_str(), self.owner, now(), expected_owner],
+        )? > 0)
     }
 
     /// Update the session's current model selection (`model.select`). The
@@ -152,7 +166,28 @@ impl RunStore {
     ) -> Result<AgentEvent, RunStoreError> {
         // The serialized kind is the single source for the tag and run_id
         // columns, so a renamed contract tag cannot drift the indexes.
-        let value = serde_json::to_value(&kind)?;
+        let mut value = serde_json::to_value(&kind)?;
+        // An approval answer can carry credential material - free text,
+        // structured answers, MCP elicitation content - and answers are
+        // never persisted. The durable row records that the request was
+        // resolved and by whom; the full decision still reaches live
+        // consumers on the returned event.
+        if let AgentEventKind::ApprovalResolved { decision, .. } = &kind {
+            let scrubbed = match decision {
+                ApprovalDecision::OptionId(id) => ApprovalDecision::OptionId(id.clone()),
+                ApprovalDecision::Text(_) => ApprovalDecision::Text(String::new()),
+                ApprovalDecision::Answers(answers) => ApprovalDecision::Answers(
+                    answers
+                        .keys()
+                        .map(|key| (key.clone(), Vec::new()))
+                        .collect(),
+                ),
+                ApprovalDecision::Elicitation(_) => {
+                    ApprovalDecision::Elicitation(serde_json::Value::Null)
+                }
+            };
+            value["decision"] = serde_json::to_value(&scrubbed)?;
+        }
         let tag = value["type"].as_str().unwrap_or_default().to_owned();
         let run_id = value["run_id"].as_str().map(str::to_owned);
         let data = value.to_string();
@@ -209,6 +244,7 @@ impl RunStore {
                     None,
                     cwd,
                     &self.owner,
+                    None,
                 )?;
             }
             AgentEventKind::SessionStatus { status } => {
@@ -449,8 +485,9 @@ fn read_session_event(
 /// `selection`, the selection columns are written and refreshed on
 /// conflict; without it they insert as NULL and survive conflicts
 /// untouched, so an event-projected row never wipes a recorded selection.
-/// Status and `created_at` persist across conflicts either way; `owner`
-/// always re-stamps to the writing store.
+/// `external_tools` travels with the selection: it refreshes only when the
+/// selection does. Status and `created_at` persist across conflicts either
+/// way; `owner` always re-stamps to the writing store.
 fn upsert_agent_session(
     connection: &Connection,
     session_id: &SessionId,
@@ -458,6 +495,7 @@ fn upsert_agent_session(
     selection: Option<&ModelSelection>,
     cwd: &Path,
     owner: &str,
+    external_tools: Option<&[String]>,
 ) -> Result<(), RunStoreError> {
     let (model, effort) = selection
         .map(|selection| {
@@ -467,12 +505,14 @@ fn upsert_agent_session(
             )
         })
         .unwrap_or((None, None));
+    let external_tools = external_tools.map(serde_json::to_string).transpose()?;
     let update = if selection.is_some() {
         "integration = excluded.integration,
             model = excluded.model,
             effort = excluded.effort,
             cwd = excluded.cwd,
             owner = excluded.owner,
+            external_tools = excluded.external_tools,
             updated_at = excluded.updated_at"
     } else {
         "integration = excluded.integration,
@@ -483,8 +523,9 @@ fn upsert_agent_session(
     connection.execute(
         &format!(
             "INSERT INTO agent_sessions
-                (session_id, integration, model, effort, cwd, status, owner, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                (session_id, integration, model, effort, cwd, status, owner, external_tools,
+                 created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
             ON CONFLICT(session_id) DO UPDATE SET {update}"
         ),
         params![
@@ -495,6 +536,7 @@ fn upsert_agent_session(
             cwd.display().to_string(),
             SessionStatus::Idle.as_str(),
             owner,
+            external_tools,
             now(),
         ],
     )?;
@@ -528,6 +570,7 @@ fn stored_agent_session(
 fn agent_session_row(row: &Row<'_>) -> Result<StoredAgentSession, rusqlite::Error> {
     let effort: Option<String> = row.get(3)?;
     let status: String = row.get(5)?;
+    let external_tools: Option<String> = row.get(8)?;
     Ok(StoredAgentSession {
         session_id: SessionId::new(row.get::<_, String>(0)?),
         integration: IntegrationId::new(row.get::<_, String>(1)?),
@@ -542,6 +585,10 @@ fn agent_session_row(row: &Row<'_>) -> Result<StoredAgentSession, rusqlite::Erro
         status: SessionStatus::parse(&status).ok_or_else(|| invalid_text(5))?,
         resume_cursor: row.get(6)?,
         owner: row.get(7)?,
+        external_tools: external_tools
+            .map(|tools| serde_json::from_str(&tools).map_err(|_| invalid_text(8)))
+            .transpose()?
+            .unwrap_or_default(),
     })
 }
 

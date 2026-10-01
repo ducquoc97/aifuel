@@ -25,8 +25,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helpers::{invalid_text, pid_alive};
 use schema::{
-    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, SCHEMA,
-    SCHEMA_VERSION, TERMINAL_EVENT_KINDS, TERMINAL_STATES,
+    META_SCHEMA, MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5,
+    MIGRATION_V6, SCHEMA, SCHEMA_VERSION, TERMINAL_EVENT_KINDS, TERMINAL_STATES,
 };
 
 pub use error::RunStoreError;
@@ -134,23 +134,31 @@ impl RunStore {
                 connection.execute_batch(MIGRATION_V3)?;
                 connection.execute_batch(MIGRATION_V4)?;
                 connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
             }
             "2" => {
                 connection.execute_batch(MIGRATION_V2)?;
                 connection.execute_batch(MIGRATION_V3)?;
                 connection.execute_batch(MIGRATION_V4)?;
                 connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
             }
             "3" => {
                 connection.execute_batch(MIGRATION_V3)?;
                 connection.execute_batch(MIGRATION_V4)?;
                 connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
             }
             "4" => {
                 connection.execute_batch(MIGRATION_V4)?;
                 connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
             }
-            "5" => connection.execute_batch(MIGRATION_V5)?,
+            "5" => {
+                connection.execute_batch(MIGRATION_V5)?;
+                connection.execute_batch(MIGRATION_V6)?;
+            }
+            "6" => connection.execute_batch(MIGRATION_V6)?,
             version if version == SCHEMA_VERSION.to_string() => {}
             version => return Err(RunStoreError::UnsupportedSchema(version.to_owned())),
         }

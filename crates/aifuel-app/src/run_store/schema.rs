@@ -6,7 +6,7 @@
 //! only for `events.data`, which stays `NULL` unless the owning manager
 //! enables content retention.
 
-pub(super) const SCHEMA_VERSION: u32 = 6;
+pub(super) const SCHEMA_VERSION: u32 = 7;
 
 /// The `meta` table is created before any versioned migration so the schema
 /// version can be read even on a database that predates the migration.
@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     status TEXT NOT NULL,
     resume_cursor TEXT,
     owner TEXT,
+    external_tools TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
@@ -173,6 +174,30 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 ALTER TABLE agent_sessions ADD COLUMN owner TEXT;
 UPDATE meta SET value = '6' WHERE key = 'schema_version';
+";
+
+/// Schema version 6 predates persisted session tool enforcement:
+/// `external_tools` holds the JSON tool list `session.create` declared so a
+/// startup resume can redeclare the same exact set instead of silently
+/// continuing on the provider's full tool surface. Versions before 5 have
+/// no `agent_sessions` table at all, so the migration creates it first to
+/// keep `ALTER TABLE` valid on every upgrade path; rows written before the
+/// column existed keep `NULL` and resume with no tool enforcement, the
+/// same honest posture they ran under.
+pub(super) const MIGRATION_V6: &str = "
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    integration TEXT NOT NULL,
+    model TEXT,
+    effort TEXT,
+    cwd TEXT NOT NULL,
+    status TEXT NOT NULL,
+    resume_cursor TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+ALTER TABLE agent_sessions ADD COLUMN external_tools TEXT;
+UPDATE meta SET value = '7' WHERE key = 'schema_version';
 ";
 
 pub(super) const TERMINAL_STATES: &str = "'succeeded', 'failed', 'timed_out', 'cancelled'";

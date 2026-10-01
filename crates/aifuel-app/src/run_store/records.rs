@@ -182,6 +182,10 @@ pub struct StoredAgentSession {
     /// rows written before owner scoping. Internal ownership marker; the
     /// wire payload never carries it.
     pub owner: Option<String>,
+    /// The exact AI Fuel Gateway tool list `session.create` declared,
+    /// persisted so a startup resume redeclares the same enforcement.
+    /// Empty means no tool restriction was asked for.
+    pub external_tools: Vec<String>,
 }
 
 /// One bounded page from a session's event log plus the log's head.
