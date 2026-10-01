@@ -8,7 +8,7 @@ use crate::{CredentialStore, KeyHealth};
 use aifuel_core::{
     AccessMode, AgentExecutionAdapter, AgentRunError, ApiKeySource, AuthBinding, CredentialRef,
     EndpointConfig, IntegrationId, KeyDelivery, OutputFormat, ProviderId, RunCancellationToken,
-    RunRequest, RunStatus,
+    RunRequest, RunStatus, WireApi,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -156,6 +156,7 @@ fn adapter(url: &str, store: CredentialStore) -> WireExecutionAdapter {
             extra_headers: BTreeMap::new(),
             request_timeout_seconds: None,
         },
+        WireApi::OpenAiChat,
         AuthBinding::ApiKey {
             source: ApiKeySource::Store {
                 credential: CredentialRef::new(INTEGRATION),
