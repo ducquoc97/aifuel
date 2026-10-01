@@ -79,7 +79,7 @@ impl AgentRuntime {
                 selection: selection.clone(),
                 access,
                 resume_cursor,
-                external_tools,
+                external_tools: external_tools.clone(),
             },
         ) {
             Ok(handle) => handle,
@@ -88,9 +88,9 @@ impl AgentRuntime {
         let cleanup = |handle: AgentSessionHandle| {
             let _ = adapter.stop(handle);
         };
-        if let Err(error) = self
-            .store
-            .record_agent_session(&handle.session_id, &selection, &cwd)
+        if let Err(error) =
+            self.store
+                .record_agent_session(&handle.session_id, &selection, &cwd, &external_tools)
         {
             cleanup(handle);
             return CommandOutcome::rejected(

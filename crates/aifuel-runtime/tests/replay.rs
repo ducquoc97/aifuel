@@ -15,8 +15,8 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 use support::{
     FakeAdapter, FakeScript, collect_run, consumer, create, created_session, fake_descriptor,
-    fake_discovery, fake_runtime, next_id, receipt_code, receipt_snapshot, run_start, subscribe,
-    test_dir,
+    fake_discovery, fake_runtime, next_id, receipt_code, receipt_snapshot, run_start, selection,
+    subscribe, test_dir,
 };
 
 /// `with_adapters` over the fake integration with one scripted adapter.
@@ -340,6 +340,83 @@ fn interrupted_session_with_cursor_resumes_on_open() {
         statuses.get(interrupted_at + 2),
         Some(&SessionStatus::Working),
         "the run's own working follows; no stale idle undid the resume"
+    );
+    runtime.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn interrupted_sessions_redeclare_their_external_tools_on_resume() {
+    // The declared tools persist with the session row: whichever runtime
+    // adopts the interrupted session restarts the adapter under the same
+    // enforcement - the allowlist is a fact, not a per-process memory.
+    let dir = test_dir("resume-tools");
+    let session_id;
+    {
+        let (store, runtime) = fake_runtime(
+            &dir,
+            AdapterCapabilities {
+                external_tools: true,
+                ..FakeAdapter::default_capabilities()
+            },
+            vec![FakeAdapter::model("fake-a", &[])],
+            vec![FakeScript::Block {
+                cursor: Some("native-42"),
+            }],
+        );
+        let c1 = consumer("c1");
+        let outcome = runtime.dispatch(
+            AgentCommand::SessionCreate {
+                command_id: next_id(),
+                cwd: dir.clone(),
+                selection: selection("fake-a"),
+                access: aifuel_core::AccessMode::ReadOnly,
+                resume_cursor: None,
+                external_tools: vec!["gateway.search".to_owned()],
+            },
+            &c1,
+        );
+        session_id = created_session(&outcome);
+        assert!(
+            runtime
+                .dispatch(run_start(&session_id, "work"), &c1)
+                .receipt
+                .ok
+        );
+        for _ in 0..200 {
+            let working = store
+                .agent_session(&session_id)
+                .expect("session reads")
+                .is_some_and(|session| session.status == SessionStatus::Working);
+            if working {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        runtime.shutdown();
+    }
+
+    // A fresh runtime adopts the orphaned row: the adapter's start sees
+    // the same tool allowlist the first host declared.
+    let resuming = Arc::new(FakeAdapter::new(
+        AdapterCapabilities {
+            external_tools: true,
+            ..FakeAdapter::default_capabilities()
+        },
+        vec![FakeAdapter::model("fake-a", &[])],
+    ));
+    let store = RunStore::open(dir.join("aifuel.db")).expect("store reopens");
+    let runtime = AgentRuntime::with_adapters(
+        store.clone(),
+        vec![resuming.clone()],
+        vec![fake_descriptor()],
+        fake_discovery(&dir),
+    )
+    .expect("runtime reopens");
+    assert_eq!(
+        resuming.recorded_tools(),
+        vec![vec!["gateway.search".to_owned()]],
+        "the adopting runtime redeclares the persisted tools on start"
     );
     runtime.shutdown();
     let _ = std::fs::remove_dir_all(&dir);

@@ -237,6 +237,20 @@ impl AgentRuntime {
             if !adapter.capabilities().resume {
                 continue;
             }
+            // Claim the row before spending a provider attach: the claim
+            // only lands while the owner is still the dead one this sweep
+            // enumerated, so two runtimes cannot double-attach one session.
+            match self
+                .store
+                .claim_agent_session(&session.session_id, session.owner.as_deref())
+            {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    warn_store_write(&error);
+                    continue;
+                }
+            }
             let handle = match adapter.start(
                 &descriptor.integration,
                 StartOptions {
@@ -252,10 +266,11 @@ impl AgentRuntime {
                     // re-declared.
                     access: AccessMode::ReadOnly,
                     resume_cursor: Some(cursor),
-                    // A continuation redeclares no tool enforcement: the
-                    // host that owned the session declared it, and the
-                    // projection persists no copy to replay here.
-                    external_tools: Vec::new(),
+                    // The tool set the owning host declared persists on the
+                    // row, so a continuation redeclares the same exact
+                    // enforcement rather than silently widening to the
+                    // provider's full tool surface.
+                    external_tools: session.external_tools.clone(),
                 },
             ) {
                 Ok(handle) => handle,
@@ -305,12 +320,6 @@ impl AgentRuntime {
                             monitoring: descriptor.integration.monitoring.is_some(),
                         },
                     );
-                    // The session is live under this runtime now, so its
-                    // owner re-stamps to this store's id: this runtime's
-                    // shutdown marks it and other opens leave it alone.
-                    if let Err(error) = self.store.claim_agent_session(&session.session_id) {
-                        warn_store_write(&error);
-                    }
                 }
                 Err(error) => {
                     eprintln!("aifuel: the resumed session's event pump could not start: {error}");
