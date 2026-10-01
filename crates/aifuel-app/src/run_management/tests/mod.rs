@@ -19,7 +19,9 @@ struct OversizedOutputAdapter {
     bytes: usize,
 }
 
-struct InputAdapter;
+struct InputAdapter {
+    method: &'static str,
+}
 
 /// Fails the run immediately with an `InvalidRequest` provider error.
 struct FailingAdapter;
@@ -180,7 +182,7 @@ impl AgentExecutionAdapter for InputAdapter {
         let response = handler.interact(
             AgentInteractionRequest {
                 request_id: serde_json::json!("input-request"),
-                method: "item/tool/requestUserInput".to_owned(),
+                method: self.method.to_owned(),
                 kind: AgentInteractionKind::OrdinaryInput,
                 description: "Choose a target".to_owned(),
                 questions: vec![aifuel_core::AgentInputQuestion {
