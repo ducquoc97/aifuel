@@ -38,14 +38,14 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | Command | What you get |
 |---|---|
 | `aifuel` | **Web dashboard** at `http://127.0.0.1:8787` (opens a browser; optional auto-refresh) |
-| `aifuel --no-browser` | Dashboard without opening a browser; `--host`/`--port` change the bind |
+| `aifuel --no-browser` | Dashboard without opening a browser; `--host`/`--port` change the bind (a non-loopback `--host` also exposes the Connect form's key submission to clients that can reach the port) |
 | `aifuel --text` | Compact **colored terminal** summary (great over SSH) |
 | `aifuel --json` | **Normalized JSON** for scripts, status bars, and piping |
 | `aifuel run --provider ID --prompt "..."` | One explicit prompt through an installed provider CLI |
 | `aifuel run --provider auto --prompt "..."` | Route the prompt to the discovered provider with the most quota headroom |
 | `aifuel profile list\|save\|remove` | Named defaults for `run` (provider, model, effort, access, timeout) |
 | `aifuel model list\|refresh` | Cached provider model catalog, refreshed on demand |
-| `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations |
+| `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations (also via the dashboard's Connect section) |
 | `aifuel approve --run ID --input ID --decision accept\|decline\|cancel` | Answer a pending permission request for a local run |
 | `aifuel mcp [--http [--host H] [--port P]]` | Read-only MCP status server over stdio, or streamable HTTP |
 | `aifuel mcp execution [--http [--host H] [--port P]]` | MCP server that manages Agent Runs over stdio, or streamable HTTP |
@@ -191,7 +191,7 @@ Each collection (dashboard refresh, `--json`, `--text`, MCP `get_status`) can PO
 
 **Does this send my tokens anywhere?** No. It reads the same local credential files your CLIs use, calls each provider's *own* usage endpoint, and shows the result. No server, no telemetry, no third party.
 
-**Do I need API keys?** Not for monitoring - it reuses the OAuth/logins your AI coding CLIs already set up. `aifuel run` through an API-key integration (any `*:api-key` id listed above) does need one via `aifuel auth set-key` or the provider's env var. A general GitHub CLI login does not count as a GitHub Copilot login.
+**Do I need API keys?** Not for monitoring - it reuses the OAuth/logins your AI coding CLIs already set up. `aifuel run` through an API-key integration (any `*:api-key` id listed above) does need one via `aifuel auth set-key`, the dashboard's Connect section, or the provider's env var. A general GitHub CLI login does not count as a GitHub Copilot login.
 
 **It only shows some providers.** Those are the ones with local credentials. Log in to that provider's AI coding CLI, then refresh.
 

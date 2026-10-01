@@ -7,6 +7,8 @@
 <title>aifuel - fuel gauge for your AI coding subscriptions</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23F97316'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' font-family='system-ui'%3E⛽%3C/text%3E%3C/svg%3E"/>
 <link rel="stylesheet" href="/dashboard.css"/>
+<link rel="stylesheet" href="/connect.css"/>
+<script src="/connect.js" defer></script>
 </head>
 <body>
 
@@ -43,6 +45,17 @@
   </section>
 
   <div class="grid" id="grid" role="list" aria-label="AI provider usage cards"></div>
+
+  <section class="connect" id="connect" aria-labelledby="connect-title" hidden>
+    <h2 class="connect-title" id="connect-title">Connect</h2>
+    <p class="connect-sub">
+      Store an API key as a managed credential for an API-key integration -
+      the same store <code>aifuel auth set-key</code> writes. Keys are saved
+      locally, never displayed.
+    </p>
+    <div class="connect-list" id="connect-list"></div>
+    <div class="connect-msg" id="connect-msg" role="status" aria-live="polite" hidden></div>
+  </section>
 
   <footer>
     <span id="footer-auto-refresh" hidden>Auto-refreshes every 5 minutes.</span>

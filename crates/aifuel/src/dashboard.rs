@@ -1,12 +1,19 @@
 use aifuel_app::MonitoringFacade;
 use aifuel_core::{StatusCollector, StatusReport};
-use std::io::Write;
+use serde::Serialize;
+use std::io::{Read, Write};
 use std::process::Command;
 use std::thread;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 const INDEX_HTML: &str = include_str!("../../../src/index.html");
 const DASHBOARD_CSS: &str = include_str!("../../../src/dashboard.css");
+const CONNECT_CSS: &str = include_str!("../../../src/connect.css");
+const CONNECT_JS: &str = include_str!("../../../src/connect.js");
+
+/// Mutation request bodies are small by contract (an integration id plus a
+/// pasted key); anything larger is rejected rather than buffered.
+const MAX_BODY_BYTES: u64 = 8 * 1024;
 
 pub fn serve<C>(
     host: &str,
@@ -38,7 +45,9 @@ where
         .map_err(|error| format!("could not start dashboard runtime: {error}"))?;
 
     for request in server.incoming_requests() {
+        let mut request = request;
         if !is_local_request(&request) {
+            drain_body(&mut request);
             respond(
                 request,
                 403,
@@ -70,21 +79,133 @@ fn handle_request<C>(
         (&Method::Get, "/dashboard.css") => {
             respond(request, 200, DASHBOARD_CSS, "text/css; charset=utf-8")
         }
+        (&Method::Get, "/connect.css") => {
+            respond(request, 200, CONNECT_CSS, "text/css; charset=utf-8")
+        }
+        (&Method::Get, "/connect.js") => respond(
+            request,
+            200,
+            CONNECT_JS,
+            "application/javascript; charset=utf-8",
+        ),
         (&Method::Get, "/api/usage") => {
             let report = runtime.block_on(facade.status(force));
-            respond_json(request, &report);
+            respond_json(request, 200, &report);
         }
         (&Method::Get, "/api/usage/stream") => {
             let report = runtime.block_on(facade.status(force));
             respond_stream(request, &report);
         }
-        _ => respond(request, 404, "not found", "text/plain"),
+        // The Connect panel mirrors `aifuel auth`: it reports each API-key
+        // integration's credential source and mutates the local Credential
+        // Store. Mutations are POST-only; the server binds loopback by
+        // default and `is_local_request` above rejects cross-origin and
+        // cross-site browser traffic, which is the CSRF boundary for these
+        // endpoints. Binding a non-loopback host (`--host 0.0.0.0`) widens
+        // who can reach the form - only the loopback Host/Origin checks
+        // stand between a reachable socket and the credential store, so
+        // treat any non-loopback bind as remote exposure of key submission.
+        (&Method::Get, "/api/auth") => match aifuel::connect::entries() {
+            Ok(integrations) => respond_json(
+                request,
+                200,
+                &serde_json::json!({ "integrations": integrations }),
+            ),
+            Err(error) => respond_json(request, 500, &serde_json::json!({ "error": error })),
+        },
+        (&Method::Post, "/api/auth/set-key") => handle_set_key(request),
+        (&Method::Post, "/api/auth/remove") => handle_remove(request),
+        _ => {
+            let mut request = request;
+            drain_body(&mut request);
+            respond(request, 404, "not found", "text/plain")
+        }
     }
 }
 
-fn respond_json(request: Request, report: &StatusReport) {
-    match serde_json::to_string_pretty(report) {
-        Ok(body) => respond(request, 200, body, "application/json; charset=utf-8"),
+#[derive(serde::Deserialize)]
+struct SetKeyBody {
+    integration: String,
+    key: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RemoveBody {
+    credential: String,
+}
+
+/// `POST /api/auth/set-key`: store the submitted key as the integration's
+/// Managed Credential. The key travels in the request body only - responses
+/// never carry it back.
+fn handle_set_key(mut request: Request) {
+    let body: SetKeyBody = match read_json_body(&mut request) {
+        Ok(body) => body,
+        Err(error) => {
+            return respond_json(request, 400, &serde_json::json!({ "error": error }));
+        }
+    };
+    match aifuel::connect::store_key(&body.integration, &body.key) {
+        Ok(()) => respond_json(request, 200, &serde_json::json!({ "ok": true })),
+        Err(error) => respond_json(request, 400, &serde_json::json!({ "error": error })),
+    }
+}
+
+/// `POST /api/auth/remove`: delete the named Managed Credential, answering
+/// the same warnings `aifuel auth remove` prints.
+fn handle_remove(mut request: Request) {
+    let body: RemoveBody = match read_json_body(&mut request) {
+        Ok(body) => body,
+        Err(error) => {
+            return respond_json(request, 400, &serde_json::json!({ "error": error }));
+        }
+    };
+    match aifuel::connect::remove_credential(&body.credential) {
+        Ok(warnings) => respond_json(
+            request,
+            200,
+            &serde_json::json!({ "ok": true, "warnings": warnings }),
+        ),
+        Err(error) => respond_json(request, 400, &serde_json::json!({ "error": error })),
+    }
+}
+
+/// Decode a JSON mutation body. Requiring `application/json` is part of the
+/// CSRF posture: a cross-site HTML form can only post form-encodings, so
+/// forged submissions fail here even before the origin checks.
+fn read_json_body<T: serde::de::DeserializeOwned>(request: &mut Request) -> Result<T, String> {
+    let content_type = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Content-Type"))
+        .map(|header| header.value.as_str().to_string())
+        .unwrap_or_default();
+    if !content_type.starts_with("application/json") {
+        drain_body(request);
+        return Err("expected an application/json request body".to_owned());
+    }
+    let mut body = String::new();
+    request
+        .as_reader()
+        .take(MAX_BODY_BYTES + 1)
+        .read_to_string(&mut body)
+        .map_err(|error| format!("could not read the request body: {error}"))?;
+    if body.len() as u64 > MAX_BODY_BYTES {
+        return Err("the request body is too large".to_owned());
+    }
+    serde_json::from_str(&body).map_err(|error| format!("invalid JSON body: {error}"))
+}
+
+/// Consume a rejected request's body (bounded) before the response: closing
+/// a socket while the kernel still holds unread request bytes can RST the
+/// connection before the client reads the rejection.
+fn drain_body(request: &mut Request) {
+    let mut reader = request.as_reader().take(MAX_BODY_BYTES + 1);
+    let _ = std::io::copy(&mut reader, &mut std::io::sink());
+}
+
+fn respond_json(request: Request, status: u16, value: &impl Serialize) {
+    match serde_json::to_string_pretty(value) {
+        Ok(body) => respond(request, status, body, "application/json; charset=utf-8"),
         Err(error) => respond(request, 500, error.to_string(), "text/plain"),
     }
 }
