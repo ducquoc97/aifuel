@@ -7,5 +7,7 @@ mod auth;
 mod mcp_dashboard;
 #[path = "commands/run.rs"]
 mod run;
+#[path = "commands/session.rs"]
+mod session;
 #[path = "commands/webhooks.rs"]
 mod webhooks;

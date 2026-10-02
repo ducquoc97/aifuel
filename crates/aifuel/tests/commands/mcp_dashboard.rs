@@ -409,3 +409,68 @@ fn dashboard_connect_stores_and_removes_a_managed_credential() {
     assert!(stdout.contains("openai:api-key"));
     assert!(!stdout.contains("(present)"), "{stdout}");
 }
+
+/// The same Connect endpoints serve the `*:web` session integration: it is
+/// listed with `kind: "session"`, a POSTed session lands as a `"session"`
+/// record (not an API-key pool member), and removal returns the
+/// session-specific warning.
+#[test]
+fn dashboard_connect_stores_and_removes_a_session_credential() {
+    let root = TestDirectory::new("dashboard-connect-session");
+    let credentials_file = ai_fuel_config_dir(root.path()).join("credentials.json");
+    let (mut child, address) =
+        start_dashboard(|command| configure_user_config_root(command, &root));
+
+    let response = dashboard_request(
+        &address,
+        b"GET /api/auth HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 200"),
+        "auth list: {response}"
+    );
+    assert!(
+        response.contains(r#""id": "claude-web:web""#),
+        "the session integration is listed: {response}"
+    );
+    assert!(
+        response.contains(r#""kind": "session""#),
+        "the session kind is reported: {response}"
+    );
+
+    let session = "Cookie: sessionKey=abc123; other=v";
+    let body = format!("{{\"integration\":\"claude-web:web\",\"key\":\"{session}\"}}");
+    let request = format!(
+        "POST /api/auth/set-key HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let response = dashboard_request(&address, request.as_bytes());
+    assert!(response.starts_with("HTTP/1.1 200"), "set-key: {response}");
+    let stored = fs::read_to_string(&credentials_file)
+        .expect("the credential store should exist after set-key");
+    assert!(
+        stored.contains(r#""claude-web:web""#) && stored.contains(r#""type": "session""#),
+        "the session lands as a session record: {stored}"
+    );
+    assert!(
+        !stored.contains("claude-web:web/"),
+        "a session never grows pool members: {stored}"
+    );
+
+    let body = r#"{"credential":"claude-web:web"}"#;
+    let request = format!(
+        "POST /api/auth/remove HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let response = dashboard_request(&address, request.as_bytes());
+    assert!(response.starts_with("HTTP/1.1 200"), "remove: {response}");
+    assert!(
+        response.contains("binds session credential"),
+        "the removal warning is session-specific: {response}"
+    );
+
+    child.kill().expect("dashboard process should be stoppable");
+    child.wait().expect("dashboard process should be reaped");
+}

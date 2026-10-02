@@ -45,7 +45,7 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | `aifuel run --provider auto --prompt "..."` | Route the prompt to the discovered provider with the most quota headroom, then to keyed API-key integrations |
 | `aifuel profile list\|save\|remove` | Named defaults for `run` (provider, model, effort, access, timeout) |
 | `aifuel model list\|refresh` | Cached provider model catalog, refreshed on demand |
-| `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations (also via the dashboard's Connect section); repeated `set-key` builds a key pool that rotates past rate limits |
+| `aifuel auth list\|set-key\|set-session\|remove` | Stored API keys for API-key integrations and browser-session credentials for `*:web` integrations (also via the dashboard's Connect section); repeated `set-key` builds a key pool that rotates past rate limits |
 | `aifuel approve --run ID --input ID --decision accept\|decline\|cancel` | Answer a pending permission request for a local run |
 | `aifuel mcp [--http [--host H] [--port P]]` | Read-only MCP status server over stdio, or streamable HTTP |
 | `aifuel mcp execution [--http [--host H] [--port P]]` | MCP server that manages Agent Runs over stdio, or streamable HTTP |
@@ -69,13 +69,15 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 
 `live` = pulled from the provider's own API; a provider that cannot return live usage shows as an error, never a guess. API-key integrations for OpenRouter (`/key` credits), Z.AI (coding-plan quota windows), DeepSeek, and SiliconFlow (account balance) also report live when their key is set. A pinned catalog covers 76 provider IDs and flags documented free tiers (`has_free`/`free_note` in `--json`, `free:` in `aifuel auth list`) - catalog-only entries report as unsupported.
 
+The `claude-web:web` integration monitors a claude.ai browser session - the `five_hour`, `seven_day`, and per-model usage windows - through a session credential you paste yourself: `aifuel auth set-session claude-web:web --stdin` accepts a bare session token or a copied `Cookie` header line (sent as `Cookie`, never a Bearer token), or export `CLAUDE_WEB_SESSION`. It never executes prompts, so it never appears in `run --provider auto`; nothing reads a browser profile or an OS keyring.
+
 ## Running prompts
 
 ```bash
 aifuel run --provider codex --model gpt-5-codex --prompt "Explain Rust ownership"
 ```
 
-Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, and the API-key integrations `openai:api-key`, `openrouter:api-key`, `anthropic:api-key`, `cerebras:api-key`, `cohere:api-key`, `deepinfra:api-key`, `deepseek:api-key`, `fireworks:api-key`, `groq:api-key`, `huggingface:api-key`, `mistral:api-key`, `moonshot:api-key`, `nvidia:api-key`, `perplexity:api-key`, `siliconflow:api-key`, `together:api-key`, `xai:api-key`, `zai:api-key`. Each `*:api-key` reads its provider's conventional env var (for example `GROQ_API_KEY` or `ANTHROPIC_API_KEY`; Hugging Face uses `HF_TOKEN`) or a key stored with `aifuel auth set-key`. `anthropic:api-key` speaks the Anthropic Messages API (`x-api-key` auth); the rest are OpenAI-compatible. Options:
+Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, and the API-key integrations `openai:api-key`, `openrouter:api-key`, `anthropic:api-key`, `cerebras:api-key`, `cohere:api-key`, `deepinfra:api-key`, `deepseek:api-key`, `fireworks:api-key`, `groq:api-key`, `huggingface:api-key`, `mistral:api-key`, `moonshot:api-key`, `nvidia:api-key`, `perplexity:api-key`, `siliconflow:api-key`, `together:api-key`, `xai:api-key`, `zai:api-key`. Each `*:api-key` reads its provider's conventional env var (for example `GROQ_API_KEY` or `ANTHROPIC_API_KEY`; Hugging Face uses `HF_TOKEN`) or a key stored with `aifuel auth set-key`. `anthropic:api-key` speaks the Anthropic Messages API (`x-api-key` auth); the rest are OpenAI-compatible. The `claude-web:web` integration binds a pasted browser session for monitoring only - it is not a run target. Options:
 
 - `--prompt TEXT` / `--prompt-file PATH` - or omit both to pipe the prompt on stdin
 - `--model ID` / `--effort LEVEL` - explicit model and effort

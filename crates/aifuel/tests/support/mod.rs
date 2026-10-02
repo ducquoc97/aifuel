@@ -307,6 +307,67 @@ pub fn seed_codex_token(home: &Path) {
     .expect("Codex auth marker should be writable");
 }
 
+/// Serve the two claude.ai web endpoints the `claude-web:web` collector
+/// reads: the organizations list on the configured URL, then
+/// `/{uuid}/usage`. Request heads are captured so tests can assert the
+/// Cookie header carried the session material and no Authorization header
+/// was sent.
+pub fn start_claude_web_fixture(
+    organizations: &'static str,
+    usage: &'static str,
+) -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    thread::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("fixture server should bind");
+    let address = listener
+        .local_addr()
+        .expect("fixture address should be available");
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let requests = captured.clone();
+    let server = thread::spawn(move || {
+        for stream in listener.incoming().take(2) {
+            let mut stream = stream.expect("fixture connection should open");
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            loop {
+                let count = stream
+                    .read(&mut buffer)
+                    .expect("request should be readable");
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request).into_owned();
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("")
+                .to_owned();
+            requests.lock().expect("captured requests").push(request);
+            let body = if path.ends_with("/usage") {
+                usage
+            } else {
+                organizations
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("fixture response should be writable");
+        }
+    });
+    (format!("http://{address}"), captured, server)
+}
+
 pub fn start_gemini_fixture() -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("fixture server should bind");
     let address = listener
