@@ -212,6 +212,7 @@ pub(super) fn options(access: AccessMode) -> StartOptions {
         access,
         resume_cursor: None,
         external_tools: Vec::new(),
+        env: Default::default(),
     }
 }
 

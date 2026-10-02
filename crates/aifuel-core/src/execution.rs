@@ -133,6 +133,13 @@ pub struct RunRequest {
     pub access: AccessMode,
     pub resume: Option<String>,
     pub timeout: Option<Duration>,
+    /// Process environment overlay resolved for the selected Provider
+    /// Integration instance, applied to the provider process at spawn. The
+    /// values may hold credential material resolved from the Credential
+    /// Store: they are never serialized, persisted, or printed - `Debug`
+    /// reports variable names only. A request built by hand leaves this
+    /// empty; only the runtime's instance resolution fills it.
+    pub env: BTreeMap<String, String>,
     /// Optional owner callback for provider-native questions and approvals.
     pub interaction_handler: Option<Arc<dyn AgentInteractionHandler>>,
 }
@@ -169,6 +176,18 @@ pub struct AgentInteractionRequest {
     /// established by the Agent Run. Providers normalize their wire formats
     /// into this policy signal before the application sees the request.
     pub requires_expanded_access: bool,
+}
+
+impl AgentInteractionRequest {
+    /// The question ids an answer must cover, in request order. Owners and
+    /// adapters both need the same list when recording or replying to the
+    /// request.
+    pub fn question_ids(&self) -> Vec<String> {
+        self.questions
+            .iter()
+            .map(|question| question.id.clone())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +230,7 @@ impl fmt::Debug for RunRequest {
             .field("access", &self.access)
             .field("resume", &self.resume)
             .field("timeout", &self.timeout)
+            .field("env", &self.env.keys().collect::<Vec<_>>())
             .finish_non_exhaustive()
     }
 }

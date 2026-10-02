@@ -197,12 +197,33 @@ impl CredentialStore {
         binding: &AuthBinding,
         integration: &IntegrationId,
     ) -> Result<ResolvedAuth, CredentialStoreError> {
+        self.resolve_with_env(binding, integration, &BTreeMap::new())
+    }
+
+    /// [`Self::resolve`] against the environment the provider process will
+    /// actually run with: `env` is the instance's resolved overlay, which a
+    /// `env`-sourced binding reads before the inherited process environment
+    /// (it wins at spawn, so it wins here). Store sources are unaffected.
+    ///
+    /// Resolved material never appears in the returned errors, matching
+    /// `resolve`.
+    pub fn resolve_with_env(
+        &self,
+        binding: &AuthBinding,
+        integration: &IntegrationId,
+        env: &BTreeMap<String, String>,
+    ) -> Result<ResolvedAuth, CredentialStoreError> {
+        let declared_env = |var: &String| {
+            env.get(var)
+                .cloned()
+                .or_else(|| env_override(var))
+                .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() })
+        };
         match binding {
             AuthBinding::None => Ok(ResolvedAuth::None),
             AuthBinding::ApiKey { source, delivery } => {
                 let key = match source {
-                    ApiKeySource::Env { var } => env_override(var)
-                        .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() })?,
+                    ApiKeySource::Env { var } => declared_env(var)?,
                     ApiKeySource::Store { credential } => self
                         .api_key_material(credential, integration)?
                         .ok_or_else(|| {
@@ -211,9 +232,7 @@ impl CredentialStore {
                     ApiKeySource::EnvOrStore { var, credential } => {
                         match self.api_key_material(credential, integration)? {
                             Some(key) => key,
-                            None => env_override(var).ok_or_else(|| {
-                                CredentialStoreError::EnvVarAbsent { var: var.clone() }
-                            })?,
+                            None => declared_env(var)?,
                         }
                     }
                 };
@@ -248,7 +267,10 @@ impl CredentialStore {
     /// record exists at `reference` (letting an `EnvOrStore` binding fall
     /// back to its declared variable). Kind and destination mismatches are
     /// errors, never a silent fallback.
-    fn api_key_material(
+    ///
+    /// Crate-internal so instance environment resolution can use it; the
+    /// material never leaves the crate except inside a resolved overlay.
+    pub(crate) fn api_key_material(
         &self,
         reference: &CredentialRef,
         integration: &IntegrationId,

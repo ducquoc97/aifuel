@@ -69,7 +69,7 @@ pub(crate) async fn execute(
         .or_else(|| temporary.as_ref().map(TemporaryDirectory::path))
         .expect("Codex App Server requires a working directory");
 
-    let mut child = spawn_app_server(cwd)?;
+    let mut child = spawn_app_server(cwd, &request.env)?;
     let stdout = child.stdout().take().expect("App Server stdout was piped");
     let stderr = child.stderr().take().expect("App Server stderr was piped");
     let mut stdout = BufReader::new(stdout);
@@ -107,12 +107,19 @@ pub(crate) async fn execute(
     })
 }
 
-pub(crate) fn spawn_app_server(cwd: &Path) -> Result<Box<dyn TokioChildWrapper>, AgentRunError> {
+/// Spawn `codex app-server` in `cwd` with the instance environment overlay
+/// applied to the child only. The overlay carries the run's Provider
+/// Integration instance environment; it is never merged into the parent.
+pub(crate) fn spawn_app_server(
+    cwd: &Path,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<Box<dyn TokioChildWrapper>, AgentRunError> {
     for candidate in program_candidates("codex") {
         let mut command = owned_command(&candidate, |command| {
             command
                 .args(APP_SERVER_ARGS)
                 .current_dir(cwd)
+                .envs(env)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());

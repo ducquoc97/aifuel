@@ -255,11 +255,7 @@ impl RunManager {
             RunInputKind::Ordinary => RunState::WaitingForInput,
             RunInputKind::Permission => RunState::WaitingForApproval,
         };
-        let question_ids = request
-            .questions
-            .iter()
-            .map(|question| question.id.clone())
-            .collect();
+        let question_ids = request.question_ids();
         let pending = PendingRunInput {
             input_id: format!("input-{}-{}", std::process::id(), now()),
             run_id: record.run_id.clone(),

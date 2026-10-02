@@ -112,6 +112,10 @@ _Avoid_: Catalog Provider, Supported Provider
 The opaque, stable identifier of a Provider Integration. It names a configured integration without encoding its provider or authentication details for routing.
 _Avoid_: Provider key, provider:mode compound ids parsed for routing
 
+**Provider Integration Instance**:
+A named selection overlay on one Provider Integration, declared in `providers.json` under `instances`. It carries the instance's own Integration Identity, its base integration, an environment overlay applied to the provider process at spawn, and an optional Managed Credential binding. It never changes the base integration's capabilities.
+_Avoid_: Named profile, provider account alias
+
 **Managed Credential**:
 An AI Fuel-owned credential, such as an API key or an OAuth token set, stored in AI Fuel's credential store. It is distinct from a Provider Credential Source, which a provider CLI owns.
 _Avoid_: User credential, app password

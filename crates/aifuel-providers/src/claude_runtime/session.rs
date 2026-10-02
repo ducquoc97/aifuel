@@ -60,11 +60,14 @@ fn spawn_transport(setup: &SessionSetup) -> Result<Transport, AgentRuntimeError>
     for candidate in crate::agent_execution::program_candidates("claude") {
         let cwd = setup.cwd.clone();
         let args = args.clone();
+        let env = setup.env.clone();
         let mut command = StdCommandWrap::with_new(candidate, move |command| {
             // Managed providers must not recursively start another AI Fuel
             // execution owner. The executable boundary rejects this marker.
             command
                 .env("AIFUEL_MANAGED_RUN", "1")
+                // The instance overlay applies to this child only.
+                .envs(&env)
                 .current_dir(&cwd)
                 .args(&args)
                 .stdin(Stdio::piped())
@@ -127,6 +130,10 @@ pub(super) struct SessionSetup {
     /// The persisted claude session id to `--resume`; `None` opens a
     /// fresh provider session.
     pub resume_cursor: Option<String>,
+    /// The instance environment overlay applied to the provider process
+    /// at spawn. Resolved credential material may ride along - it is
+    /// never logged or persisted by this layer.
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// The report `start` waits on after launching the driver: `Ok` once

@@ -490,6 +490,7 @@ fn resolve_request(
             access: policy_resolved.access,
             resume: None,
             timeout: policy_resolved.overall_deadline,
+            env: Default::default(),
             interaction_handler: None,
         },
         sources,

@@ -50,6 +50,7 @@ fn duplicate_builtin_ids_are_rejected() {
             cli_descriptor("claude:cli", "claude"),
         ],
         Vec::new(),
+        Vec::new(),
     );
     assert!(matches!(
         result,
@@ -64,6 +65,7 @@ fn config_cannot_shadow_a_builtin_id() {
     let result = IntegrationRegistry::build(
         vec![cli_descriptor("claude:cli", "claude")],
         vec![configured_http("claude:cli", "claude", AuthBinding::None)],
+        Vec::new(),
     );
     assert!(matches!(
         result,
@@ -79,6 +81,7 @@ fn duplicate_config_ids_are_rejected() {
             configured_http("mine", "openai", AuthBinding::None),
             configured_http("mine", "openai", AuthBinding::None),
         ],
+        Vec::new(),
     );
     assert!(matches!(
         result,
@@ -95,6 +98,7 @@ fn a_config_entry_error_fails_the_build() {
             id: Some("broken".to_owned()),
             reason: "auth kind 'bogus' is unknown".to_owned(),
         })],
+        Vec::new(),
     );
     assert!(matches!(result, Err(RegistryError::Config(_))));
 }
@@ -134,7 +138,7 @@ fn config_cannot_reference_a_builtin_held_credential() {
         },
     );
 
-    let result = IntegrationRegistry::build(vec![builtin], vec![smuggled]);
+    let result = IntegrationRegistry::build(vec![builtin], vec![smuggled], Vec::new());
 
     assert!(matches!(
         result,
@@ -154,6 +158,7 @@ fn resolve_prefers_an_exact_integration_id() {
             // the first integration's id: the exact id still wins.
             cli_descriptor("mirror", "claude:cli"),
         ],
+        Vec::new(),
         Vec::new(),
     )
     .expect("build should succeed");
@@ -180,6 +185,7 @@ fn a_bare_provider_resolves_only_when_unambiguous() {
                 delivery: aifuel_core::KeyDelivery::Bearer,
             },
         )],
+        Vec::new(),
     )
     .expect("build should succeed");
 
@@ -230,6 +236,7 @@ fn list_preserves_builtin_catalog_order_then_config_file_order() {
             configured_http("omega", "omega", AuthBinding::None),
             configured_http("beta", "beta", AuthBinding::None),
         ],
+        Vec::new(),
     )
     .expect("build should succeed");
 
@@ -246,7 +253,7 @@ fn list_preserves_builtin_catalog_order_then_config_file_order() {
 
 #[test]
 fn the_real_builtins_build_and_resolve() {
-    let registry = IntegrationRegistry::build(builtin_integrations(), Vec::new())
+    let registry = IntegrationRegistry::build(builtin_integrations(), Vec::new(), Vec::new())
         .expect("builtins never collide");
 
     // CLI integration ids equal the catalog provider ids, so stored
@@ -263,4 +270,223 @@ fn the_real_builtins_build_and_resolve() {
         registry.resolve("openai").expect("openai").id().as_str(),
         "openai:api-key"
     );
+}
+
+fn instance(id: &str, base: &str) -> InstanceDescriptor {
+    InstanceDescriptor {
+        id: IntegrationId::new(id),
+        integration: IntegrationId::new(base),
+        env: Default::default(),
+        credential: None,
+    }
+}
+
+#[test]
+fn instances_join_the_registry_and_serve_their_base() {
+    let registry = IntegrationRegistry::build(
+        vec![cli_descriptor("claude", "claude")],
+        Vec::new(),
+        vec![Ok(instance("claude.work", "claude"))],
+    )
+    .expect("build succeeds");
+
+    // The instance resolves by exact id to its base descriptor plus the
+    // overlay; the base id still serves itself.
+    let (base, overlay) = registry
+        .serving(&IntegrationId::new("claude.work"))
+        .expect("instance serves");
+    assert_eq!(base.id().as_str(), "claude");
+    assert_eq!(overlay.expect("overlay").id.as_str(), "claude.work");
+    let (base, overlay) = registry
+        .serving(&IntegrationId::new("claude"))
+        .expect("base serves");
+    assert_eq!(base.id().as_str(), "claude");
+    assert!(overlay.is_none());
+    assert!(registry.serving(&IntegrationId::new("nobody")).is_none());
+
+    // `resolve` never returns an instance: a bare provider selector keeps
+    // meaning the base integration so a stored `claude` selection cannot
+    // silently start running `claude.work`'s environment.
+    assert_eq!(
+        registry
+            .resolve("claude")
+            .expect("base resolves")
+            .id()
+            .as_str(),
+        "claude"
+    );
+    assert_eq!(
+        registry.resolve("claude.work").expect_err("not a selector"),
+        ResolveError::Unknown {
+            selector: "claude.work".to_owned()
+        }
+    );
+}
+
+#[test]
+fn instance_ids_cannot_collide_with_claimed_identities() {
+    // An instance reusing a base integration id would shadow it.
+    let result = IntegrationRegistry::build(
+        vec![cli_descriptor("claude", "claude")],
+        Vec::new(),
+        vec![Ok(instance("claude", "claude"))],
+    );
+    assert!(matches!(
+        result,
+        Err(RegistryError::DuplicateInstanceId(ref id)) if id.as_str() == "claude"
+    ));
+
+    // Two instances cannot share an id.
+    let result = IntegrationRegistry::build(
+        vec![cli_descriptor("claude", "claude")],
+        Vec::new(),
+        vec![
+            Ok(instance("claude.work", "claude")),
+            Ok(instance("claude.work", "claude")),
+        ],
+    );
+    assert!(matches!(
+        result,
+        Err(RegistryError::DuplicateInstanceId(ref id)) if id.as_str() == "claude.work"
+    ));
+}
+
+#[test]
+fn an_instance_must_name_a_registered_base() {
+    let result = IntegrationRegistry::build(
+        vec![cli_descriptor("claude", "claude")],
+        Vec::new(),
+        vec![Ok(instance("ghost.work", "ghost"))],
+    );
+    assert!(matches!(
+        result,
+        Err(RegistryError::InvalidInstance { ref id, .. }) if id.as_str() == "ghost.work"
+    ));
+}
+
+#[test]
+fn an_instance_cannot_reference_a_builtin_credential() {
+    // The same reservation config integrations obey: a built-in-held
+    // Credential Reference is bound to that built-in's endpoint, so an
+    // instance must never smuggle it into another process environment.
+    let mut builtin = cli_descriptor("claude", "claude");
+    builtin.integration.execution = ExecutionConfig::Http {
+        endpoint: EndpointConfig {
+            base_url: "https://api.anthropic.example".to_owned(),
+            extra_headers: Default::default(),
+            request_timeout_seconds: None,
+        },
+        protocol: WireApi::AnthropicMessages,
+        auth: AuthBinding::ApiKey {
+            source: ApiKeySource::Store {
+                credential: aifuel_core::CredentialRef::new("builtin-held"),
+            },
+            delivery: aifuel_core::KeyDelivery::Bearer,
+        },
+    };
+    let mut smuggler = instance("claude.work", "claude");
+    smuggler.env.insert(
+        "ANTHROPIC_API_KEY".to_owned(),
+        crate::integrations::InstanceEnvSource::Credential(aifuel_core::CredentialRef::new(
+            "builtin-held",
+        )),
+    );
+    let result = IntegrationRegistry::build(vec![builtin], Vec::new(), vec![Ok(smuggler)]);
+    assert!(matches!(
+        result,
+        Err(RegistryError::ReservedCredential { .. })
+    ));
+}
+
+#[test]
+fn an_instance_credential_needs_a_slot_to_fill() {
+    // `auth: none` declares no credential slot, so binding one is a
+    // configuration error - the instance would otherwise claim a binding
+    // nothing applies.
+    let mut bound = instance("open.inst", "open");
+    bound.credential = Some(aifuel_core::CredentialRef::new("inst-key"));
+    let result = IntegrationRegistry::build(
+        Vec::new(),
+        vec![configured_http("open", "open", AuthBinding::None)],
+        vec![Ok(bound.clone())],
+    );
+    assert!(matches!(
+        result,
+        Err(RegistryError::InvalidInstance { ref id, .. }) if id.as_str() == "open.inst"
+    ));
+
+    // Over an api-key binding the same instance is valid.
+    let result = IntegrationRegistry::build(
+        Vec::new(),
+        vec![configured_http(
+            "open",
+            "open",
+            AuthBinding::ApiKey {
+                source: ApiKeySource::Env {
+                    var: "OPEN_KEY".to_owned(),
+                },
+                delivery: aifuel_core::KeyDelivery::Bearer,
+            },
+        )],
+        vec![Ok(bound)],
+    );
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[test]
+fn an_instance_id_must_not_shadow_an_unrelated_selector() {
+    // `claude` as an instance id over a different base would steal every
+    // bare `claude` selection - the exact-id match would win over the
+    // provider-name mapping users already type.
+    let result = IntegrationRegistry::build(
+        vec![
+            cli_descriptor("claude:cli", "claude"),
+            cli_descriptor("codex:cli", "codex"),
+        ],
+        Vec::new(),
+        vec![Ok(instance("claude", "codex:cli"))],
+    );
+    assert!(matches!(
+        result,
+        Err(RegistryError::InvalidInstance { ref id, .. }) if id.as_str() == "claude"
+    ));
+
+    // The same id over its own provider's integration is consistent: the
+    // selector and the instance lead to the same serving integration.
+    let registry = IntegrationRegistry::build(
+        vec![cli_descriptor("claude:cli", "claude")],
+        Vec::new(),
+        vec![Ok(instance("claude", "claude:cli"))],
+    )
+    .expect("a provider-name instance over that provider's integration is consistent");
+    let (base, overlay) = registry
+        .serving(&IntegrationId::new("claude"))
+        .expect("serves");
+    assert_eq!(base.id().as_str(), "claude:cli");
+    assert_eq!(overlay.expect("overlay").id.as_str(), "claude");
+}
+
+#[test]
+fn check_instance_guards_adds_after_build() {
+    // `aifuel instance add` validates through the same rules `build`
+    // applies, so the file never gains an entry the registry would reject.
+    let registry = IntegrationRegistry::build(
+        vec![cli_descriptor("claude", "claude")],
+        Vec::new(),
+        vec![Ok(instance("claude.work", "claude"))],
+    )
+    .expect("build succeeds");
+    assert!(
+        registry
+            .check_instance(&instance("claude.personal", "claude"))
+            .is_ok()
+    );
+    assert!(matches!(
+        registry.check_instance(&instance("claude.work", "claude")),
+        Err(RegistryError::DuplicateInstanceId(_))
+    ));
+    assert!(matches!(
+        registry.check_instance(&instance("ghost.inst", "ghost")),
+        Err(RegistryError::InvalidInstance { .. })
+    ));
 }

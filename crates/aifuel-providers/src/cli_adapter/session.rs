@@ -27,6 +27,10 @@ pub(super) struct CliSession {
     pub integration: IntegrationId,
     pub cwd: PathBuf,
     pub access: AccessMode,
+    /// The instance environment overlay the session was created with,
+    /// applied to every run's provider process spawn. Resolved credential
+    /// material may ride along - it is never logged or persisted.
+    pub env: std::collections::BTreeMap<String, String>,
     /// Shared sender every run worker emits through. Sends that race a
     /// detached receiver are dropped, never panic.
     emit: mpsc::Sender<AgentEventKind>,
@@ -68,12 +72,14 @@ impl CliSession {
         access: AccessMode,
         resume_cursor: Option<String>,
         external_tools: Vec<String>,
+        env: std::collections::BTreeMap<String, String>,
     ) -> Arc<Self> {
         let (emit, events) = mpsc::channel();
         Arc::new(Self {
             integration,
             cwd,
             access,
+            env,
             emit,
             events: Mutex::new(Some(events)),
             state: Mutex::new(SessionState {
@@ -185,6 +191,9 @@ impl CliSession {
                 None
             },
             timeout: None,
+            // The session's instance overlay: the wrapped execution
+            // adapter applies it to the provider process it spawns.
+            env: self.env.clone(),
             interaction_handler,
         };
         execution

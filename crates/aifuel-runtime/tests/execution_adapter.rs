@@ -38,6 +38,7 @@ fn run_request(dir: &Path) -> RunRequest {
         access: AccessMode::WorkspaceWrite,
         resume: None,
         timeout: None,
+        env: Default::default(),
         interaction_handler: None,
     }
 }

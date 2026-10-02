@@ -95,9 +95,14 @@ pub fn runtime_at(
 ) -> (RunStore, AgentRuntime) {
     std::fs::create_dir_all(dir).expect("test dir creates");
     let store = RunStore::open(dir.join("aifuel.db")).expect("run store opens");
-    let runtime =
-        AgentRuntime::with_adapters(store.clone(), adapters, descriptors, fake_discovery(dir))
-            .expect("runtime opens");
+    let runtime = AgentRuntime::with_adapters(
+        store.clone(),
+        adapters,
+        descriptors,
+        Vec::new(),
+        fake_discovery(dir),
+    )
+    .expect("runtime opens");
     (store, runtime)
 }
 

@@ -381,6 +381,10 @@ impl CliExecutionAdapter {
             command
                 .args(&args)
                 .current_dir(working_directory)
+                // The instance overlay applies only to this spawn - the
+                // parent's environment is never mutated, so concurrent
+                // instances cannot leak into each other.
+                .envs(&request.env)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());

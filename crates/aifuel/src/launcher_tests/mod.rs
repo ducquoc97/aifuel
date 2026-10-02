@@ -144,6 +144,7 @@ pub(super) fn request() -> RunRequest {
         access: AccessMode::ReadOnly,
         resume: None,
         timeout: Some(Duration::from_secs(2)),
+        env: Default::default(),
         interaction_handler: None,
     }
 }

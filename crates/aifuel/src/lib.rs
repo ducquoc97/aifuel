@@ -1,4 +1,5 @@
 pub mod auth_cli;
+pub mod instance_cli;
 pub mod launcher;
 pub mod mcp_catalog;
 mod model_catalog;
@@ -64,9 +65,14 @@ pub fn integration_registry() -> Result<aifuel_providers::IntegrationRegistry, S
         config_dir.join(aifuel_providers::PROVIDERS_FILE_NAME),
     )
     .map_err(|error| error.to_string())?;
+    let aifuel_providers::ProvidersConfigParts {
+        integrations: entries,
+        instances,
+    } = config.into_parts();
     aifuel_providers::IntegrationRegistry::build(
         aifuel_providers::builtin_integrations(),
-        config.into_entries(),
+        entries,
+        instances,
     )
     .map_err(|error| error.to_string())
 }
@@ -106,6 +112,48 @@ fn runtime_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
                     // still a valid registry entry for listing and auth, but
                     // has no execution adapter - selection reports it
                     // unsupported instead of failing the whole run surface.
+                    Err(aifuel_providers::WireAdapterError::IncompatibleExecution(detail)) => {
+                        eprintln!("aifuel: {detail}");
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
+        }
+    }
+    // Provider Integration instances join the same adapter set under their
+    // own selector ids: each is served by its base integration's adapter
+    // with the instance overlay resolved at spawn time. This is the
+    // selection/picker surface, so a base integration without a compiled
+    // adapter still lists its instance - selection then reports it
+    // unsupported honestly rather than hiding it.
+    for instance in registry.instances() {
+        let Some(base) = registry.get(&instance.integration) else {
+            continue;
+        };
+        match &base.integration.execution {
+            ExecutionConfig::Cli { adapter } => {
+                let Some(compiled) = compiled
+                    .iter()
+                    .find(|candidate| candidate.integration().as_str() == adapter.as_str())
+                else {
+                    eprintln!(
+                        "aifuel: {adapter} is served by the agent runtime, not the compiled run surface"
+                    );
+                    continue;
+                };
+                adapters.push(Arc::new(InstanceCliAdapter::new(
+                    *compiled,
+                    instance.clone(),
+                    credentials.clone(),
+                )));
+            }
+            ExecutionConfig::Http { .. } => {
+                match aifuel_providers::WireExecutionAdapter::for_instance(
+                    &base.integration,
+                    instance,
+                    credentials.clone(),
+                ) {
+                    Ok(adapter) => adapters.push(Arc::new(adapter)),
                     Err(aifuel_providers::WireAdapterError::IncompatibleExecution(detail)) => {
                         eprintln!("aifuel: {detail}");
                     }
@@ -165,6 +213,127 @@ impl AgentExecutionAdapter for StaticAdapter {
     }
 }
 
+/// A compiled CLI adapter serving one Provider Integration instance: the
+/// selector id and `RunResult.integration_id` are the instance's own, while
+/// capabilities, validation, and the spawned provider process stay the base
+/// integration's adapter - an instance never widens what its base declares.
+///
+/// The instance's environment spec resolves against the Credential Store at
+/// `execute`, the boundary every provider process spawn crosses - never at
+/// construction, so listing surfaces like the picker never touch credential
+/// material.
+struct InstanceCliAdapter {
+    inner: &'static dyn AgentExecutionAdapter,
+    instance: aifuel_providers::InstanceDescriptor,
+    credentials: aifuel_providers::CredentialStore,
+}
+
+impl InstanceCliAdapter {
+    fn new(
+        inner: &'static dyn AgentExecutionAdapter,
+        instance: aifuel_providers::InstanceDescriptor,
+        credentials: aifuel_providers::CredentialStore,
+    ) -> Self {
+        Self {
+            inner,
+            instance,
+            credentials,
+        }
+    }
+
+    /// The request the wrapped adapter executes: the base integration id
+    /// and the instance's resolved environment overlay. A missing or
+    /// mismatched Managed Credential fails here, before any provider
+    /// process exists; the error names the instance and variable, never
+    /// the material.
+    fn instance_request(&self, request: &RunRequest) -> Result<RunRequest, AgentRunError> {
+        let mut rewritten = request.clone();
+        rewritten.integration = self.instance.integration.clone();
+        rewritten.env = self
+            .instance
+            .resolve_env(&self.credentials)
+            .map_err(|error| {
+                AgentRunError::InvalidRequest(format!("instance {}: {error}", self.instance.id))
+            })?;
+        Ok(rewritten)
+    }
+}
+
+impl AgentExecutionAdapter for InstanceCliAdapter {
+    fn integration(&self) -> IntegrationId {
+        self.instance.id.clone()
+    }
+
+    fn provider(&self) -> ProviderId {
+        self.inner.provider()
+    }
+
+    fn setup_guidance(&self) -> Option<AgentSetupGuidance> {
+        self.inner.setup_guidance()
+    }
+
+    fn declared_agent_capabilities(&self) -> BTreeMap<AgentCapability, AgentCapabilityEvidence> {
+        self.inner.declared_agent_capabilities()
+    }
+
+    fn agent_info(&self) -> AgentIntegrationInfo {
+        self.inner.agent_info()
+    }
+
+    fn validate(&self, request: &RunRequest) -> Result<(), AgentRunError> {
+        if request.integration != self.integration() {
+            return Err(AgentRunError::UnsupportedIntegration(
+                request.integration.clone(),
+            ));
+        }
+        // Resolve the overlay at accept time too: a missing or mismatched
+        // credential must reject the run request, not the spawned run.
+        self.instance
+            .resolve_env(&self.credentials)
+            .map_err(|error| {
+                AgentRunError::InvalidRequest(format!("instance {}: {error}", self.instance.id))
+            })?;
+        let mut rewritten = request.clone();
+        rewritten.integration = self.instance.integration.clone();
+        self.inner.validate(&rewritten)
+    }
+
+    fn execute(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+    ) -> Result<RunResult, AgentRunError> {
+        if request.integration != self.integration() {
+            return Err(AgentRunError::UnsupportedIntegration(
+                request.integration.clone(),
+            ));
+        }
+        let request = self.instance_request(request)?;
+        let mut result = self.inner.execute(&request, cancellation)?;
+        result.integration_id = self.integration();
+        Ok(result)
+    }
+
+    fn execute_with_output_handler(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+        output_handler: &dyn AgentRunOutputHandler,
+    ) -> Result<RunResult, AgentRunError> {
+        if request.integration != self.integration() {
+            return Err(AgentRunError::UnsupportedIntegration(
+                request.integration.clone(),
+            ));
+        }
+        let request = self.instance_request(request)?;
+        let mut result =
+            self.inner
+                .execute_with_output_handler(&request, cancellation, output_handler)?;
+        result.integration_id = self.integration();
+        Ok(result)
+    }
+}
+
 /// Build the owned execution adapter set over one shared `AgentRuntime`:
 /// `Cli` descriptors resolve to the adapter the runtime registered for
 /// their Integration Identity behind a `RuntimeExecutionAdapter` shim, and
@@ -198,6 +367,44 @@ fn execution_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
                     // still a valid registry entry for listing and auth, but
                     // has no execution adapter - selection reports it
                     // unsupported instead of failing the whole run surface.
+                    Err(aifuel_providers::WireAdapterError::IncompatibleExecution(detail)) => {
+                        eprintln!("aifuel: {detail}");
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
+        }
+    }
+    // Provider Integration instances join the execution set under their own
+    // selector ids: `resolve_integration` finds them by exact match, and
+    // `session.create` resolves the instance environment from the id on the
+    // selection. A base integration with no runtime adapter keeps listing
+    // honestly - the instance then reports `unsupported`, never a run.
+    for instance in registry.instances() {
+        let Some(base) = registry.get(&instance.integration) else {
+            continue;
+        };
+        match &base.integration.execution {
+            ExecutionConfig::Cli { adapter } => {
+                match aifuel_runtime::RuntimeExecutionAdapter::resolve_instance(
+                    &runtime,
+                    instance,
+                    credentials.clone(),
+                ) {
+                    Some(shim) => adapters.push(Arc::new(shim)),
+                    None => eprintln!(
+                        "aifuel: instance {} ({adapter}) has no adapter registered in the agent runtime",
+                        instance.id
+                    ),
+                }
+            }
+            ExecutionConfig::Http { .. } => {
+                match aifuel_providers::WireExecutionAdapter::for_instance(
+                    &base.integration,
+                    instance,
+                    credentials.clone(),
+                ) {
+                    Ok(adapter) => adapters.push(Arc::new(adapter)),
                     Err(aifuel_providers::WireAdapterError::IncompatibleExecution(detail)) => {
                         eprintln!("aifuel: {detail}");
                     }

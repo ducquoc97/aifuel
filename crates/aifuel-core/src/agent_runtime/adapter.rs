@@ -37,7 +37,7 @@ pub struct AdapterCapabilities {
 }
 
 /// Options for [`AgentAdapter::start`], mirroring `session.create`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 pub struct StartOptions {
     pub cwd: PathBuf,
     pub selection: ModelSelection,
@@ -56,6 +56,26 @@ pub struct StartOptions {
     /// session first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_tools: Vec<String>,
+    /// The process environment overlay the selected Provider Integration
+    /// instance resolved, applied to the provider process at spawn. Values
+    /// can hold Credential Store material, so the map is never serialized,
+    /// persisted, or printed - `Debug` reports variable names only.
+    #[serde(skip)]
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for StartOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StartOptions")
+            .field("cwd", &self.cwd)
+            .field("selection", &self.selection)
+            .field("access", &self.access)
+            .field("resume_cursor", &self.resume_cursor)
+            .field("external_tools", &self.external_tools)
+            .field("env", &self.env.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 /// An adapter-owned handle to one live Agent Session.

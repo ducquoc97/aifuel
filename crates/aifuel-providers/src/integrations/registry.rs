@@ -16,6 +16,7 @@
 
 use super::config::ConfigError;
 use super::evidence::{EvidenceContext, EvidenceSource, inspect_any};
+use super::instances::InstanceDescriptor;
 use crate::credentials::CredentialStore;
 use crate::discovery::DiscoveryContext;
 use aifuel_core::{
@@ -93,22 +94,29 @@ impl IntegrationDescriptor {
     }
 }
 
-/// The runtime registry over built-in and configured Provider Integrations.
+/// The runtime registry over built-in and configured Provider Integrations,
+/// plus the named Provider Integration instances defined over them.
 ///
 /// `entries` is a `BTreeMap` so lookups are deterministic; `order` preserves
 /// the spec's presentation order (built-ins in catalog order, then config
 /// entries in file order); `configured` names the ids `providers.json`
 /// defined, which is itself one of the discovery evidence kinds.
+/// `instances` holds the instance overlays keyed by their selector id.
 #[derive(Debug)]
 pub struct IntegrationRegistry {
     entries: BTreeMap<IntegrationId, IntegrationDescriptor>,
     order: Vec<IntegrationId>,
     configured: BTreeSet<IntegrationId>,
+    instances: BTreeMap<IntegrationId, InstanceDescriptor>,
+    /// The Credential References built-ins hold, kept for
+    /// [`Self::check_instance`], which applies the same reservation to
+    /// instances added after build.
+    builtin_credentials: BTreeSet<CredentialRef>,
 }
 
 impl IntegrationRegistry {
     /// Build the runtime registry from compiled built-ins and validated
-    /// config entries.
+    /// config entries and instances.
     ///
     /// A config entry may carry an individual [`ConfigError`] (one malformed
     /// entry in an otherwise parseable file); the first one fails the build
@@ -116,6 +124,7 @@ impl IntegrationRegistry {
     pub fn build(
         builtins: impl IntoIterator<Item = IntegrationDescriptor>,
         config_entries: impl IntoIterator<Item = Result<IntegrationDescriptor, ConfigError>>,
+        config_instances: impl IntoIterator<Item = Result<InstanceDescriptor, ConfigError>>,
     ) -> Result<Self, RegistryError> {
         let mut entries = BTreeMap::new();
         let mut order = Vec::new();
@@ -160,10 +169,19 @@ impl IntegrationRegistry {
             entries.insert(id, descriptor);
         }
 
+        let mut instances = BTreeMap::new();
+        for entry in config_instances {
+            let instance = entry.map_err(RegistryError::Config)?;
+            check_instance(&entries, &instances, &builtin_credentials, &instance)?;
+            instances.insert(instance.id.clone(), instance);
+        }
+
         Ok(Self {
             entries,
             order,
             configured,
+            instances,
+            builtin_credentials,
         })
     }
 
@@ -205,6 +223,49 @@ impl IntegrationRegistry {
         self.entries.get(id)
     }
 
+    /// Look up one Provider Integration instance by its exact selector id.
+    pub fn instance(&self, id: &IntegrationId) -> Option<&InstanceDescriptor> {
+        self.instances.get(id)
+    }
+
+    /// Iterate the registered instances in id order.
+    pub fn instances(&self) -> impl Iterator<Item = &InstanceDescriptor> {
+        self.instances.values()
+    }
+
+    /// Resolve one Integration Identity to the integration that serves it
+    /// and the instance overlay it carries, when any. An instance id yields
+    /// its base integration plus the instance; a base integration id yields
+    /// the integration itself.
+    ///
+    /// Instances are reached only by their exact id: [`Self::resolve`] never
+    /// returns one, because an instance's id is not a provider name and a
+    /// stored `claude` selection must keep meaning `claude`.
+    pub fn serving(
+        &self,
+        id: &IntegrationId,
+    ) -> Option<(&IntegrationDescriptor, Option<&InstanceDescriptor>)> {
+        if let Some(instance) = self.instances.get(id) {
+            // Build validated the base exists, so indexing cannot miss.
+            let base = &self.entries[&instance.integration];
+            return Some((base, Some(instance)));
+        }
+        self.entries.get(id).map(|descriptor| (descriptor, None))
+    }
+
+    /// Validate a prospective instance against this registry the same way
+    /// [`Self::build`] validated the loaded ones. `aifuel instance add`
+    /// calls this before writing so `providers.json` never gains an entry
+    /// the registry would reject.
+    pub fn check_instance(&self, instance: &InstanceDescriptor) -> Result<(), RegistryError> {
+        check_instance(
+            &self.entries,
+            &self.instances,
+            &self.builtin_credentials,
+            instance,
+        )
+    }
+
     /// Iterate descriptors in deterministic order: built-ins first in
     /// catalog order, then config entries in file order.
     pub fn list(&self) -> impl Iterator<Item = &IntegrationDescriptor> {
@@ -243,6 +304,83 @@ impl IntegrationRegistry {
     }
 }
 
+/// The registry-level checks every instance must pass, shared between
+/// [`IntegrationRegistry::build`] and [`IntegrationRegistry::check_instance`]:
+/// the base integration exists, the id collides with no claimed identity,
+/// no built-in-held credential is referenced, a `credential` binding has a
+/// slot to fill, and the id does not shadow a selector users already type.
+fn check_instance(
+    entries: &BTreeMap<IntegrationId, IntegrationDescriptor>,
+    instances: &BTreeMap<IntegrationId, InstanceDescriptor>,
+    builtin_credentials: &BTreeSet<CredentialRef>,
+    instance: &InstanceDescriptor,
+) -> Result<(), RegistryError> {
+    let id = &instance.id;
+    if entries.contains_key(id) || instances.contains_key(id) {
+        return Err(RegistryError::DuplicateInstanceId(id.clone()));
+    }
+    let Some(base) = entries.get(&instance.integration) else {
+        return Err(RegistryError::InvalidInstance {
+            id: id.clone(),
+            reason: format!(
+                "base integration '{}' is not a registered integration",
+                instance.integration
+            ),
+        });
+    };
+    for credential in instance.credential_refs() {
+        if builtin_credentials.contains(credential) {
+            return Err(RegistryError::ReservedCredential {
+                integration: id.clone(),
+                credential: credential.clone(),
+            });
+        }
+    }
+    // `credential` fills the base binding's credential slot. An HTTP
+    // integration declaring `auth: none` has no slot, and a CLI execution
+    // arm carries no Authentication Binding at all, so the binding is
+    // meaningful only as the destination `auth set-key` targets.
+    if instance.credential.is_some()
+        && matches!(
+            base.integration.execution,
+            ExecutionConfig::Http { ref auth, .. }
+                if matches!(auth, aifuel_core::AuthBinding::None)
+        )
+    {
+        return Err(RegistryError::InvalidInstance {
+            id: id.clone(),
+            reason: format!(
+                "credential cannot be bound: integration '{}' declares auth 'none'",
+                instance.integration
+            ),
+        });
+    }
+    // An instance id that resolves as a provider selector to other
+    // integrations would silently claim selections users already type: an
+    // exact id beats provider names, so `aifuel run --provider <name>`
+    // would suddenly spawn this instance. A match on the instance's own
+    // base is consistent - the provider name and the instance id then lead
+    // to the same serving integration.
+    match aifuel_core::match_selector(
+        id.as_str(),
+        entries
+            .values()
+            .map(|descriptor| (descriptor.id(), descriptor.provider())),
+    ) {
+        aifuel_core::SelectorMatch::Unknown => {}
+        aifuel_core::SelectorMatch::Unique(existing) if existing == instance.integration => {}
+        _ => {
+            return Err(RegistryError::InvalidInstance {
+                id: id.clone(),
+                reason: format!(
+                    "instance id '{id}' collides with a provider or integration selector already in use; pick an id that names only this instance"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// The Credential References an integration binds, from its execution auth
 /// and its monitoring credential. Used to reserve built-in-held references
 /// against config smuggling.
@@ -279,6 +417,13 @@ pub enum RegistryError {
         integration: IntegrationId,
         credential: CredentialRef,
     },
+    /// Two `instances` entries share a selector id, or one reuses an
+    /// Integration Identity.
+    DuplicateInstanceId(IntegrationId),
+    /// An `instances` entry is structurally valid but contradicts the
+    /// registry: unknown base integration, a `credential` binding with no
+    /// slot to fill, or an id that shadows an existing selector.
+    InvalidInstance { id: IntegrationId, reason: String },
 }
 
 impl fmt::Display for RegistryError {
@@ -299,6 +444,13 @@ impl fmt::Display for RegistryError {
                 f,
                 "integration '{integration}' cannot reference managed credential '{credential}': the reference is held by a built-in integration and bound to its endpoint"
             ),
+            Self::DuplicateInstanceId(id) => write!(
+                f,
+                "instance id '{id}' collides with an integration id or another instance in providers config"
+            ),
+            Self::InvalidInstance { id, reason } => {
+                write!(f, "instance '{id}': {reason}")
+            }
         }
     }
 }

@@ -19,6 +19,7 @@ mod openai_chat;
 pub(crate) mod sse;
 mod stream;
 
+use crate::integrations::InstanceDescriptor;
 use crate::{CredentialStore, ResolvedAuth};
 use aifuel_core::{
     AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter, AgentRunError,
@@ -92,12 +93,24 @@ impl std::error::Error for WireAdapterError {
 ///
 /// One adapter is constructed per configured integration; it never falls
 /// back to another integration and never replays a request whose outcome is
-/// ambiguous.
+/// ambiguous. An adapter built by [`Self::for_instance`] serves the
+/// instance's selector id with the base integration's endpoint and a
+/// rebound Authentication Binding.
 pub struct WireExecutionAdapter {
+    /// The id `integration()` reports and `request.integration` must equal:
+    /// the instance's selector id for instance adapters, else the base.
     integration: IntegrationId,
     provider: ProviderId,
     endpoint: EndpointConfig,
     auth: AuthBinding,
+    /// The identity the credential destination check runs under: the base
+    /// integration for an inherited binding, the instance id when the
+    /// instance rebinds the credential slot to its own Managed Credential.
+    auth_identity: IntegrationId,
+    /// The instance overlay this adapter serves, when built for one. The
+    /// env spec resolves lazily per run - construction stays side-effect
+    /// free.
+    instance: Option<InstanceDescriptor>,
     credentials: CredentialStore,
     client: std::sync::OnceLock<reqwest::Client>,
 }
@@ -117,10 +130,12 @@ impl WireExecutionAdapter {
     ) -> Result<Self, WireAdapterError> {
         http::validate_configuration(&endpoint, &auth)?;
         Ok(Self {
+            auth_identity: integration.clone(),
             integration,
             provider,
             endpoint,
             auth,
+            instance: None,
             credentials,
             client: std::sync::OnceLock::new(),
         })
@@ -173,6 +188,31 @@ impl WireExecutionAdapter {
         }
     }
 
+    /// An adapter serving one Provider Integration instance over its HTTP
+    /// base integration: the endpoint stays the base's, while the
+    /// instance's `credential` rebinds the Authentication Binding's
+    /// credential slot and its `env` spec resolves into the overlay env
+    /// vars are read from. Capabilities stay the compiled wire adapter's -
+    /// an instance cannot widen them.
+    pub fn for_instance(
+        integration: &Integration,
+        instance: &InstanceDescriptor,
+        credentials: CredentialStore,
+    ) -> Result<Self, WireAdapterError> {
+        let mut adapter = Self::from_integration(integration, credentials)?;
+        adapter.auth = instance
+            .bound_auth(&adapter.auth)
+            .map_err(WireAdapterError::InvalidConfiguration)?;
+        adapter.auth_identity = if instance.credential.is_some() {
+            instance.id.clone()
+        } else {
+            integration.id.clone()
+        };
+        adapter.integration = instance.id.clone();
+        adapter.instance = Some(instance.clone());
+        Ok(adapter)
+    }
+
     fn execute_sync(
         &self,
         request: &RunRequest,
@@ -195,9 +235,21 @@ impl WireExecutionAdapter {
         // material crosses into the async worker by value, not by reference
         // to the store. Resolving for this integration enforces the
         // credential's recorded destination binding.
+        //
+        // An instance's env spec resolves here and nowhere else: a missing
+        // Managed Credential fails the run before a request is built, and
+        // the overlay feeds `resolve_with_env` so an `api-key-env` binding
+        // reads the same variables the provider-facing configuration
+        // declared. The resolved values never leave this function's frame.
+        let env = match &self.instance {
+            Some(instance) => instance
+                .resolve_env(&self.credentials)
+                .map_err(http::auth_error)?,
+            None => BTreeMap::new(),
+        };
         let auth = self
             .credentials
-            .resolve(&self.auth, &self.integration)
+            .resolve_with_env(&self.auth, &self.auth_identity, &env)
             .map_err(http::auth_error)?;
         let request = request.clone();
         let cancellation = cancellation.clone();

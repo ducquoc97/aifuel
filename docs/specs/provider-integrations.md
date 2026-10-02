@@ -96,6 +96,17 @@ enum WireApi {
 - Each Provider Integration carries an `Option<MonitoringConfig>` with its own optional credential binding. The inference Wire Api says nothing about quota APIs, so monitoring is a separate contract per integration, not derived from execution.
 - A CLI integration keeps its existing collector behavior. An HTTP integration may attach a managed quota collector (for example OpenRouter `/key` or the Copilot usage endpoint) or report Unsupported.
 
+### Provider Integration instances
+
+- A Provider Integration instance is a named selection overlay on one base integration - `claude.work` and `claude.personal` over `claude`. It is declared in the `instances` map of `providers.json` (schema version 1): the map key is the instance's own `IntegrationId`, and the value carries `integration` (the base id), an optional `env` map, and an optional `credential`.
+- `env` maps variable names to either a literal string or `{ "credential": "<ref>" }`, a Managed Credential reference resolved from the Credential Store at provider-process spawn only. The resolved overlay applies to the child process via `Command::envs`; the parent environment is never mutated, so concurrent instances cannot leak into each other.
+- `credential` binds a named Managed Credential to the instance: it is the destination `aifuel auth set-key <instance>` writes, and it rebinds the credential slot of an HTTP integration's `AuthBinding` while preserving its delivery. An instance may not bind a `credential` to an integration declaring `auth: none`; for a `Cli` execution arm the binding names only the `auth set-key` destination, because the provider CLI owns its credential.
+- Selection rule: an instance is reachable only by its exact id. A bare base-integration selector always means the base integration - instances never redefine what an existing selector resolves to, so a stored `claude` selection cannot silently run `claude.work`'s environment. Registry `resolve` on a bare provider name never returns an instance.
+- An instance id must collide with nothing already claimed: integration ids, other instance ids, and provider selectors that would resolve elsewhere. `aifuel instance add` checks the same rules before writing, so the file never gains an entry the registry would reject.
+- Capabilities stay the base integration's compiled declarations. An environment override cannot fabricate support: an instance of an unserved integration lists with all-false capabilities and fails `unsupported` at `session.create`.
+- Resolved env values never appear in `list`, `show`, status, logs, or receipts. `RunRequest`'s and `StartOptions`' `Debug` print variable names only; session rows persist the instance id, never the overlay. A session created through an instance re-resolves its environment at startup reconcile, so a removed instance or credential refuses to reattach rather than resume under different configuration.
+- `model.select` inside a live session requires the same serving identity the session was created through - an instance session cannot be retargeted to its base integration or a sibling instance mid-session.
+
 ## Credential Store Contract
 
 ### Storage format
