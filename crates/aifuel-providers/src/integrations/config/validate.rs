@@ -373,6 +373,7 @@ fn managed_auth_header(auth: &AuthBinding) -> Option<&str> {
         AuthBinding::ApiKey { delivery, .. } => Some(match delivery {
             KeyDelivery::Bearer => "authorization",
             KeyDelivery::Header { name } => name.as_str(),
+            KeyDelivery::Cookie { .. } => "cookie",
         }),
         AuthBinding::OAuth { .. } => Some("authorization"),
     }

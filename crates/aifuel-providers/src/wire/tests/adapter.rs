@@ -333,6 +333,54 @@ fn api_key_header_delivery_uses_the_named_header() {
 }
 
 #[test]
+fn cookie_delivery_sends_the_normalized_cookie_header() {
+    // A session credential travels as the Cookie header, never
+    // Authorization: a bare token is named `name=value`, and a pasted
+    // Cookie header line passes through as its value.
+    for (material, expected) in [
+        ("abc123", "sessionKey=abc123"),
+        ("Cookie: sessionKey=abc123; a=b", "sessionKey=abc123; a=b"),
+    ] {
+        let auth = ResolvedAuth::ApiKey {
+            key: material.to_owned(),
+            delivery: KeyDelivery::Cookie {
+                name: "sessionKey".to_owned(),
+            },
+        };
+        let headers = request_headers(&endpoint(), &auth).unwrap();
+        assert_eq!(headers[reqwest::header::COOKIE], expected);
+        assert!(
+            !headers.contains_key(AUTHORIZATION),
+            "session material must never become a Bearer token"
+        );
+    }
+}
+
+#[test]
+fn configuration_validation_rejects_a_malformed_cookie_name() {
+    // The delivery name heads `name=value` at send time; a config-declared
+    // name that cannot is a construction error, not a run-time surprise.
+    assert!(matches!(
+        WireExecutionAdapter::new(
+            IntegrationId::new("x"),
+            ProviderId::new("x"),
+            endpoint(),
+            WireApi::OpenAiChat,
+            AuthBinding::ApiKey {
+                source: aifuel_core::ApiKeySource::Env {
+                    var: "V".to_owned(),
+                },
+                delivery: KeyDelivery::Cookie {
+                    name: "not a name;".to_owned(),
+                },
+            },
+            CredentialStore::new(std::env::temp_dir()),
+        ),
+        Err(WireAdapterError::InvalidConfiguration(_))
+    ));
+}
+
+#[test]
 fn oauth_resolution_applies_a_bearer_token() {
     let auth = ResolvedAuth::OAuth {
         access_token: "tok".to_owned(),

@@ -42,24 +42,35 @@ pub(super) fn merge_notes(base: Option<String>, notes: Vec<String>) -> Option<St
 impl WireExecutionAdapter {
     /// This run's ordered credential attempts. An `AuthBinding::ApiKey`
     /// resolves to its whole Key Pool in first-healthy order so the run can
-    /// rotate on `429`/`401`/`403`; any other binding is a single attempt
-    /// carrying no per-key state.
+    /// rotate on `429`/`401`/`403`; a cookie-delivered session credential is
+    /// a single attempt with no rotation or per-key state, as is any other
+    /// binding.
     pub(super) fn resolve_attempts(&self) -> Result<Vec<KeyAttempt>, crate::CredentialStoreError> {
         match &self.auth {
-            AuthBinding::ApiKey { source, delivery } => Ok(self
-                .credentials
-                .resolve_api_key_pool(source, &self.integration)?
-                .into_iter()
-                .map(|member| KeyAttempt {
-                    auth: ResolvedAuth::ApiKey {
-                        key: member.key,
-                        delivery: delivery.clone(),
-                    },
-                    reference: member.reference,
-                    state: member.state,
-                    attempted: false,
-                })
-                .collect()),
+            AuthBinding::ApiKey { source, delivery } => {
+                if matches!(delivery, aifuel_core::KeyDelivery::Cookie { .. }) {
+                    return Ok(vec![KeyAttempt {
+                        auth: self.credentials.resolve(&self.auth, &self.integration)?,
+                        reference: None,
+                        state: ApiKeyState::default(),
+                        attempted: false,
+                    }]);
+                }
+                Ok(self
+                    .credentials
+                    .resolve_api_key_pool(source, &self.integration)?
+                    .into_iter()
+                    .map(|member| KeyAttempt {
+                        auth: ResolvedAuth::ApiKey {
+                            key: member.key,
+                            delivery: delivery.clone(),
+                        },
+                        reference: member.reference,
+                        state: member.state,
+                        attempted: false,
+                    })
+                    .collect())
+            }
             other => Ok(vec![KeyAttempt {
                 auth: self.credentials.resolve(other, &self.integration)?,
                 reference: None,

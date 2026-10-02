@@ -15,6 +15,10 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 #[derive(Debug, Clone)]
 pub struct CollectionConfig {
     pub claude_usage_url: String,
+    /// The claude.ai web-session organizations endpoint. The `claude-web`
+    /// collector reads it to find the session's organization, then extends
+    /// it with `/{uuid}/usage`.
+    pub claude_web_usage_url: String,
     pub codex_usage_url: String,
     pub copilot_user_url: String,
     pub copilot_token_url: String,
@@ -30,6 +34,7 @@ impl Default for CollectionConfig {
     fn default() -> Self {
         Self {
             claude_usage_url: "https://api.anthropic.com/api/oauth/usage".to_owned(),
+            claude_web_usage_url: "https://claude.ai/api/organizations".to_owned(),
             codex_usage_url: "https://chatgpt.com/backend-api/codex/usage".to_owned(),
             copilot_user_url: "https://api.github.com/copilot_internal/user".to_owned(),
             copilot_token_url: "https://api.github.com/copilot_internal/v2/token".to_owned(),
@@ -47,6 +52,10 @@ impl CollectionConfig {
     pub fn from_environment() -> Self {
         let mut config = Self::default();
         replace_from_env(&mut config.claude_usage_url, "AIFUEL_CLAUDE_USAGE_URL");
+        replace_from_env(
+            &mut config.claude_web_usage_url,
+            "AIFUEL_CLAUDE_WEB_USAGE_URL",
+        );
         replace_from_env(&mut config.codex_usage_url, "AIFUEL_CODEX_USAGE_URL");
         replace_from_env(&mut config.copilot_user_url, "AIFUEL_COPILOT_USER_URL");
         replace_from_env(&mut config.copilot_token_url, "AIFUEL_COPILOT_TOKEN_URL");

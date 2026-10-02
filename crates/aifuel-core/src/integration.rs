@@ -189,6 +189,11 @@ pub enum WireApi {
     OpenAiChat,
     OpenAiResponses,
     AnthropicMessages,
+    /// The claude.ai browser conversation surface. No compiled engine
+    /// serves it: the `*:web` integrations that declare it exist to bind a
+    /// session credential and a Monitoring Collection Contract, not to
+    /// execute prompts.
+    ClaudeWeb,
 }
 
 /// The connection configuration for one HTTP endpoint.
@@ -233,6 +238,30 @@ pub enum KeyDelivery {
     Bearer,
     /// A named header such as `x-api-key`.
     Header { name: String },
+    /// The `Cookie` header for browser-session credentials. A bare session
+    /// value is sent as `name=value`; material that already carries cookie
+    /// pairs - a pasted `Cookie:` header line or `name=value; ...` - is
+    /// sent unchanged so a copied browser header works as pasted.
+    Cookie { name: String },
+}
+
+/// The `Cookie` header value a [`KeyDelivery::Cookie`] delivery produces
+/// for `material`. The normalization mirrors OmniRoute's session-cookie
+/// contract: a bare session value becomes `name=value`, while material
+/// already carrying cookie pairs passes through unchanged.
+pub fn cookie_header_value(name: &str, material: &str) -> String {
+    let material = material.trim();
+    // A pasted `Cookie: ...` header line keeps only its value.
+    let material = material
+        .get(..7)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("cookie:"))
+        .map(|_| material[7..].trim_start())
+        .unwrap_or(material);
+    if material.contains('=') {
+        material.to_owned()
+    } else {
+        format!("{name}={material}")
+    }
 }
 
 /// The association between an execution configuration and the credential it

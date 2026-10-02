@@ -152,6 +152,51 @@ impl CredentialStore {
         })
     }
 
+    /// Store a browser-session Managed Credential bound to `destination`.
+    ///
+    /// Sessions are single records: they do not participate in Key Pools,
+    /// and re-storing overwrites the record so a refreshed cookie replaces
+    /// the stale one. `key` holds whatever session material the user
+    /// pasted - a bare token or a full `Cookie` header line; delivery
+    /// normalizes it at send time.
+    pub fn set_session_for(
+        &self,
+        reference: &CredentialRef,
+        key: &str,
+        destination: &IntegrationId,
+    ) -> Result<(), CredentialStoreError> {
+        if key.is_empty() {
+            return Err(CredentialStoreError::InvalidMaterial(
+                "a session credential cannot be empty",
+            ));
+        }
+        self.update(|credentials| {
+            credentials.insert(
+                reference.clone(),
+                ManagedCredential::session_for(key, destination.clone()),
+            );
+            Ok(())
+        })
+    }
+
+    /// Store a browser-session Managed Credential under a raw `reference`
+    /// with no recorded destination.
+    pub fn set_session(
+        &self,
+        reference: &CredentialRef,
+        key: &str,
+    ) -> Result<(), CredentialStoreError> {
+        if key.is_empty() {
+            return Err(CredentialStoreError::InvalidMaterial(
+                "a session credential cannot be empty",
+            ));
+        }
+        self.update(|credentials| {
+            credentials.insert(reference.clone(), ManagedCredential::session(key));
+            Ok(())
+        })
+    }
+
     /// Delete one Managed Credential. Returns whether it was present.
     pub fn remove(&self, reference: &CredentialRef) -> Result<bool, CredentialStoreError> {
         self.update(|credentials| Ok(credentials.remove(reference).is_some()))
@@ -203,6 +248,15 @@ impl CredentialStore {
         match binding {
             AuthBinding::None => Ok(ResolvedAuth::None),
             AuthBinding::ApiKey { source, delivery } => {
+                // Cookie delivery binds session material: the single stored
+                // record or declared variable, never the Key Pool - a
+                // session does not rotate.
+                if matches!(delivery, KeyDelivery::Cookie { .. }) {
+                    return Ok(ResolvedAuth::ApiKey {
+                        key: self.resolve_session(source, integration)?,
+                        delivery: delivery.clone(),
+                    });
+                }
                 let pool = self.resolve_api_key_pool(source, integration)?;
                 // Single-key callers (monitoring, diagnostics) get the best
                 // available member: the first healthy key, else the first

@@ -25,6 +25,7 @@
 //! variable name and the managed Credential Reference are declared.
 
 mod api_keys;
+mod web;
 
 use super::evidence::EvidenceSource;
 use super::registry::IntegrationDescriptor;
@@ -124,6 +125,9 @@ pub fn builtin_integrations() -> Vec<IntegrationDescriptor> {
     // native Messages API. Every row must declare a served Wire Api - a
     // registered-but-never-executable integration is worse than absent.
     .chain(api_keys::integrations())
+    // The `*:web` browser-session integrations: monitoring-only by design,
+    // documented as the exception to the served-protocol rule.
+    .chain(web::integrations())
     .collect()
 }
 
@@ -276,11 +280,16 @@ mod tests {
     #[test]
     fn no_builtin_declares_a_wire_protocol_without_an_engine() {
         // A builtin on an unserved protocol would be registered but never
-        // executable, which is worse than absent.
+        // executable, which is worse than absent. The documented exception
+        // is the `*:web` set: browser-session integrations exist to carry
+        // their Monitoring Collection Contract, and the declared protocol
+        // names the upstream surface as evidence.
+        const MONITORING_ONLY: &[&str] = &["claude-web:web"];
         for descriptor in builtin_integrations() {
             if let ExecutionConfig::Http { protocol, .. } = &descriptor.integration.execution {
                 assert!(
-                    crate::wire::serves(*protocol),
+                    crate::wire::serves(*protocol)
+                        || MONITORING_ONLY.contains(&descriptor.integration.id.as_str()),
                     "builtin {} declares an unserveable Wire Api",
                     descriptor.integration.id
                 );

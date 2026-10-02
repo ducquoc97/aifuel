@@ -102,6 +102,54 @@ impl CredentialStore {
         }
     }
 
+    /// Resolve an API-key source bound for `KeyDelivery::Cookie`: session
+    /// material, not key-pool material.
+    ///
+    /// A session credential is a single record - the `reference` itself,
+    /// never `reference/…` members - because a browser session does not
+    /// rotate and carries no health state. `EnvOrStore` prefers the stored
+    /// session and falls back to the declared variable, matching the
+    /// API-key source contract.
+    pub fn resolve_session(
+        &self,
+        source: &ApiKeySource,
+        integration: &IntegrationId,
+    ) -> Result<String, CredentialStoreError> {
+        match source {
+            ApiKeySource::Env { var } => env_override(var)
+                .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() }),
+            ApiKeySource::Store { credential } => self
+                .session_material(credential, integration)?
+                .ok_or_else(|| CredentialStoreError::CredentialAbsent(credential.clone())),
+            ApiKeySource::EnvOrStore { var, credential } => self
+                .session_material(credential, integration)?
+                .or_else(|| env_override(var))
+                .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() }),
+        }
+    }
+
+    /// The session material stored at `reference` itself. A record of a
+    /// different kind is a kind error, not an absence, so a binding cannot
+    /// silently send API-key material as a cookie.
+    pub fn session_material(
+        &self,
+        reference: &CredentialRef,
+        integration: &IntegrationId,
+    ) -> Result<Option<String>, CredentialStoreError> {
+        let Some(credential) = self.get(reference)? else {
+            return Ok(None);
+        };
+        check_destination(reference, &credential, integration)?;
+        match credential {
+            ManagedCredential::Session { key, .. } => Ok(Some(key)),
+            other => Err(CredentialStoreError::UnexpectedCredentialKind {
+                reference: reference.clone(),
+                expected: CredentialKind::Session,
+                found: other.kind(),
+            }),
+        }
+    }
+
     /// The pool members stored under `reference`: the record at
     /// `reference` itself plus every `reference/…` API-key record, in
     /// Credential Reference order. An empty result means no member is

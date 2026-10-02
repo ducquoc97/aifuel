@@ -88,6 +88,19 @@ pub enum ManagedCredential {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         destination: Option<IntegrationId>,
     },
+    /// A browser-session credential entered by hand (`aifuel auth
+    /// set-session`). `key` holds whatever session material the user
+    /// pasted - a bare session token or a full `Cookie` header line;
+    /// delivery normalizes it at send time. Sessions carry no expiry or
+    /// pool state: there is no safe way to learn either from the material.
+    /// `destination` records the integration the credential was created
+    /// for, same as `api`.
+    #[serde(rename = "session")]
+    Session {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        destination: Option<IntegrationId>,
+    },
 }
 
 impl ManagedCredential {
@@ -116,11 +129,31 @@ impl ManagedCredential {
         Self::from(tokens)
     }
 
+    /// An unbound browser-session Managed Credential: stored under a raw
+    /// Credential Reference with no recorded destination.
+    pub fn session(key: impl Into<String>) -> Self {
+        Self::Session {
+            key: key.into(),
+            destination: None,
+        }
+    }
+
+    /// A browser-session Managed Credential bound to the integration it
+    /// was created for.
+    pub fn session_for(key: impl Into<String>, destination: IntegrationId) -> Self {
+        Self::Session {
+            key: key.into(),
+            destination: Some(destination),
+        }
+    }
+
     /// The Integration Identity this credential was created for, when one
     /// was recorded at write time.
     pub fn destination(&self) -> Option<&IntegrationId> {
         match self {
-            Self::Api { destination, .. } | Self::OAuth { destination, .. } => destination.as_ref(),
+            Self::Api { destination, .. }
+            | Self::OAuth { destination, .. }
+            | Self::Session { destination, .. } => destination.as_ref(),
         }
     }
 
@@ -129,6 +162,7 @@ impl ManagedCredential {
         match self {
             Self::Api { .. } => CredentialKind::ApiKey,
             Self::OAuth { .. } => CredentialKind::OAuth,
+            Self::Session { .. } => CredentialKind::Session,
         }
     }
 
@@ -162,6 +196,13 @@ impl ManagedCredential {
                 destination: destination.clone(),
                 key_health: None,
             },
+            Self::Session { destination, .. } => CredentialMetadata {
+                kind: CredentialKind::Session,
+                expiry: CredentialExpiry::None,
+                account_id: None,
+                destination: destination.clone(),
+                key_health: None,
+            },
         }
     }
 }
@@ -190,6 +231,12 @@ impl fmt::Debug for ManagedCredential {
                 .field("refresh", &"<redacted>")
                 .field("expires", expires)
                 .field("account_id", account_id)
+                .field("destination", destination)
+                .finish(),
+            Self::Session { destination, .. } => f
+                .debug_struct("ManagedCredential")
+                .field("type", &"session")
+                .field("key", &"<redacted>")
                 .field("destination", destination)
                 .finish(),
         }
@@ -258,6 +305,9 @@ impl fmt::Debug for OAuthTokens {
 pub enum CredentialKind {
     ApiKey,
     OAuth,
+    /// A browser-session credential: pasted session material delivered as
+    /// a `Cookie` header or session header, never a Bearer token.
+    Session,
 }
 
 impl fmt::Display for CredentialKind {
@@ -265,6 +315,7 @@ impl fmt::Display for CredentialKind {
         match self {
             Self::ApiKey => f.write_str("an API key"),
             Self::OAuth => f.write_str("an OAuth grant"),
+            Self::Session => f.write_str("a session credential"),
         }
     }
 }
@@ -344,7 +395,8 @@ pub enum KeyHealth {
 /// `Debug` is safe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialMetadata {
-    /// Whether the stored record is an API key or an OAuth grant.
+    /// Whether the stored record is an API key, an OAuth grant, or a
+    /// session credential.
     pub kind: CredentialKind,
     /// The expiry state of the grant.
     pub expiry: CredentialExpiry,

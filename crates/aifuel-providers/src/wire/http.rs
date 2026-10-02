@@ -6,7 +6,7 @@
 use crate::{CredentialStoreError, ResolvedAuth};
 use aifuel_core::{AgentRunError, AuthBinding, EndpointConfig, KeyDelivery};
 use reqwest::header::{
-    ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER,
+    ACCEPT, AUTHORIZATION, CONTENT_TYPE, COOKIE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER,
     USER_AGENT,
 };
 use std::io;
@@ -87,7 +87,47 @@ pub(super) fn validate_configuration(
             "credential delivery header {name:?} is not a valid header name"
         )));
     }
+    if let AuthBinding::ApiKey {
+        delivery: KeyDelivery::Cookie { name },
+        ..
+    } = auth
+        && !valid_cookie_name(name)
+    {
+        return Err(WireAdapterError::InvalidConfiguration(format!(
+            "credential delivery cookie name {name:?} is not a valid cookie name"
+        )));
+    }
     Ok(())
+}
+
+/// Whether `name` can head a `name=value` cookie pair: a non-empty ASCII
+/// token with no separators. The check is deliberately narrow - the cookie
+/// name is a fixed constant of the binding, never user input - but a
+/// config-declared name still fails loudly at construction.
+fn valid_cookie_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            byte.is_ascii_graphic()
+                && !matches!(
+                    byte,
+                    b'(' | b')'
+                        | b'<'
+                        | b'>'
+                        | b'@'
+                        | b','
+                        | b';'
+                        | b':'
+                        | b'\\'
+                        | b'"'
+                        | b'/'
+                        | b'['
+                        | b']'
+                        | b'?'
+                        | b'='
+                        | b'{'
+                        | b'}'
+                )
+        })
 }
 
 /// The transport headers every wire request sends: a JSON body, an SSE
@@ -147,6 +187,11 @@ pub(super) fn apply_auth(
                 })?;
                 insert_sensitive(headers, name, key)?;
             }
+            KeyDelivery::Cookie { name } => insert_sensitive(
+                headers,
+                COOKIE,
+                &aifuel_core::cookie_header_value(name, key),
+            )?,
         },
         ResolvedAuth::OAuth { access_token, .. } => {
             insert_sensitive(headers, AUTHORIZATION, &format!("Bearer {access_token}"))?

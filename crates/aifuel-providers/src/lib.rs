@@ -15,6 +15,7 @@ mod antigravity;
 mod catalog;
 mod claude;
 pub mod claude_runtime;
+mod claude_web;
 mod cli_adapter;
 mod code_assist;
 mod codex;
@@ -63,7 +64,7 @@ pub use monitoring::{CollectionConfig, ProviderMonitoring};
 pub use opencode_runtime::{OpenCodeAdapter, opencode_adapter};
 pub use registration::agent_mcp_registration_adapter;
 pub(crate) use registration::codex_mcp_runtime_entry;
-pub use wire::{WireAdapterError, WireExecutionAdapter};
+pub use wire::{WireAdapterError, WireExecutionAdapter, serves as wire_serves};
 
 pub(crate) use registry::{
     CatalogProvider, MonitoringFuture, default_monitoring_registry, default_registry,

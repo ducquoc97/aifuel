@@ -290,6 +290,169 @@ fn resolve_applies_each_binding_kind() {
 }
 
 #[test]
+fn sessions_round_trip_as_single_records_and_replace_on_restore() {
+    let dir = TestDir::new();
+    let store = dir.store();
+    let reference = reference("web:session");
+
+    assert_eq!(store.get(&reference).unwrap(), None);
+    store.set_session(&reference, "session-token").unwrap();
+    assert_eq!(
+        store.get(&reference).unwrap(),
+        Some(ManagedCredential::session("session-token"))
+    );
+
+    // A refreshed cookie replaces the stale record rather than stacking
+    // into a pool member.
+    store.set_session(&reference, "Cookie: a=1; b=2").unwrap();
+    assert_eq!(
+        store.get(&reference).unwrap(),
+        Some(ManagedCredential::session("Cookie: a=1; b=2"))
+    );
+    assert_eq!(store.list().unwrap().len(), 1);
+    assert!(!dir.data_file_contents().is_empty());
+
+    // Sessions are stored verbatim; an empty value is not a credential.
+    assert!(matches!(
+        store.set_session(&reference, ""),
+        Err(CredentialStoreError::InvalidMaterial(_))
+    ));
+    assert!(matches!(
+        store.set_session_for(&reference, "", &test_integration()),
+        Err(CredentialStoreError::InvalidMaterial(_))
+    ));
+
+    // Session metadata reports the kind with no expiry and no key health.
+    let meta = store.metadata(&reference).unwrap().unwrap();
+    assert_eq!(meta.kind, CredentialKind::Session);
+    assert_eq!(meta.expiry, CredentialExpiry::None);
+}
+
+#[test]
+fn session_serializes_as_its_own_type_and_debug_redacts_material() {
+    // Backward compatibility: the record must deserialize as a distinct
+    // `"session"` type so older readers refuse it honestly and newer ones
+    // keep it out of API-key pools.
+    let json: serde_json::Value =
+        serde_json::from_slice(&serde_json::to_vec(&ManagedCredential::session("raw")).unwrap())
+            .unwrap();
+    assert_eq!(json["type"], "session");
+    let rendered = format!("{:?}", ManagedCredential::session("raw-secret"));
+    assert!(!rendered.contains("raw-secret"));
+}
+
+#[test]
+fn cookie_delivery_resolves_session_material_never_pool_members() {
+    let dir = TestDir::new();
+    let store = dir.store();
+    let session_ref = reference("web:session");
+    let binding = AuthBinding::ApiKey {
+        source: ApiKeySource::Store {
+            credential: session_ref.clone(),
+        },
+        delivery: KeyDelivery::Cookie {
+            name: "sessionKey".to_owned(),
+        },
+    };
+
+    store
+        .set_session_for(&session_ref, "session-material", &test_integration())
+        .unwrap();
+    assert_eq!(
+        store.resolve(&binding, &test_integration()).unwrap(),
+        ResolvedAuth::ApiKey {
+            key: "session-material".to_owned(),
+            delivery: KeyDelivery::Cookie {
+                name: "sessionKey".to_owned()
+            },
+        }
+    );
+
+    // A session record under the pool namespace must not satisfy a Bearer
+    // binding, and an API-key record must not satisfy a Cookie binding:
+    // sending either across kinds is a kind error, not a silent skip.
+    store.set_api_key(&reference("api"), "sk").unwrap();
+    let cookie_at_api = AuthBinding::ApiKey {
+        source: ApiKeySource::Store {
+            credential: reference("api"),
+        },
+        delivery: KeyDelivery::Cookie {
+            name: "sessionKey".to_owned(),
+        },
+    };
+    assert!(matches!(
+        store.resolve(&cookie_at_api, &test_integration()),
+        Err(CredentialStoreError::UnexpectedCredentialKind { .. })
+    ));
+    let bearer_at_session = AuthBinding::ApiKey {
+        source: ApiKeySource::Store {
+            credential: session_ref.clone(),
+        },
+        delivery: KeyDelivery::Bearer,
+    };
+    assert!(matches!(
+        store.resolve(&bearer_at_session, &test_integration()),
+        Err(CredentialStoreError::UnexpectedCredentialKind { .. })
+    ));
+}
+
+#[test]
+fn a_session_resolves_only_for_its_recorded_destination() {
+    let dir = TestDir::new();
+    let store = dir.store();
+    let session_ref = reference("web:session");
+    let binding = AuthBinding::ApiKey {
+        source: ApiKeySource::Store {
+            credential: session_ref.clone(),
+        },
+        delivery: KeyDelivery::Cookie {
+            name: "sessionKey".to_owned(),
+        },
+    };
+
+    store
+        .set_session_for(&session_ref, "s", &IntegrationId::new("claude-web:web"))
+        .unwrap();
+    assert!(matches!(
+        store.resolve(&binding, &IntegrationId::new("other:web")),
+        Err(CredentialStoreError::CredentialDestinationMismatch { .. })
+    ));
+    assert!(
+        store
+            .resolve(&binding, &IntegrationId::new("claude-web:web"))
+            .is_ok()
+    );
+
+    // EnvOrStore prefers the stored session; absent, it falls back to the
+    // declared variable.
+    let var = "AIFUEL_CREDENTIALS_TEST_SESSION_ENV";
+    let env_or_store = AuthBinding::ApiKey {
+        source: ApiKeySource::EnvOrStore {
+            var: var.to_owned(),
+            credential: reference("absent-session"),
+        },
+        delivery: KeyDelivery::Cookie {
+            name: "sessionKey".to_owned(),
+        },
+    };
+    unsafe { std::env::set_var(var, "env-session") };
+    assert_eq!(
+        store.resolve(&env_or_store, &test_integration()).unwrap(),
+        ResolvedAuth::ApiKey {
+            key: "env-session".to_owned(),
+            delivery: KeyDelivery::Cookie {
+                name: "sessionKey".to_owned()
+            },
+        }
+    );
+    unsafe { std::env::remove_var(var) };
+    assert!(matches!(
+        store.resolve(&env_or_store, &test_integration()),
+        Err(CredentialStoreError::EnvVarAbsent { .. })
+    ));
+}
+
+#[test]
 fn expired_oauth_grants_resolve_with_needs_refresh() {
     let dir = TestDir::new();
     let store = dir.store();

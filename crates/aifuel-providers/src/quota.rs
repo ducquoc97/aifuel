@@ -71,6 +71,11 @@ pub(crate) fn spec(id: &str) -> Option<CollectorSpec> {
             collect: openrouter_collect,
             unobserved: crate::openrouter::unobserved,
         }),
+        crate::claude_web::CLAUDE_WEB_USAGE_COLLECTOR => Some(CollectorSpec {
+            default_url: |config| config.claude_web_usage_url.clone(),
+            collect: crate::claude_web::collect,
+            unobserved: crate::claude_web::unobserved,
+        }),
         crate::zai::ZAI_QUOTA_COLLECTOR => Some(CollectorSpec {
             default_url: |config| config.zai_quota_url.clone(),
             collect: crate::zai::collect,
@@ -101,6 +106,7 @@ pub(crate) fn spec(id: &str) -> Option<CollectorSpec> {
 pub(crate) fn compiled_collector_ids() -> &'static [&'static str] {
     &[
         crate::openrouter::OPENROUTER_KEY_COLLECTOR,
+        crate::claude_web::CLAUDE_WEB_USAGE_COLLECTOR,
         crate::zai::ZAI_QUOTA_COLLECTOR,
         crate::deepseek::DEEPSEEK_BALANCE_COLLECTOR,
         crate::siliconflow::SILICONFLOW_BALANCE_COLLECTOR,
@@ -137,6 +143,10 @@ pub(crate) async fn get_json<T: DeserializeOwned>(
             request = match delivery {
                 aifuel_core::KeyDelivery::Bearer => request.bearer_auth(key),
                 aifuel_core::KeyDelivery::Header { name } => request.header(name.as_str(), key),
+                aifuel_core::KeyDelivery::Cookie { name } => request.header(
+                    reqwest::header::COOKIE,
+                    aifuel_core::cookie_header_value(name, key),
+                ),
             };
         }
         ResolvedAuth::OAuth { access_token, .. } => {

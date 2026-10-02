@@ -46,7 +46,8 @@
 //!   key itself is never stored in this file.
 //! - `"api-key-ref"` - `credential` names a Managed Credential in the
 //!   Credential Store. Both api-key kinds accept optional `delivery`:
-//!   `"bearer"` (default) or `{"header": {"name": "x-api-key"}}`.
+//!   `"bearer"` (default), `{"header": {"name": "x-api-key"}}`, or
+//!   `{"cookie": {"name": "sessionKey"}}` for a browser-session credential.
 //! - `"api-key-env-or-store"` - a managed `credential` when one is stored,
 //!   otherwise the named `var`. This is the binding `aifuel auth set-key`
 //!   targets for a configured integration.
