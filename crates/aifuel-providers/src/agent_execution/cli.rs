@@ -503,6 +503,9 @@ impl CliExecutionAdapter {
             diagnostics,
             timed_out,
             usage: None,
+            // The process-protocol stream carries no structured quota fact;
+            // exhaustion wording is classified at the routing boundary.
+            quota_exhausted: false,
             resumed_from: request.resume.clone(),
             working_directory: working_directory.to_path_buf(),
         })

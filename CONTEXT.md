@@ -117,15 +117,23 @@ A named selection overlay on one Provider Integration, declared in `providers.js
 _Avoid_: Named profile, provider account alias
 
 **Managed Credential**:
-An AI Fuel-owned credential, such as an API key or an OAuth token set, stored in AI Fuel's credential store. It is distinct from a Provider Credential Source, which a provider CLI owns.
+An AI Fuel-owned credential, such as an API key, an OAuth token set, or a pasted browser-session credential, stored in AI Fuel's credential store. It is distinct from a Provider Credential Source, which a provider CLI owns.
 _Avoid_: User credential, app password
 
 **Credential Reference**:
 The opaque identity under which a Managed Credential is stored and shared by integrations. It names the credential slot, not the credential material itself.
 _Avoid_: Credential value, stored secret
 
+**Key Pool**:
+The set of API-key Managed Credentials one Authentication Binding may draw on: the record at the bound Credential Reference plus every record whose reference extends it with a `/` suffix. A rate-limited key cools down while execution rotates to the next healthy member. Session credentials are single records and never join a pool.
+_Avoid_: Shared key, credential bundle
+
+**Session Credential**:
+A Managed Credential holding pasted browser-session material - a bare session token or a copied `Cookie` header line - delivered to a `*:web` Provider Integration as the `Cookie` header rather than `Authorization: Bearer`. Entry is explicit paste or stdin only; nothing reads a browser profile or an OS keyring.
+_Avoid_: Browser import, keychain read
+
 **Authentication Binding**:
-The association between an execution configuration and the credential it applies to requests: none, an API key, or a managed OAuth credential. A configured endpoint does not imply one.
+The association between an execution configuration and the credential it applies to requests: none, an API key, a session credential, or a managed OAuth credential. A configured endpoint does not imply one.
 _Avoid_: Auth mode baked into a provider
 
 **Wire Api**:

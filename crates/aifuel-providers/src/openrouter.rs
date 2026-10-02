@@ -74,6 +74,10 @@ pub async fn collect_key_quota(
             request = match delivery {
                 aifuel_core::KeyDelivery::Bearer => request.bearer_auth(key),
                 aifuel_core::KeyDelivery::Header { name } => request.header(name.as_str(), key),
+                aifuel_core::KeyDelivery::Cookie { name } => request.header(
+                    reqwest::header::COOKIE,
+                    aifuel_core::cookie_header_value(name, key),
+                ),
             };
         }
         ResolvedAuth::OAuth { access_token, .. } => {

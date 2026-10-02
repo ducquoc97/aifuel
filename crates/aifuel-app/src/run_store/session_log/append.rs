@@ -145,12 +145,16 @@ impl RunStore {
                 )?;
             }
             AgentEventKind::RunStarted { selection, .. } => {
+                // The event's selection is the adapter-facing identity: an
+                // instance session reports its base integration here, so the
+                // row's serving identity (the instance id the host selected,
+                // which `model.select` can never change) is never overwritten
+                // by it.
                 connection.execute(
-                    "UPDATE agent_sessions SET integration = ?2, model = ?3, effort = ?4, updated_at = ?5
+                    "UPDATE agent_sessions SET model = ?2, effort = ?3, updated_at = ?4
                     WHERE session_id = ?1",
                     params![
                         session_id.as_str(),
-                        selection.integration_id.as_str(),
                         selection.model,
                         selection.effort.map(Effort::as_str),
                         now(),

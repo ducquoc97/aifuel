@@ -61,12 +61,16 @@ pub enum ManagedCredential {
     /// A billed API key. `destination` records the Integration Identity the
     /// credential was created for; a binding resolving it through a
     /// different integration is refused rather than forwarded to another
-    /// endpoint.
+    /// endpoint. `state` is the key's pool health, maintained by the
+    /// execution path; it is absent on records written before key pools
+    /// existed and on keys that have never failed.
     #[serde(rename = "api")]
     Api {
         key: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         destination: Option<IntegrationId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<ApiKeyState>,
     },
     /// An OAuth grant pair. `refresh` is optional because some flows are
     /// access-token-only; `expires` is the unix-seconds access-token
@@ -84,6 +88,19 @@ pub enum ManagedCredential {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         destination: Option<IntegrationId>,
     },
+    /// A browser-session credential entered by hand (`aifuel auth
+    /// set-session`). `key` holds whatever session material the user
+    /// pasted - a bare session token or a full `Cookie` header line;
+    /// delivery normalizes it at send time. Sessions carry no expiry or
+    /// pool state: there is no safe way to learn either from the material.
+    /// `destination` records the integration the credential was created
+    /// for, same as `api`.
+    #[serde(rename = "session")]
+    Session {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        destination: Option<IntegrationId>,
+    },
 }
 
 impl ManagedCredential {
@@ -93,6 +110,7 @@ impl ManagedCredential {
         Self::Api {
             key: key.into(),
             destination: None,
+            state: None,
         }
     }
 
@@ -102,6 +120,7 @@ impl ManagedCredential {
         Self::Api {
             key: key.into(),
             destination: Some(destination),
+            state: None,
         }
     }
 
@@ -110,11 +129,31 @@ impl ManagedCredential {
         Self::from(tokens)
     }
 
+    /// An unbound browser-session Managed Credential: stored under a raw
+    /// Credential Reference with no recorded destination.
+    pub fn session(key: impl Into<String>) -> Self {
+        Self::Session {
+            key: key.into(),
+            destination: None,
+        }
+    }
+
+    /// A browser-session Managed Credential bound to the integration it
+    /// was created for.
+    pub fn session_for(key: impl Into<String>, destination: IntegrationId) -> Self {
+        Self::Session {
+            key: key.into(),
+            destination: Some(destination),
+        }
+    }
+
     /// The Integration Identity this credential was created for, when one
     /// was recorded at write time.
     pub fn destination(&self) -> Option<&IntegrationId> {
         match self {
-            Self::Api { destination, .. } | Self::OAuth { destination, .. } => destination.as_ref(),
+            Self::Api { destination, .. }
+            | Self::OAuth { destination, .. }
+            | Self::Session { destination, .. } => destination.as_ref(),
         }
     }
 
@@ -123,19 +162,23 @@ impl ManagedCredential {
         match self {
             Self::Api { .. } => CredentialKind::ApiKey,
             Self::OAuth { .. } => CredentialKind::OAuth,
+            Self::Session { .. } => CredentialKind::Session,
         }
     }
 
     /// The metadata view of this record: kind, expiry state, account
-    /// identity, and destination binding, never secret material (spec rule
-    /// 9).
+    /// identity, destination binding, and key-pool health, never secret
+    /// material (spec rule 9).
     pub(crate) fn metadata(&self, now: i64) -> CredentialMetadata {
         match self {
-            Self::Api { destination, .. } => CredentialMetadata {
+            Self::Api {
+                destination, state, ..
+            } => CredentialMetadata {
                 kind: CredentialKind::ApiKey,
                 expiry: CredentialExpiry::None,
                 account_id: None,
                 destination: destination.clone(),
+                key_health: Some(state.clone().unwrap_or_default().health_at(now)),
             },
             Self::OAuth {
                 expires,
@@ -151,6 +194,14 @@ impl ManagedCredential {
                 },
                 account_id: account_id.clone(),
                 destination: destination.clone(),
+                key_health: None,
+            },
+            Self::Session { destination, .. } => CredentialMetadata {
+                kind: CredentialKind::Session,
+                expiry: CredentialExpiry::None,
+                account_id: None,
+                destination: destination.clone(),
+                key_health: None,
             },
         }
     }
@@ -159,11 +210,14 @@ impl ManagedCredential {
 impl fmt::Debug for ManagedCredential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Api { destination, .. } => f
+            Self::Api {
+                destination, state, ..
+            } => f
                 .debug_struct("ManagedCredential")
                 .field("type", &"api")
                 .field("key", &"<redacted>")
                 .field("destination", destination)
+                .field("state", state)
                 .finish(),
             Self::OAuth {
                 expires,
@@ -177,6 +231,12 @@ impl fmt::Debug for ManagedCredential {
                 .field("refresh", &"<redacted>")
                 .field("expires", expires)
                 .field("account_id", account_id)
+                .field("destination", destination)
+                .finish(),
+            Self::Session { destination, .. } => f
+                .debug_struct("ManagedCredential")
+                .field("type", &"session")
+                .field("key", &"<redacted>")
                 .field("destination", destination)
                 .finish(),
         }
@@ -245,6 +305,9 @@ impl fmt::Debug for OAuthTokens {
 pub enum CredentialKind {
     ApiKey,
     OAuth,
+    /// A browser-session credential: pasted session material delivered as
+    /// a `Cookie` header or session header, never a Bearer token.
+    Session,
 }
 
 impl fmt::Display for CredentialKind {
@@ -252,6 +315,7 @@ impl fmt::Display for CredentialKind {
         match self {
             Self::ApiKey => f.write_str("an API key"),
             Self::OAuth => f.write_str("an OAuth grant"),
+            Self::Session => f.write_str("a session credential"),
         }
     }
 }
@@ -267,12 +331,72 @@ pub enum CredentialExpiry {
     Expired { at: i64 },
 }
 
-/// Presence, kind, expiry state, account identity, and destination binding
-/// for one Managed Credential. This is what discovery and `auth list`
-/// consume; it never carries secret material, so a derived `Debug` is safe.
+/// The recorded failure state of one API key in a pool.
+///
+/// The execution path maintains these fields: a `429` sets `cooling_until`
+/// (honoring the endpoint's `Retry-After` when it declares one, else a
+/// modest exponential step kept in `cooling_step_seconds`), a `401`/`403`
+/// sets `invalid_at`, and a success clears the whole state. The record
+/// persists so a key stays on cooldown across restarts; expired cooldowns
+/// read as healthy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiKeyState {
+    /// The unix-seconds deadline of the current rate-limit cooldown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooling_until: Option<i64>,
+    /// The cooldown step applied for the latest `429`, in seconds. It
+    /// doubles per consecutive rate-limit response (bounded), so backoff
+    /// keeps growing across restarts without a separate counter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooling_step_seconds: Option<u64>,
+    /// The unix-seconds time the provider rejected this key outright
+    /// (`401`/`403`). An invalid key stays out of rotation until the user
+    /// re-stores it or removes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid_at: Option<i64>,
+}
+
+impl ApiKeyState {
+    /// The key's health right now.
+    pub fn health(&self) -> KeyHealth {
+        self.health_at(now_unix())
+    }
+
+    /// The key's health at `now`: a recorded rejection dominates, then an
+    /// unexpired cooldown. `KeyHealth` is a view - the fields stay as
+    /// recorded regardless of what health they produce.
+    pub(crate) fn health_at(&self, now: i64) -> KeyHealth {
+        if let Some(at) = self.invalid_at {
+            return KeyHealth::Invalid { at };
+        }
+        if let Some(until) = self.cooling_until
+            && until > now
+        {
+            return KeyHealth::Cooling { until };
+        }
+        KeyHealth::Healthy
+    }
+}
+
+/// The health of one pooled API key, as metadata reads report it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyHealth {
+    /// No recorded failure state, or a cooldown that already expired.
+    Healthy,
+    /// Rate-limited: the key is skipped until the unix-seconds deadline.
+    Cooling { until: i64 },
+    /// Rejected outright: the key stays out of rotation until re-stored.
+    Invalid { at: i64 },
+}
+
+/// Presence, kind, expiry state, account identity, destination binding, and
+/// key-pool health for one Managed Credential. This is what discovery and
+/// `auth list` consume; it never carries secret material, so a derived
+/// `Debug` is safe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialMetadata {
-    /// Whether the stored record is an API key or an OAuth grant.
+    /// Whether the stored record is an API key, an OAuth grant, or a
+    /// session credential.
     pub kind: CredentialKind,
     /// The expiry state of the grant.
     pub expiry: CredentialExpiry,
@@ -280,4 +404,6 @@ pub struct CredentialMetadata {
     pub account_id: Option<String>,
     /// The integration the credential was created for, when recorded.
     pub destination: Option<IntegrationId>,
+    /// The pool health of an API-key credential; `None` for OAuth grants.
+    pub key_health: Option<KeyHealth>,
 }

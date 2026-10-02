@@ -66,6 +66,34 @@ pub(super) fn resolve_cli_selection(
             .or_else(|| profile_settings.and_then(|settings| settings.effort.clone()));
     }
 
+    if initial
+        .integration
+        .as_ref()
+        .is_some_and(|integration| integration.as_str() == aifuel_core::AUTO_PROVIDER)
+    {
+        // `auto` is a routing alias, not a literal integration: run()
+        // resolves it to a Discovered Provider, so the picker and the
+        // noninteractive model requirement do not apply. An explicit
+        // `--model` still narrows the ranked providers by catalog
+        // advertisement at route time.
+        let adapters = crate::run_selection::runtime_adapters_or_warn();
+        let model_evidence = explicit_model.as_deref().map(|model| {
+            crate::run_selection::model_evidence_for_model(
+                &adapters,
+                initial.integration.as_ref(),
+                model,
+                catalog_models.as_deref(),
+            )
+        });
+        let sources = resolve_cli_sources(config, &explicit, profile, &initial, resume)?;
+        return Ok(CliRunSelection {
+            settings: initial,
+            working_directory,
+            model_evidence,
+            sources,
+        });
+    }
+
     if !interactive && initial.integration.is_none() {
         let guidance = if resume {
             "resume requires --integration or an integration in the selected profile; global integration defaults are ignored"

@@ -10,7 +10,7 @@ Provider identity is today the `ProviderKey` enum, so one upstream cannot have t
 
 - Run prompts and monitor quota through CLI harnesses and direct HTTP integrations under one application contract.
 - Separate upstream provider identity from configured integrations so several integrations can share one upstream.
-- Support API keys, AI Fuel-owned OAuth, and unauthenticated endpoints as explicit configuration.
+- Support API keys, AI Fuel-owned OAuth, pasted browser-session credentials, and unauthenticated endpoints as explicit configuration.
 - Let users define providers and integrations in config alongside the compiled adapters, while keeping compiled adapter behavior per ADR-0003.
 - Keep Provider Discovery offline and side-effect-free.
 - Keep Managed Credentials bound to approved destinations and concurrency-safe under refresh.
@@ -32,12 +32,20 @@ A configured binding of one provider identity to one execution configuration and
 _Avoid_: Provider mode, provider profile, provider alias
 
 **Managed Credential**:
-A credential stored and maintained by AI Fuel in its own Credential Store: an API key or an OAuth grant pair. Provider CLI logins and unrelated account logins are not Managed Credentials.
+A credential stored and maintained by AI Fuel in its own Credential Store: an API key, an OAuth grant pair, or a pasted browser-session credential. Provider CLI logins and unrelated account logins are not Managed Credentials.
 _Avoid_: Provider credential, native credential, shared login
 
 **Credential Reference**:
 An opaque identifier naming one Managed Credential in the Credential Store. Integrations bind credentials by reference so secrets never appear in config, run records, or reports.
 _Avoid_: Token value, inline key, credential path
+
+**Key Pool**:
+The set of API-key Managed Credentials an `AuthBinding::ApiKey` may draw on: the record at the bound Credential Reference plus every record whose reference extends it (`ref`, `ref/2`, `ref/3`, ...). Execution rotates through the pool when a key is rate-limited or rejected. Session credentials never participate: a browser session is a single record, not a pool.
+_Avoid_: Shared key, credential bundle
+
+**Session Credential**:
+A Managed Credential holding pasted browser-session material - a bare session token or a copied `Cookie` header line - bound to a `*:web` Provider Integration. It is delivered as the `Cookie` header, never `Authorization: Bearer`. Entry is explicit paste or stdin only; nothing reads a browser profile or an OS keyring.
+_Avoid_: Browser import, keychain read
 
 **Wire Api**:
 The named HTTP request/response protocol an endpoint speaks: OpenAI chat completions, OpenAI responses, or Anthropic messages. A Wire Api is protocol evidence, not a provider identity.
@@ -76,12 +84,14 @@ enum WireApi {
     OpenAiChat,
     OpenAiResponses,
     AnthropicMessages,
+    ClaudeWeb,
 }
 ```
 
-- `EndpointConfig` carries the base URL, optional extra headers, and request timeouts. `KeyDelivery` describes how an API key reaches the wire (`Authorization: Bearer`, `x-api-key`, or a documented provider placement), because header conventions differ across OpenAI-compatible services.
+- `EndpointConfig` carries the base URL, optional extra headers, and request timeouts. `KeyDelivery` describes how an API key reaches the wire (`Authorization: Bearer`, `x-api-key`, a documented provider placement, or the `Cookie` header for a session credential), because header conventions differ across OpenAI-compatible services.
 - Rationale for this shape: a local endpoint can still require auth, as with a remote Ollama or a LiteLLM proxy, so "local implies unauthenticated" is wrong. Endpoint is configuration; the auth binding is a separate explicit choice. This is not a free Cartesian product: `Cli` carries no endpoint or auth fields because the provider CLI owns credentials, and `Http` always carries an explicit `AuthBinding`, including an explicit `None`.
 - `WireApi::OpenAiChat` initially serves Ollama, LM Studio, and OpenAI-compatible gateways. A native `OllamaChat` variant waits for a concrete requirement instead of speculative coverage.
+- `WireApi::ClaudeWeb` is the monitoring-only exception to "a declared Wire Api has a compiled engine": the `*:web` integrations declare it as protocol evidence for the upstream surface they monitor and never execute prompts. They register for discovery, auth, and monitoring only; adapter construction skips them, `run --provider auto` never selects a cookie-delivered integration, and config cannot declare the variant for a user-defined integration.
 - `CliAdapterId` names a compiled CLI adapter from the existing registry; `OAuthProfileId` names a compiled OAuth flow specification. Both are closed compile-time sets, so config can select but cannot invent behavior.
 
 ### Selection and defaults
@@ -123,11 +133,39 @@ enum WireApi {
     "refresh": "...",
     "expires": 1735689600,
     "account_id": "..."
+  },
+  "claude-web:web": {
+    "type": "session",
+    "key": "sessionKey=... or a pasted Cookie header line",
+    "destination": "claude-web:web"
   }
 }
 ```
 
+- A `session` record stores pasted browser-session material verbatim - a bare session token or a full `Cookie` header line; `KeyDelivery::Cookie` normalizes it at send time (a bare value becomes `name=value`, pair material passes through). Sessions carry no expiry, no account id, and no key-health state, and never join a Key Pool. Re-storing replaces the record, which is how a refreshed cookie lands.
+
 - The store holds only Managed Credentials. It never contains provider CLI credentials, prompts, or run data.
+
+#### Key Pools
+
+An API-key Authentication Binding names one Credential Reference, but the pool bound to it is the record at that reference plus every record whose reference extends it with a `/` suffix (`openai:api-key`, `openai:api-key/2`, `openai:api-key/3`). Membership is inferred from the reference namespace, so the schema stays a flat map and pre-pool single-key files load unchanged.
+
+Each API-key record may carry an optional `state` member describing its last observed failure:
+
+```json
+{
+  "openai:api-key": {
+    "type": "api",
+    "key": "...",
+    "destination": "openai:api-key",
+    "state": { "cooling_until": 1735689600, "cooling_step_seconds": 30 }
+  }
+}
+```
+
+- `cooling_until` / `cooling_step_seconds` record a rate-limit cooldown and the backoff step that produced it; `invalid_at` records a terminal credential rejection (`401`/`403`). A missing `state` is a healthy key, so records written before pools existed need no migration.
+- Cooldown state persists with its expiry timestamp so it survives restarts; an expired cooldown reads healthy again without a write. A successful request clears the state.
+- Every pool member carries the binding's `destination` and obeys the same destination check as the base record.
 
 ### Transaction rules
 
@@ -146,9 +184,11 @@ All of the following are normative:
 
 ### Environment precedence and auth commands
 
-- Each integration declares which environment variables it accepts (for example `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Env-var precedence is explicit per integration in its config, not a global guess across provider names.
-- `aifuel auth set-key <integration>` writes an API-key Managed Credential and binds it to that integration. `aifuel auth list` reports the effective credential source per integration - managed ref, named env var, CLI-owned, or none - and never prints values. `aifuel auth remove <credential>` deletes a Managed Credential.
-- `aifuel auth remove` warns when removing a managed credential leaves an env-var credential active for the same integration, since the user may believe they signed out.
+- Each integration declares which environment variables it accepts (for example `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`; `CLAUDE_WEB_SESSION` for the Claude web session). Env-var precedence is explicit per integration in its config, not a global guess across provider names.
+- `aifuel auth set-key <integration>` writes an API-key Managed Credential and binds it to that integration. Repeating `set-key` on one integration appends to its Key Pool (`openai:api-key`, then `openai:api-key/2`, ...); a raw Credential Reference target overwrites exactly that member, and re-storing identical material revives the member instead of duplicating it.
+- `aifuel auth set-session <integration>` writes a session Managed Credential bound to a cookie-delivered integration, from `--key` or `--stdin`. `set-key` refuses cookie-delivered bindings and `set-session` refuses key-delivered ones, so pasted session material can never land in an API-key pool or ship as a Bearer token.
+- `aifuel auth list` reports the effective credential source per integration - managed ref or Key Pool with a per-key health rollup, named env var, managed session, CLI-owned, or none - and never prints values. `aifuel auth remove <credential>` deletes one pool member at a time and warns only when the pool is left empty.
+- `aifuel auth remove` warns when removing a managed credential leaves an env-var credential active for the same integration, since the user may believe they signed out. Removing a session credential warns that the binding strands until a replacement is stored or the declared env var is exported - a session has no pool to retain.
 
 ## Discovery Changes
 
@@ -168,10 +208,21 @@ All of the following are normative:
 - Stream decoding handles fragmented UTF-8 at chunk boundaries, multiline SSE events, and provider-specific keepalive lines. Buffering is bounded with backpressure so an unbounded stream cannot grow memory without limit. An idle timeout applies between events, independent of the optional overall deadline. Partial output is preserved and reported.
 - AI Fuel never auto-replays an inference request after an ambiguous disconnect. The request may have been consumed and billed; replay is a user decision. This mirrors the existing no-replay rule for start/resume delivery uncertainty.
 
+#### Key Pool rotation
+
+For an `AuthBinding::ApiKey` the wire adapter sends the request with the first healthy pool member in Credential Reference order (first-healthy is the documented strategy; there is no round-robin cursor to keep in sync across processes).
+
+- `429` marks the key that received it cooling - honoring `Retry-After` when present, else a modest exponential backoff per key - and the run continues on the next healthy member. Only that key cools.
+- `401` and `403` mark the key invalid and rotate the same way; invalid keys need `auth set-key` (or a raw re-store of the same material) to recover.
+- A successful response clears the serving key's recorded failure state.
+- When no healthy member remains the run fails before any request with a pool-exhaustion error; a cooling key whose deadline passed is healthy again.
+- Rotation applies only to API-key bindings and only on those statuses. Transport failures, mid-stream failures, and non-API-key bindings keep the single-attempt no-replay rule.
+
 ## Monitoring Contract
 
 - Monitoring produces typed observations, not prose. Each observation identifies the metric, the unit, the scope (Provider Account, organization, or key), the observation time, the reset time where known, and provenance.
 - Observation states: `Unsupported` (no monitoring contract), `Unauthenticated` (credential missing or rejected), `Unavailable` (endpoint unreachable or changed), `Observed` (values returned). A missing limit is unknown; it is never reported as zero remaining quota.
+- The `claude-web:web` collector demonstrates a session-backed contract: it reads `GET https://claude.ai/api/organizations` to find the session's organization, then `GET .../{uuid}/usage` for the `five_hour`, `seven_day`, and per-model rolling windows as `utilization` percentages with `resets_at` timestamps. `AIFUEL_CLAUDE_WEB_USAGE_URL` overrides the organizations endpoint for tests. These are private web endpoints; fields the response does not publish stay absent.
 - Integrations that observe the same Provider Account and Quota Pool are deduplicated only when matching account-scope evidence establishes the relationship, consistent with the CONTEXT.md Provider Account rule. A CLI integration and an API integration against one upstream account report one shared pool; unknown account identity is never deduplicated by guesswork.
 
 ## Registry and Migration
@@ -193,6 +244,7 @@ All of the following are normative:
 - Redirects are validated. Managed auth material is not forwarded across origins; a redirect that changes origin fails the request rather than silently replaying headers.
 - Custom endpoint headers cannot override managed auth. The managed binding is applied last so config cannot smuggle a different `Authorization` value.
 - Credential material never enters logs, diagnostics, run records, the status report, or MCP output. `RunRequest`'s `Debug` already redacts prompts; the same rule extends to credential fields.
+- Session material enters only through explicit paste or stdin (`aifuel auth set-session`, the declared env var, or the dashboard Connect panel over loopback). Nothing harvests a browser profile and nothing decrypts an OS keyring.
 - Store protection is filesystem ACL-based in P1. Document this honestly; an OS credential backend is a hardening option, not a claim.
 
 ## OAuth Integrations

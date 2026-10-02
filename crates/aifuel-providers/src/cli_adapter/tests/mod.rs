@@ -126,6 +126,7 @@ impl FakeExecution {
             diagnostics: None,
             usage: None,
             timed_out: false,
+            quota_exhausted: false,
             working_directory: request
                 .working_directory
                 .clone()

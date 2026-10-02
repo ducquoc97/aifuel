@@ -270,6 +270,64 @@ fn noninteractive_missing_model_error_explains_how_to_select_one() {
 }
 
 #[test]
+fn auto_provider_resolves_without_a_model_choice() {
+    // `auto` is a routing alias: run() expands it against the Discovered
+    // Providers, so no model or integration picker applies.
+    let config = GlobalSelectionConfig::default();
+    let args = ["--provider", "auto", "--prompt", "hello"].map(str::to_owned);
+    let request = parse_run_args_with_context(
+        &args,
+        &config,
+        Some(Vec::new()),
+        &mut io::Cursor::new(Vec::new()),
+        &mut Vec::new(),
+        false,
+        false,
+    )
+    .expect("auto selection should resolve without a model")
+    .request;
+
+    assert_eq!(request.integration.as_str(), "auto");
+    assert_eq!(request.model, None);
+}
+
+#[test]
+fn auto_provider_wins_over_a_profile_integration() {
+    // An explicit `--provider auto` still routes automatically when the
+    // selected profile names a concrete integration.
+    let mut config = GlobalSelectionConfig::default();
+    config.profiles.insert(
+        "work".to_owned(),
+        SelectionSettings {
+            integration: Some(ProviderKey::Codex.into()),
+            ..SelectionSettings::default()
+        },
+    );
+    let args = [
+        "--provider",
+        "auto",
+        "--profile",
+        "work",
+        "--prompt",
+        "hello",
+    ]
+    .map(str::to_owned);
+    let request = parse_run_args_with_context(
+        &args,
+        &config,
+        Some(Vec::new()),
+        &mut io::Cursor::new(Vec::new()),
+        &mut Vec::new(),
+        false,
+        false,
+    )
+    .expect("auto selection should resolve over the profile")
+    .request;
+
+    assert_eq!(request.integration.as_str(), "auto");
+}
+
+#[test]
 fn explicit_model_without_catalog_match_keeps_unknown_evidence() {
     let config = GlobalSelectionConfig::default();
     let selected = resolve_cli_selection(
@@ -442,6 +500,7 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
         Some(aifuel::selection_cli::PickerModelEvidence::Catalog),
         Some(&sources),
         (false, false),
+        None,
     )
     .expect("managed run should serialize as JSON");
     let value: serde_json::Value =
@@ -466,6 +525,7 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
         None,
         Some(&sources),
         (false, false),
+        None,
     )
     .expect("managed run should serialize as JSONL");
     let event: serde_json::Value = serde_json::from_str(&jsonl).expect("JSONL event should parse");
@@ -481,6 +541,7 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
         None,
         Some(&sources),
         (true, true),
+        None,
     )
     .expect("resumed run should omit unresolved source values");
     let deferred: serde_json::Value =

@@ -71,6 +71,7 @@ impl AgentExecutionAdapter for ProbeAdapter {
                 input_tokens: Some(7),
                 output_tokens: Some(3),
             }),
+            quota_exhausted: false,
             working_directory: std::env::temp_dir(),
         })
     }
@@ -229,6 +230,7 @@ impl AgentExecutionAdapter for InputAdapter {
             diagnostics: None,
             timed_out: false,
             usage: None,
+            quota_exhausted: false,
             working_directory: request
                 .working_directory
                 .clone()

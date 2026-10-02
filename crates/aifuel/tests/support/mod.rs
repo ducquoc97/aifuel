@@ -156,6 +156,10 @@ while IFS= read -r line; do
             if [ -n "${AIFUEL_CODEX_FIXTURE_DELAY_SECONDS:-}" ]; then
                 sleep "$AIFUEL_CODEX_FIXTURE_DELAY_SECONDS"
             fi
+            if [ -n "${AIFUEL_CODEX_FIXTURE_TURN_ERROR:-}" ]; then
+                printf '%s\n' "{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"id\":\"fixture-turn\",\"status\":\"failed\",\"error\":{\"message\":\"$AIFUEL_CODEX_FIXTURE_TURN_ERROR\"}}}}"
+                continue
+            fi
             printf '%s\n' '{"method":"item/agentMessage/delta","params":{"itemId":"m1","turnId":"fixture-turn","delta":"fake codex app-server response"}}'
             printf '%s\n' '{"method":"turn/completed","params":{"turn":{"id":"fixture-turn","status":"completed","error":null}}}'
             ;;
@@ -213,6 +217,11 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         '1' { [Console]::Out.WriteLine('{"id":1,"result":{"thread":{"id":"fixture-thread"}}}') }
         '2' {
             [Console]::Out.WriteLine('{"id":2,"result":{"turn":{"id":"fixture-turn"}}}')
+            if ($env:AIFUEL_CODEX_FIXTURE_TURN_ERROR) {
+                $message = $env:AIFUEL_CODEX_FIXTURE_TURN_ERROR.Replace('\', '\\').Replace('"', '\"')
+                [Console]::Out.WriteLine('{"method":"turn/completed","params":{"turn":{"id":"fixture-turn","status":"failed","error":{"message":"' + $message + '"}}}}')
+                continue
+            }
             if ($env:AIFUEL_CODEX_FIXTURE_APPROVAL -eq '1') {
                 [Console]::Out.WriteLine('{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"fixture-thread","turnId":"fixture-turn","itemId":"item-1","command":"touch fixture","reason":"run a command"}}')
                 continue
@@ -258,6 +267,116 @@ pub fn path_with(directory: &Path) -> std::ffi::OsString {
         paths.extend(std::env::split_paths(&existing));
     }
     std::env::join_paths(paths).expect("test PATH should be joinable")
+}
+
+/// Serve a fixed JSON body for `requests` connections on a loopback
+/// address - the usage collectors each issue one GET, so a fixture seeded
+/// with the provider's response shape stands in for its quota endpoint.
+pub fn start_json_fixture(body: &'static str, requests: usize) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("fixture server should bind");
+    let address = listener
+        .local_addr()
+        .expect("fixture address should be available");
+    let server = thread::spawn(move || {
+        for stream in listener.incoming().take(requests) {
+            let mut stream = stream.expect("fixture connection should open");
+            let mut buffer = [0; 8192];
+            // The usage collectors issue one small GET; a single read holds
+            // the request head and the response may be written immediately.
+            let _ = stream.read(&mut buffer);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("fixture response should be writable");
+        }
+    });
+    (format!("http://{address}"), server)
+}
+
+/// The credential markers Provider Discovery inspects for the Claude and
+/// Codex built-ins; contents only need to parse as JSON for collection.
+pub fn seed_claude_authentication(home: &Path) {
+    let claude_home = home.join(".claude");
+    fs::create_dir_all(&claude_home).expect("Claude home should be creatable");
+    fs::write(
+        claude_home.join(".credentials.json"),
+        r#"{"accessToken": "fixture-token"}"#,
+    )
+    .expect("Claude credential marker should be writable");
+}
+
+pub fn seed_codex_token(home: &Path) {
+    let codex_home = home.join(".codex");
+    fs::create_dir_all(&codex_home).expect("Codex home should be creatable");
+    fs::write(
+        codex_home.join("auth.json"),
+        r#"{"access_token": "fixture-token", "account_id": "fixture-account"}"#,
+    )
+    .expect("Codex auth marker should be writable");
+}
+
+/// Serve the two claude.ai web endpoints the `claude-web:web` collector
+/// reads: the organizations list on the configured URL, then
+/// `/{uuid}/usage`. Request heads are captured so tests can assert the
+/// Cookie header carried the session material and no Authorization header
+/// was sent.
+pub fn start_claude_web_fixture(
+    organizations: &'static str,
+    usage: &'static str,
+) -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    thread::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("fixture server should bind");
+    let address = listener
+        .local_addr()
+        .expect("fixture address should be available");
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let requests = captured.clone();
+    let server = thread::spawn(move || {
+        for stream in listener.incoming().take(2) {
+            let mut stream = stream.expect("fixture connection should open");
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            loop {
+                let count = stream
+                    .read(&mut buffer)
+                    .expect("request should be readable");
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request).into_owned();
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("")
+                .to_owned();
+            requests.lock().expect("captured requests").push(request);
+            let body = if path.ends_with("/usage") {
+                usage
+            } else {
+                organizations
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("fixture response should be writable");
+        }
+    });
+    (format!("http://{address}"), captured, server)
 }
 
 pub fn start_gemini_fixture() -> (String, thread::JoinHandle<()>) {

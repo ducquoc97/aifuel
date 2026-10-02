@@ -16,6 +16,11 @@
 //! - A malformed file fails with [`CredentialStoreError::Corrupt`] and is
 //!   never overwritten or treated as empty.
 //! - Credential material never appears in `Debug` output or error messages.
+//! - API-key records whose Credential Reference extends a binding's
+//!   reference with `/suffix` form that binding's Key Pool: each member is
+//!   an ordinary Managed Credential carrying optional health state
+//!   (cooldown deadline, invalid mark) that the HTTP execution path
+//!   maintains and `auth list` reports.
 //! - All operations are synchronous blocking I/O. Async callers must run them
 //!   inside `tokio::task::spawn_blocking` or an equivalent blocking context.
 //! - On Unix the data file is created mode 0600 and repaired toward 0600 on
@@ -29,10 +34,12 @@ mod schema;
 mod store;
 
 pub use schema::{
-    CredentialExpiry, CredentialKind, CredentialMetadata, ManagedCredential, OAuthTokens,
+    ApiKeyState, CredentialExpiry, CredentialKind, CredentialMetadata, KeyHealth,
+    ManagedCredential, OAuthTokens,
 };
 pub use store::{
-    CredentialStore, CredentialStoreError, ResolvedAuth, env_override, valid_env_var_name,
+    CredentialStore, CredentialStoreError, PoolKey, ResolvedAuth, env_override, is_pool_member,
+    valid_env_var_name,
 };
 
 #[cfg(test)]

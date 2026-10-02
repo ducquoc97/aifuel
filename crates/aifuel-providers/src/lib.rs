@@ -15,12 +15,14 @@ mod antigravity;
 mod catalog;
 mod claude;
 pub mod claude_runtime;
+mod claude_web;
 mod cli_adapter;
 mod code_assist;
 mod codex;
 pub mod codex_runtime;
 mod copilot;
 mod credentials;
+mod deepseek;
 mod devin;
 mod discovery;
 mod gemini;
@@ -30,21 +32,26 @@ mod model_catalog;
 mod monitoring;
 pub mod opencode_runtime;
 mod openrouter;
+mod quota;
 mod registration;
 mod registry;
+mod siliconflow;
 mod usage_helpers;
 mod wire;
+mod zai;
 
 pub use acp_runtime::{AcpAdapter, acp_adapter};
 pub use agent_run_registry::agent_run_adapters;
+pub use catalog::free_tier_note;
 pub use claude_runtime::{ClaudeAdapter, claude_adapter};
 pub use cli_adapter::{
     AdapterDiscovery, CliAdapter, cli_fallback_adapters, integration_summary, quota_summary,
 };
 pub use codex_runtime::{CodexAdapter, codex_adapter};
 pub use credentials::{
-    CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore, CredentialStoreError,
-    ManagedCredential, OAuthTokens, ResolvedAuth, env_override, valid_env_var_name,
+    ApiKeyState, CredentialExpiry, CredentialKind, CredentialMetadata, CredentialStore,
+    CredentialStoreError, KeyHealth, ManagedCredential, OAuthTokens, PoolKey, ResolvedAuth,
+    env_override, is_pool_member, valid_env_var_name,
 };
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
 pub use integrations::{
@@ -58,7 +65,7 @@ pub use monitoring::{CollectionConfig, ProviderMonitoring};
 pub use opencode_runtime::{OpenCodeAdapter, opencode_adapter};
 pub use registration::agent_mcp_registration_adapter;
 pub(crate) use registration::codex_mcp_runtime_entry;
-pub use wire::{WireAdapterError, WireExecutionAdapter};
+pub use wire::{WireAdapterError, WireExecutionAdapter, serves as wire_serves};
 
 pub(crate) use registry::{
     CatalogProvider, MonitoringFuture, default_monitoring_registry, default_registry,

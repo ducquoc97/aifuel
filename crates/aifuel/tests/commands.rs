@@ -1,9 +1,15 @@
 #[allow(dead_code)]
 mod support;
 
+#[path = "commands/auth.rs"]
+mod auth;
 #[path = "commands/instance.rs"]
 mod instance;
 #[path = "commands/mcp_dashboard.rs"]
 mod mcp_dashboard;
 #[path = "commands/run.rs"]
 mod run;
+#[path = "commands/session.rs"]
+mod session;
+#[path = "commands/webhooks.rs"]
+mod webhooks;

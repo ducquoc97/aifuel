@@ -40,7 +40,7 @@ pub use execution::{
 pub use integration::{
     ApiKeySource, AuthBinding, CliAdapterId, CollectorId, CredentialRef, EndpointConfig,
     ExecutionConfig, Integration, IntegrationId, KeyDelivery, MonitoringConfig, OAuthProfileId,
-    ProviderId, SelectorMatch, WireApi, match_selector,
+    ProviderId, SelectorMatch, WireApi, cookie_header_value, match_selector,
 };
 pub use run_management::{
     DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS, MAX_ANSWER_BYTES_PER_RUN, MAX_COMPLETED_CONTENT,
@@ -135,6 +135,13 @@ struct ProviderMetadata {
     key: &'static str,
     name: &'static str,
 }
+
+/// The reserved `--provider` selector for automatic Provider routing:
+/// `aifuel run --provider auto` ranks the Discovered Providers by quota
+/// headroom and runs on the best one. It is never a literal Provider or
+/// Integration Identity - `providers.json` rejects it and selection
+/// resolves it before a real Integration is named.
+pub const AUTO_PROVIDER: &str = "auto";
 
 impl fmt::Display for ProviderKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -381,6 +388,17 @@ impl ProviderUsage {
             reset_credits: None,
         }
     }
+
+    /// The remaining allowance a ranking should trust: the authoritative
+    /// window's remaining percentage - collectors order windows
+    /// most-constrained first - or -1 when no window reported one.
+    pub fn effective_remaining(&self) -> f64 {
+        self.windows
+            .iter()
+            .filter_map(|window| window.remaining_percent)
+            .next()
+            .unwrap_or(-1.0)
+    }
 }
 
 #[cfg(test)]
@@ -412,6 +430,35 @@ mod tests {
         assert_eq!(
             failure.detail,
             "provider credential source could not be inspected"
+        );
+    }
+
+    #[test]
+    fn cookie_header_value_normalizes_the_documented_session_shapes() {
+        // OmniRoute's claude_web provider accepts either a bare sessionKey
+        // value or a copied Cookie header line; both must reach the wire as
+        // `name=value` cookie material, never duplicated.
+        assert_eq!(
+            cookie_header_value("sessionKey", "abc123"),
+            "sessionKey=abc123"
+        );
+        assert_eq!(
+            cookie_header_value("sessionKey", "  abc123  "),
+            "sessionKey=abc123"
+        );
+        assert_eq!(
+            cookie_header_value("sessionKey", "Cookie: sessionKey=abc123; other=v"),
+            "sessionKey=abc123; other=v"
+        );
+        assert_eq!(
+            cookie_header_value("sessionKey", "cookie:sessionKey=abc123"),
+            "sessionKey=abc123"
+        );
+        // Material that already pairs names and values passes through
+        // untouched - it is a copied header, not a token to name.
+        assert_eq!(
+            cookie_header_value("sessionKey", "sessionKey=abc123; a=b"),
+            "sessionKey=abc123; a=b"
         );
     }
 }

@@ -2,8 +2,9 @@
 //! requests against a configured endpoint, per
 //! `docs/specs/provider-integrations.md`.
 //!
-//! The P1 surface is `WireApi::OpenAiChat` only: one streamed
-//! chat-completions request per run. Honest limits of this path:
+//! The served surface is `WireApi::OpenAiChat` and
+//! `WireApi::AnthropicMessages`: one streamed request per run. Honest
+//! limits of this path:
 //!
 //! - AI Fuel executes no provider-side tools, so read-only access is
 //!   honestly enforceable and workspace-write access is never claimed.
@@ -13,20 +14,23 @@
 //!   reason, is a failure rather than a silent success; partial output is
 //!   preserved.
 
+mod anthropic_messages;
 mod capabilities;
 mod http;
 mod openai_chat;
+mod pool;
 pub(crate) mod sse;
 mod stream;
 
 use crate::integrations::InstanceDescriptor;
-use crate::{CredentialStore, ResolvedAuth};
+use crate::{ApiKeyState, CredentialStore, ResolvedAuth};
 use aifuel_core::{
     AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter, AgentRunError,
     AgentRunOutputHandler, AuthBinding, EndpointConfig, ExecutionConfig, ExecutionMode,
     Integration, IntegrationId, ProviderId, RunCancellationToken, RunRequest, RunResult, RunStatus,
     WireApi,
 };
+use pool::{KeyAttempt, merge_notes};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
@@ -43,11 +47,12 @@ const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// run deadline.
 const POLL_TICK: Duration = Duration::from_millis(50);
 
-/// Whether this build compiles an execution engine for `protocol`. P1
-/// serves `OpenAiChat` only; config validation rejects other protocols
-/// rather than registering an integration that can never execute.
+/// Whether this build compiles an execution engine for `protocol`. The
+/// served set is `OpenAiChat` and `AnthropicMessages`; config validation
+/// rejects other protocols rather than registering an integration that can
+/// never execute.
 pub fn serves(protocol: WireApi) -> bool {
-    matches!(protocol, WireApi::OpenAiChat)
+    matches!(protocol, WireApi::OpenAiChat | WireApi::AnthropicMessages)
 }
 
 /// The failures constructing a [`WireExecutionAdapter`] can report. None of
@@ -55,7 +60,7 @@ pub fn serves(protocol: WireApi) -> bool {
 #[derive(Debug)]
 pub enum WireAdapterError {
     /// The integration's execution configuration is not an
-    /// `ExecutionConfig::Http` binding for `WireApi::OpenAiChat`.
+    /// `ExecutionConfig::Http` binding for a served Wire Api.
     IncompatibleExecution(String),
     /// The endpoint or authentication configuration cannot produce a
     /// well-formed request: an unparseable base URL, a non-http(s) scheme,
@@ -89,19 +94,26 @@ impl std::error::Error for WireAdapterError {
 }
 
 /// An [`AgentExecutionAdapter`] serving one HTTP Provider Integration over
-/// an OpenAI-compatible Wire Api.
+/// a compiled Wire Api engine.
 ///
 /// One adapter is constructed per configured integration; it never falls
 /// back to another integration and never replays a request whose outcome is
-/// ambiguous. An adapter built by [`Self::for_instance`] serves the
-/// instance's selector id with the base integration's endpoint and a
-/// rebound Authentication Binding.
+/// ambiguous. Within an `AuthBinding::ApiKey` it rotates through the Key
+/// Pool: a `429` cools the key down (`Retry-After` honored, else a modest
+/// exponential step) and the request continues with the next healthy
+/// member, and a `401`/`403` marks the key invalid. Persisted health makes
+/// a cooled key survive restarts; a success clears the member's state.
+/// An adapter built by [`Self::for_instance`] serves the instance's
+/// selector id with the base integration's endpoint and a rebound
+/// Authentication Binding; the pool then rotates under the instance's own
+/// Credential Reference.
 pub struct WireExecutionAdapter {
     /// The id `integration()` reports and `request.integration` must equal:
     /// the instance's selector id for instance adapters, else the base.
     integration: IntegrationId,
     provider: ProviderId,
     endpoint: EndpointConfig,
+    protocol: WireApi,
     auth: AuthBinding,
     /// The identity the credential destination check runs under: the base
     /// integration for an inherited binding, the instance id when the
@@ -116,7 +128,9 @@ pub struct WireExecutionAdapter {
 }
 
 impl WireExecutionAdapter {
-    /// An adapter for one `WireApi::OpenAiChat` HTTP integration.
+    /// An adapter for one HTTP integration over a served [`WireApi`].
+    /// A protocol with no compiled engine is rejected rather than
+    /// approximated.
     ///
     /// `credentials` resolves the [`AuthBinding`] per run; it is a cheap
     /// handle rooted at the AI Fuel config directory, not retained
@@ -125,15 +139,23 @@ impl WireExecutionAdapter {
         integration: IntegrationId,
         provider: ProviderId,
         endpoint: EndpointConfig,
+        protocol: WireApi,
         auth: AuthBinding,
         credentials: CredentialStore,
     ) -> Result<Self, WireAdapterError> {
+        if !serves(protocol) {
+            return Err(WireAdapterError::IncompatibleExecution(format!(
+                "integration {integration} speaks wire protocol {protocol:?}, which has no \
+                 execution engine in this build"
+            )));
+        }
         http::validate_configuration(&endpoint, &auth)?;
         Ok(Self {
             auth_identity: integration.clone(),
             integration,
             provider,
             endpoint,
+            protocol,
             auth,
             instance: None,
             credentials,
@@ -154,9 +176,9 @@ impl WireExecutionAdapter {
         Ok(self.client.get_or_init(|| client))
     }
 
-    /// An adapter for the HTTP `openai_chat` execution configuration of one
-    /// Provider Integration. CLI integrations and other Wire Api protocols
-    /// are rejected rather than approximated.
+    /// An adapter for the HTTP execution configuration of one Provider
+    /// Integration. CLI integrations and Wire Api protocols with no
+    /// compiled engine are rejected rather than approximated.
     pub fn from_integration(
         integration: &Integration,
         credentials: CredentialStore,
@@ -164,22 +186,16 @@ impl WireExecutionAdapter {
         match &integration.execution {
             ExecutionConfig::Http {
                 endpoint,
-                protocol: WireApi::OpenAiChat,
+                protocol,
                 auth,
             } => Self::new(
                 integration.id.clone(),
                 integration.provider.clone(),
                 endpoint.clone(),
+                *protocol,
                 auth.clone(),
                 credentials,
             ),
-            ExecutionConfig::Http { protocol, .. } => {
-                Err(WireAdapterError::IncompatibleExecution(format!(
-                    "integration {} speaks wire protocol {protocol:?}, which the \
-                     openai_chat adapter does not serve",
-                    integration.id
-                )))
-            }
             ExecutionConfig::Cli { .. } => Err(WireAdapterError::IncompatibleExecution(format!(
                 "integration {} is a CLI integration; the provider CLI owns its \
                  credential and execution",
@@ -233,24 +249,22 @@ impl WireExecutionAdapter {
         // Credential resolution is blocking file I/O; this synchronous
         // caller context is a permitted place for it, and the resolved
         // material crosses into the async worker by value, not by reference
-        // to the store. Resolving for this integration enforces the
+        // to the store. Resolving for the auth identity enforces each
         // credential's recorded destination binding.
         //
         // An instance's env spec resolves here and nowhere else: a missing
         // Managed Credential fails the run before a request is built, and
-        // the overlay feeds `resolve_with_env` so an `api-key-env` binding
-        // reads the same variables the provider-facing configuration
-        // declared. The resolved values never leave this function's frame.
+        // the overlay feeds pool and session resolution so an env-sourced
+        // binding reads the same variables the provider-facing
+        // configuration declared. The resolved values never leave this
+        // function's frame.
         let env = match &self.instance {
             Some(instance) => instance
                 .resolve_env(&self.credentials)
                 .map_err(http::auth_error)?,
             None => BTreeMap::new(),
         };
-        let auth = self
-            .credentials
-            .resolve_with_env(&self.auth, &self.auth_identity, &env)
-            .map_err(http::auth_error)?;
+        let attempts = self.resolve_attempts(&env).map_err(http::auth_error)?;
         let request = request.clone();
         let cancellation = cancellation.clone();
         std::thread::scope(|scope| {
@@ -260,7 +274,12 @@ impl WireExecutionAdapter {
                     .enable_time()
                     .build()
                     .map_err(|error| AgentRunError::Io(io::Error::other(error)))?;
-                runtime.block_on(self.execute_async(&request, &cancellation, output_handler, auth))
+                runtime.block_on(self.execute_async(
+                    &request,
+                    &cancellation,
+                    output_handler,
+                    attempts,
+                ))
             });
             worker.join().map_err(|_| {
                 AgentRunError::InvalidRequest("wire execution worker panicked".to_owned())
@@ -268,33 +287,28 @@ impl WireExecutionAdapter {
         })
     }
 
-    async fn execute_async(
+    /// Send the request once with `auth` and return the endpoint's
+    /// response, whatever its status. The send outcome is never retried on
+    /// ambiguity - the request may already have reached the endpoint and
+    /// been billed - and cancellation, the run deadline, and the configured
+    /// request timeout are polled while the send is in flight.
+    async fn request_response(
         &self,
-        request: &RunRequest,
+        prepared: &PreparedRequest,
+        deadline: Option<Instant>,
+        send_timeout: Option<Duration>,
         cancellation: &RunCancellationToken,
-        output_handler: Option<&dyn AgentRunOutputHandler>,
-        auth: ResolvedAuth,
-    ) -> Result<RunResult, AgentRunError> {
-        let started_at = Instant::now();
-        let deadline = request.timeout.map(|timeout| started_at + timeout);
-        let url = openai_chat::completions_url(&self.endpoint.base_url);
-        let headers = openai_chat::request_headers(&self.endpoint, &auth)?;
-        let model = request.model.as_deref().expect("validate requires a model");
-        let body = openai_chat::request_body(model, &request.prompt);
-        let send_timeout = self
-            .endpoint
-            .request_timeout_seconds
-            .map(Duration::from_secs);
-
+    ) -> Result<reqwest::Response, AgentRunError> {
         let send = self
             .client()?
-            .post(&url)
-            .headers(headers)
-            .json(&body)
+            .post(&prepared.url)
+            .headers(prepared.headers.clone())
+            .json(&prepared.body)
             .send();
         let mut send = std::pin::pin!(send);
+        let attempt_started = Instant::now();
         let mut ticks = tokio::time::interval(POLL_TICK);
-        let mut response = loop {
+        loop {
             let mut outcome = None;
             tokio::select! {
                 result = &mut send => outcome = Some(result),
@@ -308,7 +322,7 @@ impl WireExecutionAdapter {
                         ));
                     }
                     if let Some(timeout) = send_timeout
-                        && started_at.elapsed() >= timeout
+                        && attempt_started.elapsed() >= timeout
                     {
                         return Err(AgentRunError::Timeout(format!(
                             "the endpoint did not respond within the configured {}s request timeout",
@@ -317,13 +331,88 @@ impl WireExecutionAdapter {
                     }
                 }
             }
-            // The send outcome is not retried on ambiguity: the request may
-            // already have reached the endpoint and been billed.
             if let Some(result) = outcome {
-                break result.map_err(|error| AgentRunError::Io(io::Error::other(error)))?;
+                return result.map_err(|error| AgentRunError::Io(io::Error::other(error)));
             }
+        }
+    }
+
+    async fn execute_async(
+        &self,
+        request: &RunRequest,
+        cancellation: &RunCancellationToken,
+        output_handler: Option<&dyn AgentRunOutputHandler>,
+        mut attempts: Vec<KeyAttempt>,
+    ) -> Result<RunResult, AgentRunError> {
+        let started_at = Instant::now();
+        let deadline = request.timeout.map(|timeout| started_at + timeout);
+        let model = request.model.as_deref().expect("validate requires a model");
+        let send_timeout = self
+            .endpoint
+            .request_timeout_seconds
+            .map(Duration::from_secs);
+
+        // Pool bookkeeping that outlives one attempt: rotation notes join
+        // the run's diagnostics so `aifuel run` output reports that a
+        // credential was rotated and why.
+        let mut pool_notes: Vec<String> = Vec::new();
+
+        let (mut response, index, prepared) = loop {
+            let Some(index) = attempts.iter().position(KeyAttempt::usable) else {
+                // Every member cooled or went invalid before this run (the
+                // state persists across restarts): sending would just earn
+                // another 429, so the run fails fast instead.
+                return Err(AgentRunError::InvalidRequest(
+                    self.pool_exhausted_message(&attempts),
+                ));
+            };
+            attempts[index].attempted = true;
+            // Each pooled key carries its own resolved material, so the
+            // request is prepared per attempt: headers embed that key.
+            // Credential material that cannot form a valid header can never
+            // authenticate; skip it like a rejection rather than blocking
+            // healthier pool members.
+            let prepared = match PreparedRequest::for_protocol(
+                self.protocol,
+                &self.endpoint,
+                &attempts[index].auth,
+                model,
+                &request.prompt,
+            ) {
+                Ok(prepared) => prepared,
+                Err(AgentRunError::InvalidRequest(reason)) => {
+                    pool_notes.push(format!("a pooled credential was unusable: {reason}"));
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let response = match self
+                .request_response(&prepared, deadline, send_timeout, cancellation)
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => return Err(error),
+            };
+            let status = response.status();
+            if matches!(status.as_u16(), 401 | 403 | 429) {
+                self.record_key_failure(
+                    &attempts[index],
+                    status.as_u16(),
+                    response.headers(),
+                    &mut pool_notes,
+                );
+                if attempts.iter().any(KeyAttempt::usable) {
+                    pool_notes.push(format!(
+                        "the endpoint answered HTTP {status} for a pooled key; \
+                         the run rotated to the next healthy key"
+                    ));
+                    continue;
+                }
+            }
+            break (response, index, prepared);
         };
 
+        let auth = &attempts[index].auth;
         if !response.status().is_success() {
             let status = response.status();
             // Endpoint error bodies reach run diagnostics only after
@@ -331,7 +420,16 @@ impl WireExecutionAdapter {
             // the Authorization header back into its own error body.
             let diagnostics = read_bounded_body(&mut response)
                 .await
-                .map(|body| http::redact(body, &auth));
+                .map(|body| http::redact(body, auth));
+            // HTTP 402 (payment/quota) and 429 (rate limit) are
+            // provider-reported allowance exhaustion, an explicit signal
+            // the run failed on the Quota Pool rather than the request. A
+            // pooled run that rotated past every member still ends on the
+            // last response, so the flag reflects the final answer.
+            let quota_exhausted = matches!(status.as_u16(), 402 | 429)
+                || diagnostics
+                    .as_deref()
+                    .is_some_and(|body| body.contains("insufficient_quota"));
             return Ok(self.build_result(
                 request,
                 RunStatus::Failed,
@@ -339,13 +437,26 @@ impl WireExecutionAdapter {
                 String::new(),
                 None,
                 Some(format!("the endpoint returned HTTP {status}")),
-                diagnostics,
+                merge_notes(diagnostics, pool_notes),
                 None,
+                quota_exhausted,
+            ));
+        }
+
+        // A success is fresher evidence than any recorded failure state:
+        // clear it so the member resumes full pool duty.
+        if let Some(reference) = &attempts[index].reference
+            && attempts[index].state != ApiKeyState::default()
+            && let Err(error) = self.credentials.clear_key_state(reference)
+        {
+            pool_notes.push(format!(
+                "the failure state of credential {reference} could not be cleared: {error}"
             ));
         }
 
         let outcome = drive_stream(
             &mut response,
+            prepared.classify,
             deadline,
             STREAM_IDLE_TIMEOUT,
             POLL_TICK,
@@ -367,7 +478,7 @@ impl WireExecutionAdapter {
             StreamEnd::Failed(message) => (
                 RunStatus::Failed,
                 false,
-                Some(http::redact(message.clone(), &auth)),
+                Some(http::redact(message.clone(), auth)),
             ),
             StreamEnd::Cancelled => (
                 RunStatus::Cancelled,
@@ -390,8 +501,9 @@ impl WireExecutionAdapter {
             outcome.output,
             outcome.model,
             error,
-            diagnostics,
+            merge_notes(diagnostics, pool_notes),
             outcome.usage,
+            false,
         ))
     }
 
@@ -406,6 +518,7 @@ impl WireExecutionAdapter {
         error: Option<String>,
         diagnostics: Option<String>,
         usage: Option<aifuel_core::TokenUsage>,
+        quota_exhausted: bool,
     ) -> RunResult {
         let run_id = format!(
             "run-{}-{}",
@@ -442,11 +555,50 @@ impl WireExecutionAdapter {
             diagnostics,
             usage,
             timed_out,
+            quota_exhausted,
             working_directory: request
                 .working_directory
                 .clone()
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
         }
+    }
+}
+
+/// The pieces of one run's request a served Wire Api supplies: where to
+/// send it, the headers and JSON body, and the event classifier the stream
+/// driver applies. Construction is the single dispatch point so the run
+/// path below reads protocol-agnostic.
+struct PreparedRequest {
+    url: String,
+    headers: reqwest::header::HeaderMap,
+    body: serde_json::Value,
+    classify: stream::Classifier,
+}
+
+impl PreparedRequest {
+    fn for_protocol(
+        protocol: WireApi,
+        endpoint: &EndpointConfig,
+        auth: &ResolvedAuth,
+        model: &str,
+        prompt: &str,
+    ) -> Result<Self, AgentRunError> {
+        Ok(match protocol {
+            WireApi::OpenAiChat => Self {
+                url: openai_chat::completions_url(&endpoint.base_url),
+                headers: openai_chat::request_headers(endpoint, auth)?,
+                body: openai_chat::request_body(model, prompt),
+                classify: openai_chat::classify_event,
+            },
+            WireApi::AnthropicMessages => Self {
+                url: anthropic_messages::messages_url(&endpoint.base_url),
+                headers: anthropic_messages::request_headers(endpoint, auth)?,
+                body: anthropic_messages::request_body(model, prompt),
+                classify: anthropic_messages::classify_event,
+            },
+            // Construction (`serves`) guarantees a served protocol.
+            other => unreachable!("wire adapter built for unserved protocol {other:?}"),
+        })
     }
 }
 

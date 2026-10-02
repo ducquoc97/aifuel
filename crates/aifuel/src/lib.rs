@@ -1,4 +1,5 @@
 pub mod auth_cli;
+pub mod connect;
 pub mod instance_cli;
 pub mod launcher;
 pub mod mcp_catalog;
@@ -9,7 +10,9 @@ pub mod run_cli;
 mod run_selection;
 pub mod selection_cli;
 
-use aifuel_app::{AgentMcpSetupFacade, AgentRunFacade, McpGatewayFacade, MonitoringFacade};
+use aifuel_app::{
+    AgentMcpSetupFacade, AgentRunFacade, McpGatewayFacade, MonitoringFacade, WebhookNotifier,
+};
 use aifuel_core::{
     AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter, AgentIntegrationInfo,
     AgentRunError, AgentRunOutputHandler, AgentSetupGuidance, ExecutionConfig, IntegrationId,
@@ -42,7 +45,15 @@ pub fn monitoring_facade() -> Result<MonitoringFacade<ProviderMonitoring>, Strin
             monitoring = monitoring.with_registry_error(error);
         }
     }
-    Ok(MonitoringFacade::new(monitoring))
+    let facade = MonitoringFacade::new(monitoring);
+    // A malformed webhooks.json is reported but never blocks collection.
+    match WebhookNotifier::load(&aifuel_config_dir()?) {
+        Ok(notifier) => Ok(facade.with_notifier(notifier)),
+        Err(error) => {
+            eprintln!("aifuel: webhook configuration ignored: {error}");
+            Ok(facade)
+        }
+    }
 }
 
 /// Compose the shared Agent Run facade over the runtime Integration set.
@@ -102,7 +113,14 @@ fn runtime_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
                 };
                 adapters.push(Arc::new(StaticAdapter(*compiled)));
             }
-            ExecutionConfig::Http { .. } => {
+            ExecutionConfig::Http { protocol, .. } => {
+                // A `*:web` session integration declares a protocol no
+                // engine serves as monitoring evidence; it stays a valid
+                // registry entry for listing and auth and simply has no
+                // adapter on this execution surface.
+                if !aifuel_providers::wire_serves(*protocol) {
+                    continue;
+                }
                 match aifuel_providers::WireExecutionAdapter::from_integration(
                     &descriptor.integration,
                     credentials.clone(),
@@ -357,7 +375,12 @@ fn execution_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
                     ),
                 }
             }
-            ExecutionConfig::Http { .. } => {
+            ExecutionConfig::Http { protocol, .. } => {
+                // See `runtime_adapters`: a monitoring-only `*:web`
+                // integration has no execution adapter by design.
+                if !aifuel_providers::wire_serves(*protocol) {
+                    continue;
+                }
                 match aifuel_providers::WireExecutionAdapter::from_integration(
                     &descriptor.integration,
                     credentials.clone(),

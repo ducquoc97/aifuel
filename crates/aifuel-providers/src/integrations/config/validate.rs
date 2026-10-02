@@ -40,6 +40,20 @@ pub(super) fn build_descriptor(
     if entry.provider_id.trim().is_empty() {
         return Err(invalid("provider_id must not be empty".to_owned()));
     }
+    // `auto` is the reserved `--provider` alias for automatic routing; a
+    // literal integration or provider named `auto` would shadow it.
+    if entry.id.trim() == aifuel_core::AUTO_PROVIDER {
+        return Err(invalid(format!(
+            "integration id '{}' is reserved for automatic Provider routing",
+            aifuel_core::AUTO_PROVIDER
+        )));
+    }
+    if entry.provider_id.trim() == aifuel_core::AUTO_PROVIDER {
+        return Err(invalid(format!(
+            "provider_id '{}' is reserved for automatic Provider routing",
+            aifuel_core::AUTO_PROVIDER
+        )));
+    }
 
     let monitoring = entry
         .monitoring
@@ -92,7 +106,7 @@ pub(super) fn build_descriptor(
         };
         if !crate::wire::serves(protocol) {
             return Err(invalid(format!(
-                "wire_api '{wire_api}' names a compiled protocol with no execution engine in this build; serveable: openai-chat"
+                "wire_api '{wire_api}' names a compiled protocol with no execution engine in this build; serveable: openai-chat, anthropic-messages"
             )));
         }
         let auth = entry
@@ -172,11 +186,11 @@ fn validate_monitoring(
     if monitoring.collector.trim().is_empty() {
         return Err(invalid("monitoring.collector must not be empty".to_owned()));
     }
-    if monitoring.collector != crate::openrouter::OPENROUTER_KEY_COLLECTOR {
+    if !crate::quota::compiled_collector_ids().contains(&monitoring.collector.as_str()) {
         return Err(invalid(format!(
             "monitoring.collector '{}' names no compiled collector; known values: {}",
             monitoring.collector,
-            crate::openrouter::OPENROUTER_KEY_COLLECTOR
+            crate::quota::compiled_collector_ids().join(", ")
         )));
     }
     let credential = monitoring
@@ -359,6 +373,7 @@ fn managed_auth_header(auth: &AuthBinding) -> Option<&str> {
         AuthBinding::ApiKey { delivery, .. } => Some(match delivery {
             KeyDelivery::Bearer => "authorization",
             KeyDelivery::Header { name } => name.as_str(),
+            KeyDelivery::Cookie { .. } => "cookie",
         }),
         AuthBinding::OAuth { .. } => Some("authorization"),
     }

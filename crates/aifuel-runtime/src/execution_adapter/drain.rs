@@ -131,6 +131,12 @@ impl RuntimeExecutionAdapter {
                     drain.usage = usage;
                     break Ok(drain.finish(cancel_requested, timed_out(), Some(outcome)));
                 }
+                QuotaObserved { quota, .. } if quota.depleted => {
+                    // A provider-announced depleted Quota Pool is
+                    // exhaustion evidence the terminal outcome may not
+                    // repeat; the result keeps it for routing decisions.
+                    drain.quota_exhausted = true;
+                }
                 SessionClosed { reason } => {
                     if let Some(reason) = reason {
                         drain
@@ -196,6 +202,8 @@ pub(super) struct Drain {
     pub(super) usage: Option<TokenUsage>,
     /// The non-retryable run-scoped error the run ended on, when one exists.
     pub(super) fatal: Option<String>,
+    /// A `quota.observed` fact reported the pool depleted during the run.
+    pub(super) quota_exhausted: bool,
     pub(super) terminal: Terminal,
 }
 

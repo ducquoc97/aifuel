@@ -1,4 +1,5 @@
-use crate::wire::openai_chat::{DataVerdict, classify_event, completions_url, request_body};
+use crate::wire::openai_chat::{classify_event, completions_url, request_body};
+use crate::wire::stream::DataVerdict;
 
 fn delta(text: &str) -> String {
     serde_json::json!({"choices": [{"index": 0, "delta": {"content": text}}]}).to_string()

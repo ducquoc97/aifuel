@@ -1,4 +1,4 @@
-use crate::wire::openai_chat::request_headers;
+use crate::wire::openai_chat::{self, request_headers};
 use crate::wire::stream::{ChunkStream, StreamEnd, drive_stream};
 use crate::wire::{WireAdapterError, WireExecutionAdapter};
 use crate::{CredentialStore, ResolvedAuth};
@@ -94,6 +94,7 @@ fn adapter() -> WireExecutionAdapter {
         IntegrationId::new("ollama-local"),
         ProviderId::new("ollama"),
         endpoint(),
+        WireApi::OpenAiChat,
         AuthBinding::None,
         // AuthBinding::None never touches the store; the path only has to
         // exist syntactically for construction.
@@ -204,6 +205,7 @@ fn execute_rejects_before_reaching_transport() {
             base_url: "http://192.0.0.1:1/".to_owned(),
             ..endpoint()
         },
+        WireApi::OpenAiChat,
         AuthBinding::None,
         CredentialStore::new(std::env::temp_dir()),
     )
@@ -237,6 +239,7 @@ fn construction_rejects_unusable_endpoints() {
                     base_url: base_url.to_owned(),
                     ..endpoint()
                 },
+                WireApi::OpenAiChat,
                 AuthBinding::None,
                 CredentialStore::new(std::env::temp_dir()),
             ),
@@ -246,14 +249,17 @@ fn construction_rejects_unusable_endpoints() {
 }
 
 #[test]
-fn from_integration_serves_only_openai_chat_http() {
+fn from_integration_serves_only_protocols_with_a_compiled_engine() {
+    // OpenAiChat and AnthropicMessages have engines; OpenAiResponses is a
+    // compiled enum variant with none, and a CLI integration is a different
+    // execution contract entirely. Both are rejected, never approximated.
     let mut integration = Integration {
         id: IntegrationId::new("work"),
         provider: ProviderId::new("anthropic"),
         name: "work".to_owned(),
         execution: ExecutionConfig::Http {
             endpoint: endpoint(),
-            protocol: WireApi::AnthropicMessages,
+            protocol: WireApi::OpenAiResponses,
             auth: AuthBinding::None,
         },
         monitoring: None,
@@ -270,14 +276,31 @@ fn from_integration_serves_only_openai_chat_http() {
         WireExecutionAdapter::from_integration(&integration, credentials.clone()),
         Err(WireAdapterError::IncompatibleExecution(_))
     ));
-    integration.execution = ExecutionConfig::Http {
-        endpoint: endpoint(),
-        protocol: WireApi::OpenAiChat,
-        auth: AuthBinding::None,
-    };
-    let adapter = WireExecutionAdapter::from_integration(&integration, credentials)
-        .expect("openai_chat integrations are served");
-    assert_eq!(adapter.integration(), IntegrationId::new("work"));
+    for protocol in [WireApi::OpenAiChat, WireApi::AnthropicMessages] {
+        integration.execution = ExecutionConfig::Http {
+            endpoint: endpoint(),
+            protocol,
+            auth: AuthBinding::None,
+        };
+        let adapter = WireExecutionAdapter::from_integration(&integration, credentials.clone())
+            .unwrap_or_else(|error| panic!("{protocol:?} integrations are served: {error}"));
+        assert_eq!(adapter.integration(), IntegrationId::new("work"));
+    }
+}
+
+#[test]
+fn new_rejects_a_protocol_without_a_compiled_engine() {
+    assert!(matches!(
+        WireExecutionAdapter::new(
+            IntegrationId::new("x"),
+            ProviderId::new("x"),
+            endpoint(),
+            WireApi::OpenAiResponses,
+            AuthBinding::None,
+            CredentialStore::new(std::env::temp_dir()),
+        ),
+        Err(WireAdapterError::IncompatibleExecution(_))
+    ));
 }
 
 #[test]
@@ -311,6 +334,54 @@ fn api_key_header_delivery_uses_the_named_header() {
 }
 
 #[test]
+fn cookie_delivery_sends_the_normalized_cookie_header() {
+    // A session credential travels as the Cookie header, never
+    // Authorization: a bare token is named `name=value`, and a pasted
+    // Cookie header line passes through as its value.
+    for (material, expected) in [
+        ("abc123", "sessionKey=abc123"),
+        ("Cookie: sessionKey=abc123; a=b", "sessionKey=abc123; a=b"),
+    ] {
+        let auth = ResolvedAuth::ApiKey {
+            key: material.to_owned(),
+            delivery: KeyDelivery::Cookie {
+                name: "sessionKey".to_owned(),
+            },
+        };
+        let headers = request_headers(&endpoint(), &auth).unwrap();
+        assert_eq!(headers[reqwest::header::COOKIE], expected);
+        assert!(
+            !headers.contains_key(AUTHORIZATION),
+            "session material must never become a Bearer token"
+        );
+    }
+}
+
+#[test]
+fn configuration_validation_rejects_a_malformed_cookie_name() {
+    // The delivery name heads `name=value` at send time; a config-declared
+    // name that cannot is a construction error, not a run-time surprise.
+    assert!(matches!(
+        WireExecutionAdapter::new(
+            IntegrationId::new("x"),
+            ProviderId::new("x"),
+            endpoint(),
+            WireApi::OpenAiChat,
+            AuthBinding::ApiKey {
+                source: aifuel_core::ApiKeySource::Env {
+                    var: "V".to_owned(),
+                },
+                delivery: KeyDelivery::Cookie {
+                    name: "not a name;".to_owned(),
+                },
+            },
+            CredentialStore::new(std::env::temp_dir()),
+        ),
+        Err(WireAdapterError::InvalidConfiguration(_))
+    ));
+}
+
+#[test]
 fn oauth_resolution_applies_a_bearer_token() {
     let auth = ResolvedAuth::OAuth {
         access_token: "tok".to_owned(),
@@ -337,6 +408,7 @@ async fn deltas_stream_to_the_owner_and_terminal_completes() {
     let handler = CollectingHandler::default();
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_secs(60),
         Duration::from_millis(10),
@@ -366,6 +438,7 @@ async fn usage_chunk_after_finish_reason_still_lands_on_the_outcome() {
     ]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_secs(60),
         Duration::from_millis(10),
@@ -396,6 +469,7 @@ async fn eof_after_a_finish_reason_is_completed_not_truncated() {
     ]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_secs(60),
         Duration::from_millis(10),
@@ -417,6 +491,7 @@ async fn mid_stream_eof_fails_and_preserves_partial_output() {
     ]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_secs(60),
         Duration::from_millis(10),
@@ -439,6 +514,7 @@ async fn transport_error_fails_without_replaying() {
     ]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_secs(60),
         Duration::from_millis(10),
@@ -458,6 +534,7 @@ async fn provider_error_payload_fails_the_stream() {
     ))]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_secs(60),
         Duration::from_millis(10),
@@ -475,6 +552,7 @@ async fn cancellation_wins_over_a_hung_stream() {
     let mut stream = ScriptedStream::new([FakeChunk::Pending]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_secs(60),
         Duration::from_millis(10),
@@ -491,6 +569,7 @@ async fn run_deadline_ends_a_hung_stream() {
     let mut stream = ScriptedStream::new([FakeChunk::Pending]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         Some(deadline),
         Duration::from_secs(60),
         Duration::from_millis(10),
@@ -508,6 +587,7 @@ async fn idle_timeout_ends_a_silent_stream() {
     let mut stream = ScriptedStream::new([FakeChunk::Pending]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_millis(60),
         Duration::from_millis(10),
@@ -528,6 +608,7 @@ async fn the_model_observed_on_the_wire_is_reported() {
     ]);
     let outcome = drive_stream(
         &mut stream,
+        openai_chat::classify_event,
         None,
         Duration::from_secs(60),
         Duration::from_millis(10),

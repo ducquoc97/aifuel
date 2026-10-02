@@ -1,5 +1,65 @@
 use aifuel_core::{CapabilityState, CatalogPlatformStatus, CatalogProviderStatus};
 
+/// Free-tier capability notes per catalog provider id, ported from
+/// OmniRoute's audited provider catalog (`release/v3.8.52`, MIT licensed):
+/// the `hasFree`/`freeNote` fields in `src/shared/constants/providers/**`
+/// and `docs/reference/FREE_TIERS.md`. Membership means the provider
+/// documents a free tier usable through an API-key or native credential;
+/// absence means none is documented, not a guarantee none exists.
+const FREE_TIER_NOTES: &[(&str, &str)] = &[
+    (
+        "gemini",
+        "Free tier through Google AI Studio; per-model quotas apply",
+    ),
+    (
+        "openrouter",
+        "Free models at $0/token with :free suffix - 20 RPM / 200 RPD",
+    ),
+    (
+        "groq",
+        "Free plan: per-model caps of 200K tokens/day per chat model",
+    ),
+    (
+        "mistral",
+        "Free Experiment tier: rate-limited access to all models, no card required",
+    ),
+    (
+        "deepseek",
+        "5M free tokens on signup (one-time, no card required)",
+    ),
+    (
+        "fireworks",
+        "$1 free starter credits on signup for API testing",
+    ),
+    (
+        "cerebras",
+        "One-time $5 signup credit (30-day validity); a payment method is required",
+    ),
+    (
+        "cohere",
+        "Free Trial: 1,000 API calls/month for testing, no card required",
+    ),
+    (
+        "siliconflow",
+        "$1 free credits plus permanently free $0 models",
+    ),
+    ("nvidia", "Free dev access: ~40 RPM, 70+ models"),
+    ("huggingface", "Free inference credits (~$0.10/month cap)"),
+    (
+        "deepinfra",
+        "Free signup credits for API testing and model exploration",
+    ),
+];
+
+/// The free-tier note recorded for a catalog provider id, when the imported
+/// catalog data documents one.
+pub fn free_tier_note(provider: &str) -> Option<&'static str> {
+    FREE_TIER_NOTES
+        .iter()
+        .find(|(id, _)| *id == provider)
+        .map(|(_, note)| *note)
+}
+
 pub const PINNED_PROVIDER_IDS: &[&str] = &[
     "codex",
     "openai",
@@ -70,6 +130,13 @@ pub const PINNED_PROVIDER_IDS: &[&str] = &[
     "xai",
     "notion",
     "ibmbob",
+    "cerebras",
+    "cohere",
+    "huggingface",
+    "nvidia",
+    "siliconflow",
+    "together",
+    "anthropic",
 ];
 
 pub(crate) fn statuses() -> Vec<CatalogProviderStatus> {
@@ -107,6 +174,7 @@ pub(crate) fn statuses() -> Vec<CatalogProviderStatus> {
                     },
                 })
                 .collect();
+            let free_note = free_tier_note(id).map(str::to_owned);
             CatalogProviderStatus {
                 id: (*id).to_owned(),
                 monitoring,
@@ -117,6 +185,8 @@ pub(crate) fn statuses() -> Vec<CatalogProviderStatus> {
                     "Pinned provider inventory only; no Rust adapter".to_owned()
                 },
                 platforms,
+                has_free: free_note.is_some(),
+                free_note,
             }
         })
         .collect()
@@ -128,8 +198,8 @@ mod tests {
 
     #[test]
     fn pinned_catalog_preserves_all_provider_ids() {
-        assert_eq!(PINNED_PROVIDER_IDS.len(), 69);
+        assert_eq!(PINNED_PROVIDER_IDS.len(), 76);
         assert_eq!(PINNED_PROVIDER_IDS.first(), Some(&"codex"));
-        assert_eq!(PINNED_PROVIDER_IDS.last(), Some(&"ibmbob"));
+        assert_eq!(PINNED_PROVIDER_IDS.last(), Some(&"anthropic"));
     }
 }

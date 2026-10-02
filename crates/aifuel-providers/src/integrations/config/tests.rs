@@ -247,6 +247,27 @@ fn validation_rejects_bad_inputs_at_the_load_boundary() {
 }
 
 #[test]
+fn auto_is_reserved_for_routing_not_a_configured_identity() {
+    // `--provider auto` is the routing alias; a configured integration or
+    // provider_id named `auto` would shadow it, so both are rejected.
+    let dir = TestDir::new();
+    for entry in [
+        r#"{"id": "auto", "provider_id": "p", "endpoint": {"base_url": "http://x"}, "wire_api": "openai-chat", "auth": {"kind": "none"}}"#,
+        r#"{"id": "i", "provider_id": "auto", "endpoint": {"base_url": "http://x"}, "wire_api": "openai-chat", "auth": {"kind": "none"}}"#,
+    ] {
+        let path = dir.write(&format!(
+            r#"{{"schema_version": 1, "integrations": [{entry}]}}"#
+        ));
+        let config = ProvidersConfig::load(path).expect("file is well-formed");
+        let reason = invalid_reason(&config.entries()[0]);
+        assert!(
+            reason.contains("reserved for automatic Provider routing"),
+            "got {reason:?}"
+        );
+    }
+}
+
+#[test]
 fn custom_headers_cannot_override_managed_auth_headers() {
     // Authorization is what a bearer delivery applies; letting config
     // set it too would let a header smuggle a different credential than
@@ -329,7 +350,13 @@ fn instance_entries_decode_alongside_integrations() {
     assert!(config.entries().is_empty());
     let instances = config.instances();
     assert_eq!(instances.len(), 2);
-    let work = instances[0].as_ref().expect("work instance is valid");
+    // `instances` stores the map as a `BTreeMap`, so entries surface in
+    // sorted id order: personal before work.
+    let personal = instances[0].as_ref().expect("personal instance is valid");
+    assert_eq!(personal.id.as_str(), "claude.personal");
+    assert!(personal.env.is_empty());
+    assert!(personal.credential.is_none());
+    let work = instances[1].as_ref().expect("work instance is valid");
     assert_eq!(work.id.as_str(), "claude.work");
     assert_eq!(
         work.env["ANTHROPIC_API_KEY"],
@@ -337,9 +364,6 @@ fn instance_entries_decode_alongside_integrations() {
             "work-key"
         ))
     );
-    let personal = instances[1].as_ref().expect("personal instance is valid");
-    assert!(personal.env.is_empty());
-    assert!(personal.credential.is_none());
 }
 
 #[test]

@@ -38,17 +38,18 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | Command | What you get |
 |---|---|
 | `aifuel` | **Web dashboard** at `http://127.0.0.1:8787` (opens a browser; optional auto-refresh) |
-| `aifuel --no-browser` | Dashboard without opening a browser; `--host`/`--port` change the bind |
+| `aifuel --no-browser` | Dashboard without opening a browser; `--host`/`--port` change the bind (a non-loopback `--host` also exposes the Connect form's key submission to clients that can reach the port) |
 | `aifuel --text` | Compact **colored terminal** summary (great over SSH) |
 | `aifuel --json` | **Normalized JSON** for scripts, status bars, and piping |
 | `aifuel run --provider ID --prompt "..."` | One explicit prompt through an installed provider CLI |
+| `aifuel run --provider auto --prompt "..."` | Route the prompt to the discovered provider with the most quota headroom, then to keyed API-key integrations |
 | `aifuel profile list\|save\|remove` | Named defaults for `run` (provider, model, effort, access, timeout) |
 | `aifuel model list\|refresh` | Cached provider model catalog, refreshed on demand |
-| `aifuel auth list\|set-key\|remove` | Stored API keys for API-key integrations |
+| `aifuel auth list\|set-key\|set-session\|remove` | Stored API keys for API-key integrations and browser-session credentials for `*:web` integrations (also via the dashboard's Connect section); repeated `set-key` builds a key pool that rotates past rate limits |
 | `aifuel approve --run ID --input ID --decision accept\|decline\|cancel` | Answer a pending permission request for a local run |
-| `aifuel mcp` | Read-only MCP status server over stdio |
-| `aifuel mcp execution` | MCP server that manages Agent Runs over stdio |
-| `aifuel mcp gateway --agent HOST` | Selected external MCP servers, served to one agent |
+| `aifuel mcp [--http [--host H] [--port P]]` | Read-only MCP status server over stdio, or streamable HTTP |
+| `aifuel mcp execution [--http [--host H] [--port P]]` | MCP server that manages Agent Runs over stdio, or streamable HTTP |
+| `aifuel mcp gateway --agent HOST [--tool T ...] [--http [--host H] [--port P]]` | Selected external MCP servers, served to one agent |
 | `aifuel mcp setup --agent HOST [--dry-run] [--remove]` | Apply or remove the gateway entry in an agent's own config |
 | `aifuel mcp servers ...` | Manage the gateway's external server catalog |
 | `aifuel runtime` | JSON-RPC stdio bridge for embedding agent runs in a host process |
@@ -66,7 +67,9 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | Antigravity CLI | **live** | Code Assist OAuth token |
 | Devin CLI | **live** | `credentials.toml` key |
 
-`live` = pulled from the provider's own API; a provider that cannot return live usage shows as an error, never a guess. A pinned catalog covers 69 provider IDs - catalog-only entries report as unsupported.
+`live` = pulled from the provider's own API; a provider that cannot return live usage shows as an error, never a guess. API-key integrations for OpenRouter (`/key` credits), Z.AI (coding-plan quota windows), DeepSeek, and SiliconFlow (account balance) also report live when their key is set. A pinned catalog covers 76 provider IDs and flags documented free tiers (`has_free`/`free_note` in `--json`, `free:` in `aifuel auth list`) - catalog-only entries report as unsupported.
+
+The `claude-web:web` integration monitors a claude.ai browser session - the `five_hour`, `seven_day`, and per-model usage windows - through a session credential you paste yourself: `aifuel auth set-session claude-web:web --stdin` accepts a bare session token or a copied `Cookie` header line (sent as `Cookie`, never a Bearer token), or export `CLAUDE_WEB_SESSION`. It never executes prompts, so it never appears in `run --provider auto`; nothing reads a browser profile or an OS keyring.
 
 ## Running prompts
 
@@ -74,7 +77,7 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 aifuel run --provider codex --model gpt-5-codex --prompt "Explain Rust ownership"
 ```
 
-Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, `openai:api-key`, `openrouter:api-key`. Options:
+Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, and the API-key integrations `openai:api-key`, `openrouter:api-key`, `anthropic:api-key`, `cerebras:api-key`, `cohere:api-key`, `deepinfra:api-key`, `deepseek:api-key`, `fireworks:api-key`, `groq:api-key`, `huggingface:api-key`, `mistral:api-key`, `moonshot:api-key`, `nvidia:api-key`, `perplexity:api-key`, `siliconflow:api-key`, `together:api-key`, `xai:api-key`, `zai:api-key`. Each `*:api-key` reads its provider's conventional env var (for example `GROQ_API_KEY` or `ANTHROPIC_API_KEY`; Hugging Face uses `HF_TOKEN`) or a key stored with `aifuel auth set-key`. `anthropic:api-key` speaks the Anthropic Messages API (`x-api-key` auth); the rest are OpenAI-compatible. The `claude-web:web` integration binds a pasted browser session for monitoring only - it is not a run target. Options:
 
 - `--prompt TEXT` / `--prompt-file PATH` - or omit both to pipe the prompt on stdin
 - `--model ID` / `--effort LEVEL` - explicit model and effort
@@ -87,13 +90,15 @@ Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex
 - `--output text|json|jsonl` - result format (default: text)
 - `--timeout 30s|10m|1h` - optional deadline; `0` means none
 
+`--provider auto` is a reserved routing alias, never a literal provider id: `auto` ranks the discovered providers by the same quota evidence `aifuel status` shows (most remaining allowance first, soonest reset breaks ties), then any `*:api-key` integration whose credential is present (declared env var or a stored managed credential - providers with a documented free tier ahead of paid keys), and providers with exhausted or unmeasured quota last. It runs the prompt on the best one and starts a new run on the next candidate only when the previous attempt failed before execution - a missing integration, a launch/request error, or provider-reported quota exhaustion. A timeout or a mid-run failure ends the chain. `--model` narrows the candidates to providers whose cached catalog advertises that model (API-key integrations carry no catalog advertisement), and `--resume` pins `auto` to the session's owning provider without fallback. The `json`/`jsonl` result carries a `routing` object listing the ranked candidates - each with its `basis` (`quota`, `free_tier`, `api_key`, or `session`) and, for quota candidates, the measured `remaining_percent` - and every attempt's provider, outcome, and reason.
+
 Exit codes: `0` succeeded, `2` request or launch error, `3` provider has no verified agent integration, `4` run failed, `5` timed out.
 
 Permission requests are never auto-approved: a run that asks for one prints the pending request - answer it with `aifuel approve --run RUN_ID --input INPUT_ID --decision accept|decline|cancel`. Ordinary provider questions answer interactively during `aifuel run`, or through `answer_input` for runs owned by `aifuel mcp execution`.
 
 ## MCP
 
-Three stdio servers:
+Three servers, each available over stdio (default) or streamable HTTP:
 
 | Server | Purpose |
 |---|---|
@@ -101,13 +106,31 @@ Three stdio servers:
 | `aifuel mcp execution` | Owns Agent Runs: `list_agents`, `list_models`, `resolve_run`, `start_run`, `resume_session`, `answer_input`, `get_run`, `get_result`, `cancel_run`, `read_events` |
 | `aifuel mcp gateway --agent HOST` | Serves your external MCP servers' tools, resources, and prompts to one agent |
 
-Register the status server on any host:
+Register the status server on any host over stdio:
 
 ```json
 { "mcpServers": { "aifuel": { "command": "aifuel", "args": ["mcp"] } } }
 ```
 
 Permission approvals stay local-only through `aifuel approve` - the execution server cannot grant them.
+
+### Streamable HTTP
+
+Pass `--http` to any of the three servers to serve remote MCP Hosts over HTTP instead of stdio. The server listens on `/mcp` at `127.0.0.1:8788` by default; `--host` and `--port` override the bind address:
+
+```bash
+aifuel mcp --http                              # http://127.0.0.1:8788/mcp
+aifuel mcp execution --http --port 8789        # a different port per server
+aifuel mcp gateway --agent HOST --http --host 0.0.0.0 --port 8788
+```
+
+A remote host then registers the URL directly:
+
+```json
+{ "mcpServers": { "aifuel": { "url": "http://127.0.0.1:8788/mcp" } } }
+```
+
+Each HTTP session is a full MCP connection (session id via `MCP-Session-Id`, `GET /mcp` for server events, `DELETE /mcp` to end it), so the gateway's progress notifications and the execution server's per-connection run ownership behave exactly as over stdio. There is no authentication layer: binding anything beyond loopback exposes the server's full MCP surface on that interface, and doing so is the operator's responsibility. `aifuel mcp setup` still writes stdio entries into host configs; configure HTTP entries by URL instead.
 
 ### Gateway config
 
@@ -138,6 +161,27 @@ Trust rules: remote endpoints must use HTTPS (plain HTTP only on loopback) and s
 
 Then connect an agent: `aifuel mcp setup --agent HOST` writes the managed entry into the host's config (backup and `--dry-run` supported, `--remove` detaches). Host IDs: `codex`, `claude`, `copilot`, `gemini`, `antigravity`, `devin`. Restart the host after changing its registration. Repeatable `--tool NAME` on `mcp gateway` restricts which tools a host sees.
 
+### Quota webhooks
+
+Each collection (dashboard refresh, `--json`, `--text`, MCP `get_status`) can POST events to configured endpoints - useful for Slack, Discord, or any HTTPS receiver. Configure `webhooks.json` in the same `aifuel` user config directory as `mcp.json`:
+
+```json
+{
+  "webhooks": [
+    { "url": "https://hooks.slack.com/services/...", "events": ["threshold_crossed", "quota_reset"], "threshold_percent": 90 }
+  ],
+  "defaults": { "events": ["threshold_crossed", "quota_reset"], "threshold_percent": 90 }
+}
+```
+
+`threshold_crossed` fires when a quota window's consumed share reaches `threshold_percent` (default 90); `quota_reset` fires when a window that was over threshold comes back under it - the window reset or quota was replenished. `events` and `threshold_percent` fall back to `defaults`, then to the built-ins. Payloads look like:
+
+```json
+{ "event": "threshold_crossed", "provider": "gemini", "provider_name": "Gemini CLI", "window": "gemini-3.5-flash", "window_period": "daily", "authoritative": true, "percent_used": 95.0, "percent_remaining": 5.0, "threshold_percent": 90, "reset_at": 1893456000.0, "checked_at": 1790879303.8 }
+```
+
+`reset_at` and `checked_at` are Unix seconds. Endpoints must use HTTPS, or HTTP only on loopback - the same trust rule as the MCP gateway. Each crossing notifies once per window and threshold; the state lives in `webhook-state.json` so restarts don't re-announce. Delivery is at-most-once with short timeouts, and failures are logged to stderr without affecting collection.
+
 ## How it works
 
 - Credentials are read **locally only** - the same files your CLIs already use. Tokens are never printed and are sent only to their own provider's usage endpoint.
@@ -149,7 +193,7 @@ Then connect an agent: `aifuel mcp setup --agent HOST` writes the managed entry 
 
 **Does this send my tokens anywhere?** No. It reads the same local credential files your CLIs use, calls each provider's *own* usage endpoint, and shows the result. No server, no telemetry, no third party.
 
-**Do I need API keys?** Not for monitoring - it reuses the OAuth/logins your AI coding CLIs already set up. `aifuel run` through an API-key integration (`openai:api-key`, `openrouter:api-key`) does need one via `aifuel auth set-key` or the env var. A general GitHub CLI login does not count as a GitHub Copilot login.
+**Do I need API keys?** Not for monitoring - it reuses the OAuth/logins your AI coding CLIs already set up. `aifuel run` through an API-key integration (any `*:api-key` id listed above) does need one via `aifuel auth set-key`, the dashboard's Connect section, or the provider's env var. A general GitHub CLI login does not count as a GitHub Copilot login.
 
 **It only shows some providers.** Those are the ones with local credentials. Log in to that provider's AI coding CLI, then refresh.
 

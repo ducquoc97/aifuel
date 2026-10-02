@@ -16,7 +16,8 @@
 //!   environment and credential bindings without changing the base
 //!   integration's identity or capabilities.
 //! - [`builtin`]: the compiled [`IntegrationDescriptor`] set - six CLI
-//!   integrations plus the P1 HTTP endpoints.
+//!   integrations, the runtime-adapter integrations, the local OpenAI-
+//!   compatible endpoints, and the API-key provider catalog.
 
 mod builtin;
 mod config;

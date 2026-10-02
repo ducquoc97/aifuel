@@ -37,16 +37,17 @@
 //! adapter by id, or `endpoint` plus `wire_api` plus `auth` configure an
 //! HTTP integration. `name`, `endpoint.headers`,
 //! `endpoint.request_timeout_seconds`, and `monitoring` are optional;
-//! `name` defaults to the id. `wire_api` is `openai-chat` - the other
-//! compiled protocol names are recognized but rejected because no execution
-//! engine serves them in this build. `auth.kind` is one of:
+//! `name` defaults to the id. `wire_api` is `openai-chat` or
+//! `anthropic-messages` - `openai-responses` is recognized but rejected
+//! because no execution engine serves it in this build. `auth.kind` is one of:
 //!
 //! - `"none"` - no credential; the field list must end there.
 //! - `"api-key-env"` - resolve the key from the named `var` at run time. The
 //!   key itself is never stored in this file.
 //! - `"api-key-ref"` - `credential` names a Managed Credential in the
 //!   Credential Store. Both api-key kinds accept optional `delivery`:
-//!   `"bearer"` (default) or `{"header": {"name": "x-api-key"}}`.
+//!   `"bearer"` (default), `{"header": {"name": "x-api-key"}}`, or
+//!   `{"cookie": {"name": "sessionKey"}}` for a browser-session credential.
 //! - `"api-key-env-or-store"` - a managed `credential` when one is stored,
 //!   otherwise the named `var`. This is the binding `aifuel auth set-key`
 //!   targets for a configured integration.
