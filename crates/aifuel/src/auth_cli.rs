@@ -2,19 +2,25 @@
 //!
 //! The commands report the effective credential source per Provider
 //! Integration - provider-owned (CLI), a named environment variable, a
-//! managed Credential Reference, or none - and write API-key records into the
-//! Credential Store. Secret material is never printed.
+//! managed Credential Reference, or none - and write API-key and session
+//! records into the Credential Store. Secret material is never printed.
 //!
 //! API-key Managed Credentials form Key Pools: `set-key` on an integration
 //! appends a member (`<ref>` first, then `<ref>/2`, `<ref>/3`, ...), and the
 //! HTTP execution path rotates through the pool when a key is rate-limited.
 //! `auth list` shows pool membership and per-key health; `auth remove`
 //! deletes one member.
+//!
+//! `set-session` stores pasted browser-session material for `*:web`
+//! integrations: a single record, delivered as a `Cookie` header. Nothing
+//! here reads a browser profile or an OS keyring - entry is paste/stdin
+//! only, and the material is never echoed.
 
-use aifuel_core::{ApiKeySource, AuthBinding, CredentialRef, ExecutionConfig};
+use aifuel_core::{ApiKeySource, AuthBinding, CredentialRef, ExecutionConfig, KeyDelivery};
 use aifuel_providers::{CredentialKind, CredentialStore};
 
 mod list;
+mod set_session;
 
 // The Connect panel reuses `auth list`'s per-integration credential-state
 // wording so the dashboard and CLI describe one source of truth.
@@ -29,6 +35,7 @@ pub fn run(args: &[String]) -> Result<u8, String> {
         }
         Some("list") => list::run(&args[1..]),
         Some("set-key") => set_key(&args[1..]),
+        Some("set-session") => set_session::run(&args[1..]),
         Some("remove") => remove(&args[1..]),
         Some(unknown) => Err(format!(
             "unknown auth command {unknown:?}; use aifuel auth --help"
@@ -84,7 +91,13 @@ fn set_key(args: &[String]) -> Result<u8, String> {
         return Err("choose exactly one of --key, --env-var, or --stdin".to_owned());
     }
 
-    let (reference, destination) = resolve_credential_ref(&target)?;
+    let (reference, destination, delivery) = resolve_credential_ref(&target)?;
+    if matches!(delivery, Some(KeyDelivery::Cookie { .. })) {
+        return Err(format!(
+            "integration {target} takes a session credential, not an API key; \
+             use 'aifuel auth set-session {target}'"
+        ));
+    }
     let material = if let Some(value) = key {
         eprintln!("aifuel: note - --key leaves the value in shell history; prefer --stdin");
         value
@@ -140,11 +153,20 @@ fn set_key(args: &[String]) -> Result<u8, String> {
         None => {
             // A raw Credential Reference overwrites that exact slot. An
             // existing record's destination binding is preserved so a
-            // re-stored member stays bound to its integration.
-            let bound = store
-                .get(&reference)
-                .map_err(|error| error.to_string())?
-                .and_then(|credential| credential.destination().cloned());
+            // re-stored member stays bound to its integration, but a record
+            // of a different kind is refused: silently converting a stored
+            // session or OAuth grant into an API key would strand whatever
+            // binds it.
+            let existing = store.get(&reference).map_err(|error| error.to_string())?;
+            if let Some(record) = &existing
+                && record.kind() != CredentialKind::ApiKey
+            {
+                return Err(format!(
+                    "credential {reference} already stores {}; remove it first or pick another reference",
+                    record.kind()
+                ));
+            }
+            let bound = existing.and_then(|credential| credential.destination().cloned());
             match bound {
                 Some(integration) => store.set_api_key_for(&reference, &material, &integration),
                 None => store.set_api_key(&reference, &material),
@@ -160,10 +182,24 @@ fn set_key(args: &[String]) -> Result<u8, String> {
 /// Authentication Binding declares plus that integration's id as the
 /// credential destination; anything else is treated as a raw Credential
 /// Reference. An ambiguous selector is an error, never a raw reference.
+///
+/// The triple's third member is the binding's [`KeyDelivery`] for an
+/// integration target (`None` for a raw reference): `set-key` refuses a
+/// cookie-delivered binding and `set-session` refuses a key-delivered one,
+/// so a pasted session can never land in the API-key pool it would be
+/// resolved as.
 /// Shared with the dashboard Connect panel's key submission.
+#[allow(clippy::type_complexity)]
 pub(crate) fn resolve_credential_ref(
     target: &str,
-) -> Result<(CredentialRef, Option<aifuel_core::IntegrationId>), String> {
+) -> Result<
+    (
+        CredentialRef,
+        Option<aifuel_core::IntegrationId>,
+        Option<KeyDelivery>,
+    ),
+    String,
+> {
     use aifuel_providers::ResolveError;
     let registry = crate::integration_registry()?;
     let descriptor = match registry.resolve(target) {
@@ -174,7 +210,7 @@ pub(crate) fn resolve_credential_ref(
             return Err(error.to_string());
         }
         Err(ResolveError::Unknown { .. }) => {
-            return Ok((CredentialRef::new(target), None));
+            return Ok((CredentialRef::new(target), None, None));
         }
     };
     let integration = descriptor.integration.id.clone();
@@ -184,21 +220,32 @@ pub(crate) fn resolve_credential_ref(
                 AuthBinding::ApiKey {
                     source:
                         ApiKeySource::Store { credential } | ApiKeySource::EnvOrStore { credential, .. },
-                    ..
+                    delivery,
                 },
             ..
-        } => Ok((credential.clone(), Some(integration))),
+        } => Ok((
+            credential.clone(),
+            Some(integration),
+            Some(delivery.clone()),
+        )),
         ExecutionConfig::Http {
             auth:
                 AuthBinding::ApiKey {
                     source: ApiKeySource::Env { var },
-                    ..
+                    delivery,
                 },
             ..
-        } => Err(format!(
-            "integration {target} reads its API key from environment variable {var}; \
-             export {var} instead"
-        )),
+        } => {
+            let kind = if matches!(delivery, KeyDelivery::Cookie { .. }) {
+                "session credential"
+            } else {
+                "API key"
+            };
+            Err(format!(
+                "integration {target} reads its {kind} from environment variable {var}; \
+                 export {var} instead"
+            ))
+        }
         ExecutionConfig::Http {
             auth: AuthBinding::None,
             ..
@@ -288,6 +335,38 @@ pub(crate) fn removal_warnings(
         };
         match &descriptor.integration.execution {
             ExecutionConfig::Http { auth, .. } => match auth {
+                // A cookie-delivered binding holds a session credential:
+                // one record, no pool, so removing it strands the binding
+                // outright.
+                AuthBinding::ApiKey {
+                    source: ApiKeySource::Store { credential },
+                    delivery: KeyDelivery::Cookie { .. },
+                } if credential == reference => {
+                    warnings.push(format!(
+                        "integration {id} binds session credential {credential} and will fail \
+                         authentication until a replacement is stored"
+                    ));
+                }
+                AuthBinding::ApiKey {
+                    source:
+                        ApiKeySource::EnvOrStore {
+                            var, credential, ..
+                        },
+                    delivery: KeyDelivery::Cookie { .. },
+                } if credential == reference => {
+                    if aifuel_providers::env_override(var).is_some() {
+                        warnings.push(format!(
+                            "removing {target} leaves env var {var} active; integration {id} \
+                             keeps authenticating from the environment"
+                        ));
+                    } else {
+                        warnings.push(format!(
+                            "integration {id} binds session credential {credential} and will \
+                             fail authentication until a replacement is stored or {var} is \
+                             exported"
+                        ));
+                    }
+                }
                 AuthBinding::ApiKey {
                     source: ApiKeySource::Store { credential },
                     ..
@@ -348,7 +427,7 @@ pub(crate) fn removal_warnings(
     Ok((notes, warnings))
 }
 
-fn next(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
+pub(super) fn next(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
     *index += 1;
     args.get(*index)
         .cloned()
@@ -358,6 +437,7 @@ fn next(args: &[String], index: &mut usize, flag: &str) -> Result<String, String
 fn print_help() {
     println!("Usage: aifuel auth list [--json]");
     println!("       aifuel auth set-key TARGET (--key KEY | --env-var NAME | --stdin)");
+    println!("       aifuel auth set-session TARGET (--key SESSION | --stdin)");
     println!("       aifuel auth remove CREDENTIAL_REF");
     println!();
     println!("Inspects and manages AI Fuel Managed Credentials. Secret values are");
@@ -368,4 +448,8 @@ fn print_help() {
     println!("appends a member (TARGET, TARGET/2, TARGET/3, ...), auth list shows each");
     println!("member's health, and auth remove deletes one member. A rate-limited key");
     println!("cools down while the run rotates to the next healthy member.");
+    println!();
+    println!("set-session stores pasted browser-session material for *:web");
+    println!("integrations - a bare session token or a copied Cookie header. Entry is");
+    println!("paste/stdin only; nothing reads a browser profile or OS keyring.");
 }

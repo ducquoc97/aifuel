@@ -107,7 +107,14 @@ fn runtime_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
                 };
                 adapters.push(Arc::new(StaticAdapter(*compiled)));
             }
-            ExecutionConfig::Http { .. } => {
+            ExecutionConfig::Http { protocol, .. } => {
+                // A `*:web` session integration declares a protocol no
+                // engine serves as monitoring evidence; it stays a valid
+                // registry entry for listing and auth and simply has no
+                // adapter on this execution surface.
+                if !aifuel_providers::wire_serves(*protocol) {
+                    continue;
+                }
                 match aifuel_providers::WireExecutionAdapter::from_integration(
                     &descriptor.integration,
                     credentials.clone(),
@@ -199,7 +206,12 @@ fn execution_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
                     ),
                 }
             }
-            ExecutionConfig::Http { .. } => {
+            ExecutionConfig::Http { protocol, .. } => {
+                // See `runtime_adapters`: a monitoring-only `*:web`
+                // integration has no execution adapter by design.
+                if !aifuel_providers::wire_serves(*protocol) {
+                    continue;
+                }
                 match aifuel_providers::WireExecutionAdapter::from_integration(
                     &descriptor.integration,
                     credentials.clone(),

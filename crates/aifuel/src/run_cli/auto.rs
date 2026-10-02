@@ -408,17 +408,25 @@ fn bind_provider(
 /// candidate on credential evidence alone: it has no quota observation,
 /// but its key can run. The basis is `free_tier` when the catalog
 /// documents a free allowance for the provider, else `api_key`.
+///
+/// A cookie-delivered binding is never a candidate: it holds a
+/// browser-session credential whose integration exists to monitor, and a
+/// `*:web` protocol has no execution engine - candidacy would only
+/// manufacture a doomed attempt.
 fn keyed_api_key(
     descriptor: &aifuel_providers::IntegrationDescriptor,
     credentials: &aifuel_providers::CredentialStore,
 ) -> Option<RouteCandidate> {
     let ExecutionConfig::Http {
-        auth: AuthBinding::ApiKey { source, .. },
+        auth: AuthBinding::ApiKey { source, delivery },
         ..
     } = &descriptor.integration.execution
     else {
         return None;
     };
+    if matches!(delivery, aifuel_core::KeyDelivery::Cookie { .. }) {
+        return None;
+    }
     if !credential_present(source, credentials) {
         return None;
     }
@@ -792,6 +800,41 @@ mod tests {
             std::env::remove_var("AIFUEL_TEST_BASIS_KEY");
         }
         assert!(keyed_api_key(&api_key_descriptor("groq", source()), &store).is_none());
+        std::fs::remove_dir_all(&dir).expect("test dir should be removable");
+    }
+
+    #[test]
+    fn cookie_delivered_integrations_are_not_credential_candidates() {
+        // A `*:web` session binding holds material but has no execution
+        // engine; letting it into `run --provider auto` would produce a
+        // doomed attempt, so presence alone must not make it a candidate.
+        let (dir, store) = test_store("cookie");
+        unsafe {
+            std::env::set_var("AIFUEL_TEST_SESSION_KEY", "session-material");
+        }
+        let mut descriptor = api_key_descriptor(
+            "claude-web",
+            ApiKeySource::EnvOrStore {
+                var: "AIFUEL_TEST_SESSION_KEY".to_owned(),
+                credential: aifuel_core::CredentialRef::new("claude-web:web"),
+            },
+        );
+        let ExecutionConfig::Http { auth, .. } = &mut descriptor.integration.execution else {
+            panic!("the fixture builds an Http integration");
+        };
+        *auth = AuthBinding::ApiKey {
+            source: match auth {
+                AuthBinding::ApiKey { source, .. } => source.clone(),
+                _ => unreachable!(),
+            },
+            delivery: aifuel_core::KeyDelivery::Cookie {
+                name: "sessionKey".to_owned(),
+            },
+        };
+        assert!(keyed_api_key(&descriptor, &store).is_none());
+        unsafe {
+            std::env::remove_var("AIFUEL_TEST_SESSION_KEY");
+        }
         std::fs::remove_dir_all(&dir).expect("test dir should be removable");
     }
 

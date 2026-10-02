@@ -1,10 +1,25 @@
 // Connect panel: one row per AuthBinding::ApiKey HTTP integration, mirroring
-// `aifuel auth list` for source status and `aifuel auth set-key`/`remove`
-// for mutations. A key travels only inside its POST body to this loopback
-// server; it is never rendered back into the page.
+// `aifuel auth list` for source status and `aifuel auth set-key`/
+// `set-session`/`remove` for mutations. `entry.kind` is "api_key" or
+// "session"; the server picks the store call from the binding's delivery,
+// so the panel only changes wording. Material travels only inside its POST
+// body to this loopback server; it is never rendered back into the page.
+
+function connectLabels(entry) {
+  return entry.kind === "session"
+    ? { noun: "session", stored: "Session stored",
+        placeholder: "Paste session token or Cookie header",
+        aria: `session credential for ${entry.name}`, button: "Save session",
+        saved: "Stored session credential" }
+    : { noun: "key", stored: "Key stored",
+        placeholder: "Paste API key",
+        aria: `API key for ${entry.name}`, button: "Save key",
+        saved: "Stored API key" };
+}
 
 function connectBadges(entry) {
-  if (entry.stored) return '<span class="badge live">Key stored</span>';
+  const labels = connectLabels(entry);
+  if (entry.stored) return `<span class="badge live">${esc(labels.stored)}</span>`;
   if (entry.env_set && entry.env_var) {
     return `<span class="badge connect-env">env ${esc(entry.env_var)} set</span>`;
   }
@@ -12,13 +27,14 @@ function connectBadges(entry) {
 }
 
 function connectControls(entry) {
+  const labels = connectLabels(entry);
   if (!entry.accepts_key) {
-    return `<div class="connect-hint">Reads its key from ${esc(entry.env_var)} - export it in your shell.</div>`;
+    return `<div class="connect-hint">Reads its ${esc(labels.noun)} from ${esc(entry.env_var)} - export it in your shell.</div>`;
   }
-  return `<form class="connect-form" data-id="${esc(entry.id)}" onsubmit="connectSubmit(event); return false">
+  return `<form class="connect-form" data-id="${esc(entry.id)}" data-noun="${esc(entry.kind === "session" ? "session credential" : "API key")}" onsubmit="connectSubmit(event); return false">
     <input class="connect-input" type="password" name="key" autocomplete="off" spellcheck="false"
-           placeholder="Paste API key" aria-label="API key for ${esc(entry.name)}">
-    <button class="btn" type="submit">Save key</button>
+           placeholder="${esc(labels.placeholder)}" aria-label="${esc(labels.aria)}">
+    <button class="btn" type="submit">${esc(labels.button)}</button>
     ${entry.stored
       ? `<button class="btn connect-remove" type="button" data-credential="${esc(entry.credential)}"
                  onclick="connectRemove(this)">Remove</button>`
@@ -67,7 +83,7 @@ async function loadConnect() {
     const entries = data.integrations || [];
     list.innerHTML = "";
     if (entries.length === 0) {
-      list.innerHTML = '<div class="connect-hint">No API-key integrations are registered.</div>';
+      list.innerHTML = '<div class="connect-hint">No credential-bearing integrations are registered.</div>';
     } else {
       entries.forEach(entry => list.appendChild(connectRow(entry)));
     }
@@ -82,10 +98,11 @@ async function connectSubmit(event) {
   event.preventDefault();
   const form = event.target;
   const input = form.elements.key;
+  const noun = form.dataset.noun || "API key";
   try {
     await connectPost("/api/auth/set-key", { integration: form.dataset.id, key: input.value });
     input.value = "";
-    connectMessage(`Stored API key for ${esc(form.dataset.id)}.`);
+    connectMessage(`Stored ${esc(noun)} for ${esc(form.dataset.id)}.`);
     loadConnect();
   } catch (e) {
     connectMessage(`<span class="err">${esc(String(e.message || e))}</span>`);

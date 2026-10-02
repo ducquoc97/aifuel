@@ -3,7 +3,7 @@
 //! expiry, destination binding, and per-key pool health. Secret material is
 //! never printed.
 
-use aifuel_core::{ApiKeySource, AuthBinding, CredentialRef, ExecutionConfig};
+use aifuel_core::{ApiKeySource, AuthBinding, CredentialRef, ExecutionConfig, KeyDelivery};
 use aifuel_providers::{CredentialExpiry, CredentialKind, CredentialMetadata, KeyHealth};
 
 /// Run `aifuel auth list [--json]`.
@@ -59,6 +59,7 @@ pub(super) fn run(args: &[String]) -> Result<u8, String> {
                     "kind": match meta.kind {
                         CredentialKind::ApiKey => "api_key",
                         CredentialKind::OAuth => "oauth",
+                        CredentialKind::Session => "session",
                     },
                     "expiry": describe_expiry(meta),
                     "account_id": meta.account_id,
@@ -105,6 +106,7 @@ pub(super) fn run(args: &[String]) -> Result<u8, String> {
             let kind = match meta.kind {
                 CredentialKind::ApiKey => "api-key",
                 CredentialKind::OAuth => "oauth",
+                CredentialKind::Session => "session",
             };
             let mut detail = describe_expiry(meta);
             if meta.kind == CredentialKind::ApiKey {
@@ -154,6 +156,10 @@ pub(crate) fn describe_source(
             }
             AuthBinding::ApiKey {
                 source: ApiKeySource::Store { credential },
+                delivery: KeyDelivery::Cookie { .. },
+            } => describe_session(credential, stored, None),
+            AuthBinding::ApiKey {
+                source: ApiKeySource::Store { credential },
                 ..
             } => describe_pool(credential, pool_members(stored, credential)),
             AuthBinding::OAuth { credential, .. } => {
@@ -163,6 +169,13 @@ pub(crate) fn describe_source(
                     format!("managed credential {} (absent)", credential.as_str())
                 }
             }
+            AuthBinding::ApiKey {
+                source:
+                    ApiKeySource::EnvOrStore {
+                        var, credential, ..
+                    },
+                delivery: KeyDelivery::Cookie { .. },
+            } => describe_session(credential, stored, Some(var.as_str())),
             AuthBinding::ApiKey {
                 source:
                     ApiKeySource::EnvOrStore {
@@ -252,6 +265,36 @@ fn describe_pool(
             let keys = if members.len() == 1 { "key" } else { "keys" };
             format!("key pool {credential} ({} {keys}: {detail})", members.len())
         }
+    }
+}
+
+/// The credential-source summary for a cookie-delivered session binding:
+/// whether the stored session record is present, plus the declared env var
+/// when the binding offers one. A session is the record at `credential`
+/// itself, never a `credential/…` member, and a record of the wrong kind is
+/// named honestly rather than read as absent.
+fn describe_session(
+    credential: &CredentialRef,
+    stored: &std::collections::BTreeMap<&CredentialRef, &CredentialMetadata>,
+    var: Option<&str>,
+) -> String {
+    let record = stored.get(credential).copied();
+    let env_set = var.is_some_and(|var| aifuel_providers::env_override(var).is_some());
+    let stored_text = match record {
+        Some(meta) if meta.kind == CredentialKind::Session => {
+            format!("managed session {credential} (present)")
+        }
+        Some(meta) => format!(
+            "credential {credential} stores {}, not a session",
+            meta.kind
+        ),
+        None => format!("managed session {credential} (absent)"),
+    };
+    match (var, env_set, record.is_some()) {
+        (Some(var), true, false) => format!("env {var} (set)"),
+        (Some(var), true, true) => format!("{stored_text}; env {var} also set"),
+        (Some(var), false, false) => format!("env {var} (absent) or {stored_text}"),
+        _ => stored_text,
     }
 }
 
