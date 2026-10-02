@@ -90,11 +90,13 @@ pub const PROVIDERS_SCHEMA_VERSION: u32 = 1;
 /// The config file name inside the AI Fuel config directory.
 pub const PROVIDERS_FILE_NAME: &str = "providers.json";
 
-/// A decoded `providers.json`: one result per entry so a single malformed
-/// entry reports its own error while file-level failures stay hard errors.
+/// A decoded `providers.json`: one result per `integrations` entry and one
+/// per `instances` entry so a single malformed entry reports its own error
+/// while file-level failures stay hard errors.
 #[derive(Debug)]
 pub struct ProvidersConfig {
     entries: Vec<Result<IntegrationDescriptor, ConfigError>>,
+    instances: Vec<Result<super::instances::InstanceDescriptor, ConfigError>>,
 }
 
 impl ProvidersConfig {
@@ -110,6 +112,7 @@ impl ProvidersConfig {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(Self {
                     entries: Vec::new(),
+                    instances: Vec::new(),
                 });
             }
             Err(error) => return Err(ConfigError::Io(error)),
@@ -133,7 +136,12 @@ impl ProvidersConfig {
             .enumerate()
             .map(|(index, raw)| validate::build_descriptor(index, raw))
             .collect();
-        Ok(Self { entries })
+        let instances = file
+            .instances
+            .into_iter()
+            .map(|(id, raw)| super::instances::build_instance(&id, raw))
+            .collect();
+        Ok(Self { entries, instances })
     }
 
     /// One result per `integrations` entry, in file order.
@@ -141,18 +149,36 @@ impl ProvidersConfig {
         &self.entries
     }
 
-    /// Consume the per-entry results for [`super::IntegrationRegistry::build`].
-    pub fn into_entries(self) -> Vec<Result<IntegrationDescriptor, ConfigError>> {
-        self.entries
+    /// One result per `instances` entry, in file order.
+    pub fn instances(&self) -> &[Result<super::instances::InstanceDescriptor, ConfigError>] {
+        &self.instances
     }
+
+    /// Consume both entry lists for [`super::IntegrationRegistry::build`].
+    pub fn into_parts(self) -> ProvidersConfigParts {
+        ProvidersConfigParts {
+            integrations: self.entries,
+            instances: self.instances,
+        }
+    }
+}
+
+/// The decoded `providers.json` entry lists `ProvidersConfig` hands to
+/// [`super::IntegrationRegistry::build`]: per-entry results so one malformed
+/// entry fails alone.
+pub struct ProvidersConfigParts {
+    /// One result per `integrations` entry, in file order.
+    pub integrations: Vec<Result<IntegrationDescriptor, ConfigError>>,
+    /// One result per `instances` entry, in file order.
+    pub instances: Vec<Result<super::instances::InstanceDescriptor, ConfigError>>,
 }
 
 /// A minimal decode of the version field, checked before the full parse so a
 /// newer file reports its schema version rather than a misleading shape
 /// error - the same probe pattern `credentials.json` uses.
 #[derive(Deserialize)]
-struct VersionProbe {
-    schema_version: u32,
+pub(crate) struct VersionProbe {
+    pub(crate) schema_version: u32,
 }
 
 /// The file envelope. Entries stay as raw values so one malformed entry is
@@ -162,6 +188,11 @@ struct VersionProbe {
 struct ProvidersFile {
     #[serde(default)]
     integrations: Vec<serde_json::Value>,
+    /// The named Provider Integration instances: the map key is the
+    /// instance's selector id and the value names its base integration plus
+    /// the environment overlay and credential binding it applies.
+    #[serde(default)]
+    instances: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -223,7 +254,7 @@ struct ConfigAuth {
 /// A serde error plus its position, so a hand-edited file can be repaired.
 /// This file never contains credential material by schema design (auth binds
 /// env vars or Credential References), so error text is safe to surface.
-fn describe_json_error(error: &serde_json::Error) -> String {
+pub(crate) fn describe_json_error(error: &serde_json::Error) -> String {
     format!("{error} (line {}, column {})", error.line(), error.column())
 }
 
@@ -243,6 +274,8 @@ pub enum ConfigError {
         id: Option<String>,
         reason: String,
     },
+    /// One `instances` entry failed validation.
+    InvalidInstance { id: String, reason: String },
 }
 
 impl fmt::Display for ConfigError {
@@ -263,6 +296,9 @@ impl fmt::Display for ConfigError {
                 ),
                 None => write!(f, "providers config integrations[{index}]: {reason}"),
             },
+            Self::InvalidInstance { id, reason } => {
+                write!(f, "providers config instance '{id}': {reason}")
+            }
         }
     }
 }

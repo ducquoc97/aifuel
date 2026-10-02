@@ -252,6 +252,7 @@ fn request() -> RunRequest {
         access: aifuel_core::AccessMode::ReadOnly,
         resume: None,
         timeout: None,
+        env: Default::default(),
         interaction_handler: None,
     }
 }

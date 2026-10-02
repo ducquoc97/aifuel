@@ -6,6 +6,7 @@ use super::{WireExecutionAdapter, http};
 use crate::{ApiKeyState, KeyHealth, ResolvedAuth};
 use aifuel_core::{AuthBinding, CredentialRef};
 use reqwest::header::HeaderMap;
+use std::collections::BTreeMap;
 
 /// One credential attempt within a run: the material to send plus the
 /// pool-member identity whose persisted health the run maintains.
@@ -45,12 +46,27 @@ impl WireExecutionAdapter {
     /// rotate on `429`/`401`/`403`; a cookie-delivered session credential is
     /// a single attempt with no rotation or per-key state, as is any other
     /// binding.
-    pub(super) fn resolve_attempts(&self) -> Result<Vec<KeyAttempt>, crate::CredentialStoreError> {
+    ///
+    /// `env` is the instance's resolved overlay - empty for a base
+    /// integration - so an env-sourced binding reads the variables the
+    /// provider process will actually spawn with, and the destination
+    /// check runs under the auth identity (the instance id when the
+    /// instance rebinds the credential slot).
+    pub(super) fn resolve_attempts(
+        &self,
+        env: &BTreeMap<String, String>,
+    ) -> Result<Vec<KeyAttempt>, crate::CredentialStoreError> {
         match &self.auth {
             AuthBinding::ApiKey { source, delivery } => {
                 if matches!(delivery, aifuel_core::KeyDelivery::Cookie { .. }) {
                     return Ok(vec![KeyAttempt {
-                        auth: self.credentials.resolve(&self.auth, &self.integration)?,
+                        auth: self
+                            .credentials
+                            .resolve_session_with_env(source, &self.auth_identity, env)
+                            .map(|key| ResolvedAuth::ApiKey {
+                                key,
+                                delivery: delivery.clone(),
+                            })?,
                         reference: None,
                         state: ApiKeyState::default(),
                         attempted: false,
@@ -58,7 +74,7 @@ impl WireExecutionAdapter {
                 }
                 Ok(self
                     .credentials
-                    .resolve_api_key_pool(source, &self.integration)?
+                    .resolve_api_key_pool_with_env(source, &self.auth_identity, env)?
                     .into_iter()
                     .map(|member| KeyAttempt {
                         auth: ResolvedAuth::ApiKey {
@@ -72,7 +88,9 @@ impl WireExecutionAdapter {
                     .collect())
             }
             other => Ok(vec![KeyAttempt {
-                auth: self.credentials.resolve(other, &self.integration)?,
+                auth: self
+                    .credentials
+                    .resolve_with_env(other, &self.auth_identity, env)?,
                 reference: None,
                 state: ApiKeyState::default(),
                 attempted: false,

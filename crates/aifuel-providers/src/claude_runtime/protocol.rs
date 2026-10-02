@@ -212,10 +212,7 @@ pub(super) fn approval_request(request: &Value, access: AccessMode) -> ApprovalR
         // The control request is the provider-native ask: keep it plus
         // its subtype so a host can rebuild and answer it directly.
         parameters: Some(request.clone()),
-        native_method: request
-            .get("subtype")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        native_method: non_empty(request.get("subtype")),
     }
 }
 

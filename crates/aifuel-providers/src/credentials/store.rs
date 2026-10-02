@@ -245,6 +245,22 @@ impl CredentialStore {
         binding: &AuthBinding,
         integration: &IntegrationId,
     ) -> Result<ResolvedAuth, CredentialStoreError> {
+        self.resolve_with_env(binding, integration, &BTreeMap::new())
+    }
+
+    /// [`Self::resolve`] against the environment the provider process will
+    /// actually run with: `env` is the instance's resolved overlay, which a
+    /// `env`-sourced binding reads before the inherited process environment
+    /// (it wins at spawn, so it wins here). Store sources are unaffected.
+    ///
+    /// Resolved material never appears in the returned errors, matching
+    /// `resolve`.
+    pub fn resolve_with_env(
+        &self,
+        binding: &AuthBinding,
+        integration: &IntegrationId,
+        env: &BTreeMap<String, String>,
+    ) -> Result<ResolvedAuth, CredentialStoreError> {
         match binding {
             AuthBinding::None => Ok(ResolvedAuth::None),
             AuthBinding::ApiKey { source, delivery } => {
@@ -253,11 +269,11 @@ impl CredentialStore {
                 // session does not rotate.
                 if matches!(delivery, KeyDelivery::Cookie { .. }) {
                     return Ok(ResolvedAuth::ApiKey {
-                        key: self.resolve_session(source, integration)?,
+                        key: self.resolve_session_with_env(source, integration, env)?,
                         delivery: delivery.clone(),
                     });
                 }
-                let pool = self.resolve_api_key_pool(source, integration)?;
+                let pool = self.resolve_api_key_pool_with_env(source, integration, env)?;
                 // Single-key callers (monitoring, diagnostics) get the best
                 // available member: the first healthy key, else the first
                 // member so a status check still reports the provider's own
@@ -290,6 +306,34 @@ impl CredentialStore {
                 }
                 None => Err(CredentialStoreError::CredentialAbsent(credential.clone())),
             },
+        }
+    }
+
+    /// The API-key material for a store-bound source, or `None` when no
+    /// record exists at `reference` (letting an `EnvOrStore` binding fall
+    /// back to its declared variable). Kind and destination mismatches are
+    /// errors, never a silent fallback.
+    ///
+    /// Crate-internal so instance environment resolution can use it; the
+    /// material never leaves the crate except inside a resolved overlay.
+    pub(crate) fn api_key_material(
+        &self,
+        reference: &CredentialRef,
+        integration: &IntegrationId,
+    ) -> Result<Option<String>, CredentialStoreError> {
+        match self.get(reference)? {
+            Some(credential) => {
+                check_destination(reference, &credential, integration)?;
+                match credential {
+                    ManagedCredential::Api { key, .. } => Ok(Some(key)),
+                    other => Err(CredentialStoreError::UnexpectedCredentialKind {
+                        reference: reference.clone(),
+                        expected: CredentialKind::ApiKey,
+                        found: other.kind(),
+                    }),
+                }
+            }
+            None => Ok(None),
         }
     }
 

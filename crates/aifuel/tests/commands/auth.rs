@@ -42,9 +42,8 @@ fn set_key_appends_pool_members_and_list_reports_per_key_health() {
     );
     assert!(first.status.success(), "{}", stderr(&first));
     assert!(
-        stdout(&first).contains(
-            "Stored API key as credential openai:api-key bound to integration openai:api-key"
-        ),
+        stdout(&first)
+            .contains("Stored API key as credential openai:api-key bound to openai:api-key"),
         "{}",
         stdout(&first)
     );

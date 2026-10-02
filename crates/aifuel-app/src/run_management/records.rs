@@ -4,6 +4,7 @@ use super::helpers::{
 use super::*;
 
 impl RunRecord {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         run_id: String,
         provider: aifuel_core::ProviderId,

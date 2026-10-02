@@ -29,7 +29,7 @@
 //!   honestly per the spec. An OS credential backend remains a hardening
 //!   option, not a claim.
 
-mod lock;
+pub(crate) mod lock;
 mod schema;
 mod store;
 

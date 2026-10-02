@@ -168,6 +168,7 @@ mod tests {
             output: OutputFormat::Text,
             working_directory: None,
             access: AccessMode::ReadOnly,
+            env: Default::default(),
             resume: None,
             timeout: None,
             interaction_handler: None,

@@ -43,11 +43,11 @@ pub(super) type Connector =
 
 /// Spawn `codex app-server` and return its pipes as a [`Transport`].
 pub(super) fn default_connector() -> Connector {
-    Arc::new(|setup| spawn_transport(&setup.cwd))
+    Arc::new(spawn_transport)
 }
 
-fn spawn_transport(cwd: &std::path::Path) -> Result<Transport, AgentRuntimeError> {
-    let mut child = crate::codex::app_server::spawn_app_server(cwd)
+fn spawn_transport(setup: &SessionSetup) -> Result<Transport, AgentRuntimeError> {
+    let mut child = crate::codex::app_server::spawn_app_server(&setup.cwd, &setup.env)
         .map_err(|error| AgentRuntimeError::provider_error(error.to_string()))?;
     let stdout = child.stdout().take().ok_or_else(|| {
         AgentRuntimeError::provider_error("the app-server stdout pipe is missing")
@@ -87,6 +87,10 @@ pub(super) struct SessionSetup {
     /// server through the thread config and gate setup on those tools
     /// reporting ready.
     pub external_tools: Vec<String>,
+    /// The instance environment overlay applied to the app-server process
+    /// at spawn. Resolved credential material may ride along - it is never
+    /// logged or persisted by this layer.
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// The report `start` waits on after launching the driver: the Codex

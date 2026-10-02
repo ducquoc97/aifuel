@@ -182,6 +182,7 @@ fn request() -> RunRequest {
         resume: None,
         timeout: None,
         interaction_handler: None,
+        env: BTreeMap::new(),
     }
 }
 

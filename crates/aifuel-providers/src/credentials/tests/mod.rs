@@ -2,6 +2,7 @@ use super::*;
 use aifuel_core::{
     ApiKeySource, AuthBinding, CredentialRef, IntegrationId, KeyDelivery, OAuthProfileId,
 };
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -502,4 +503,111 @@ fn expired_oauth_grants_resolve_with_needs_refresh() {
     assert_flag("expired", true);
     assert_flag("fresh", false);
     assert_flag("timeless", false);
+}
+
+#[test]
+fn resolve_with_env_reads_the_overlay_before_the_process_environment() {
+    let dir = TestDir::new();
+    let store = dir.store();
+    let var = "AIFUEL_CREDENTIALS_TEST_OVERLAY";
+    let binding = AuthBinding::ApiKey {
+        source: ApiKeySource::Env {
+            var: var.to_owned(),
+        },
+        delivery: KeyDelivery::Bearer,
+    };
+
+    unsafe { std::env::remove_var(var) };
+    // The overlay supplies the variable the binding declares: a provider
+    // instance's `env` entry is exactly what the spawned process sees, so
+    // auth resolution must read the same view.
+    let overlay = BTreeMap::from([(var.to_owned(), "overlay-key".to_owned())]);
+    match store
+        .resolve_with_env(&binding, &test_integration(), &overlay)
+        .unwrap()
+    {
+        ResolvedAuth::ApiKey { key, .. } => assert_eq!(key, "overlay-key"),
+        other => panic!("expected an API key, got {other:?}"),
+    }
+
+    // The overlay wins over the inherited environment - `Command::envs`
+    // precedence applies at spawn, so resolution mirrors it.
+    unsafe { std::env::set_var(var, "inherited-key") };
+    match store
+        .resolve_with_env(&binding, &test_integration(), &overlay)
+        .unwrap()
+    {
+        ResolvedAuth::ApiKey { key, .. } => assert_eq!(key, "overlay-key"),
+        other => panic!("expected an API key, got {other:?}"),
+    }
+    // An empty overlay falls through to the inherited environment.
+    match store
+        .resolve_with_env(&binding, &test_integration(), &BTreeMap::new())
+        .unwrap()
+    {
+        ResolvedAuth::ApiKey { key, .. } => assert_eq!(key, "inherited-key"),
+        other => panic!("expected an API key, got {other:?}"),
+    }
+    // Neither source set -> the declared-variable error, unchanged.
+    unsafe { std::env::remove_var(var) };
+    assert!(matches!(
+        store.resolve_with_env(&binding, &test_integration(), &BTreeMap::new()),
+        Err(CredentialStoreError::EnvVarAbsent { .. })
+    ));
+}
+
+#[test]
+fn resolve_with_env_leaves_store_sources_and_fallbacks_intact() {
+    let dir = TestDir::new();
+    let store = dir.store();
+    store.set_api_key(&reference("key"), "stored-key").unwrap();
+
+    // Store sources never consult the overlay.
+    assert_eq!(
+        store
+            .resolve_with_env(
+                &api_key_store_binding("key"),
+                &test_integration(),
+                &BTreeMap::from([("key".to_owned(), "overlay-value".to_owned())]),
+            )
+            .unwrap(),
+        ResolvedAuth::ApiKey {
+            key: "stored-key".to_owned(),
+            delivery: KeyDelivery::Bearer,
+        }
+    );
+
+    // EnvOrStore: a stored credential wins, and its absence falls back to
+    // the overlay's variable before the inherited environment.
+    let var = "AIFUEL_CREDENTIALS_TEST_FALLBACK";
+    let binding = AuthBinding::ApiKey {
+        source: ApiKeySource::EnvOrStore {
+            var: var.to_owned(),
+            credential: reference("key"),
+        },
+        delivery: KeyDelivery::Bearer,
+    };
+    let overlay = BTreeMap::from([(var.to_owned(), "overlay-fallback".to_owned())]);
+    match store
+        .resolve_with_env(&binding, &test_integration(), &overlay)
+        .unwrap()
+    {
+        ResolvedAuth::ApiKey { key, .. } => assert_eq!(key, "stored-key"),
+        other => panic!("expected an API key, got {other:?}"),
+    }
+    let missing = AuthBinding::ApiKey {
+        source: ApiKeySource::EnvOrStore {
+            var: var.to_owned(),
+            credential: reference("absent"),
+        },
+        delivery: KeyDelivery::Bearer,
+    };
+    unsafe { std::env::remove_var(var) };
+    match store
+        .resolve_with_env(&missing, &test_integration(), &overlay)
+        .unwrap()
+    {
+        ResolvedAuth::ApiKey { key, .. } => assert_eq!(key, "overlay-fallback"),
+        other => panic!("expected an API key, got {other:?}"),
+    }
 }

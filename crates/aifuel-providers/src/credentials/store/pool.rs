@@ -77,10 +77,28 @@ impl CredentialStore {
         source: &ApiKeySource,
         integration: &IntegrationId,
     ) -> Result<Vec<PoolKey>, CredentialStoreError> {
+        self.resolve_api_key_pool_with_env(source, integration, &BTreeMap::new())
+    }
+
+    /// [`Self::resolve_api_key_pool`] against an environment overlay:
+    /// `env` is the instance's resolved spawn environment, which an
+    /// env-sourced member reads before the inherited process environment
+    /// (it wins at spawn, so it wins here).
+    pub fn resolve_api_key_pool_with_env(
+        &self,
+        source: &ApiKeySource,
+        integration: &IntegrationId,
+        env: &BTreeMap<String, String>,
+    ) -> Result<Vec<PoolKey>, CredentialStoreError> {
+        let declared_env = |var: &String| {
+            env.get(var)
+                .cloned()
+                .or_else(|| env_override(var))
+                .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() })
+        };
         match source {
             ApiKeySource::Env { var } => {
-                let key = env_override(var)
-                    .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() })?;
+                let key = declared_env(var)?;
                 Ok(vec![PoolKey::environment(key)])
             }
             ApiKeySource::Store { credential } => {
@@ -95,8 +113,7 @@ impl CredentialStore {
                 if !pool.is_empty() {
                     return Ok(pool);
                 }
-                let key = env_override(var)
-                    .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() })?;
+                let key = declared_env(var)?;
                 Ok(vec![PoolKey::environment(key)])
             }
         }
@@ -115,15 +132,27 @@ impl CredentialStore {
         source: &ApiKeySource,
         integration: &IntegrationId,
     ) -> Result<String, CredentialStoreError> {
+        self.resolve_session_with_env(source, integration, &BTreeMap::new())
+    }
+
+    /// [`Self::resolve_session`] against an environment overlay, the same
+    /// precedence [`Self::resolve_api_key_pool_with_env`] applies.
+    pub fn resolve_session_with_env(
+        &self,
+        source: &ApiKeySource,
+        integration: &IntegrationId,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, CredentialStoreError> {
+        let declared_env = |var: &String| env.get(var).cloned().or_else(|| env_override(var));
         match source {
-            ApiKeySource::Env { var } => env_override(var)
+            ApiKeySource::Env { var } => declared_env(var)
                 .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() }),
             ApiKeySource::Store { credential } => self
                 .session_material(credential, integration)?
                 .ok_or_else(|| CredentialStoreError::CredentialAbsent(credential.clone())),
             ApiKeySource::EnvOrStore { var, credential } => self
                 .session_material(credential, integration)?
-                .or_else(|| env_override(var))
+                .or_else(|| declared_env(var))
                 .ok_or_else(|| CredentialStoreError::EnvVarAbsent { var: var.clone() }),
         }
     }

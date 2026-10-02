@@ -155,6 +155,7 @@ mod tests {
             access: AccessMode::ReadOnly,
             resume: None,
             timeout: Some(Duration::from_secs(1)),
+            env: Default::default(),
             interaction_handler: None,
         }
     }

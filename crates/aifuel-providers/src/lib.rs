@@ -55,9 +55,10 @@ pub use credentials::{
 };
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
 pub use integrations::{
-    ConfigError, EvidenceContext, EvidenceSource, IntegrationDescriptor, IntegrationOrigin,
-    IntegrationRegistry, PROVIDERS_FILE_NAME, PROVIDERS_SCHEMA_VERSION, ProvidersConfig,
-    RegistryError, ResolveError, builtin_integrations, inspect_any,
+    ConfigError, EvidenceContext, EvidenceSource, InstanceDescriptor, InstanceEnvSource,
+    IntegrationDescriptor, IntegrationOrigin, IntegrationRegistry, PROVIDERS_FILE_NAME,
+    PROVIDERS_SCHEMA_VERSION, ProvidersConfig, ProvidersConfigParts, RegistryError, ResolveError,
+    builtin_integrations, edit_instances, inspect_any,
 };
 pub use model_catalog::{ProviderCatalogDiscovery, ProviderCatalogModel, discover_model_catalog};
 pub use monitoring::{CollectionConfig, ProviderMonitoring};

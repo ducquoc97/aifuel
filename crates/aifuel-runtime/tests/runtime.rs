@@ -12,6 +12,8 @@ mod support;
 
 #[path = "runtime/checkpoints.rs"]
 mod checkpoints;
+#[path = "runtime/instances.rs"]
+mod instances;
 #[path = "runtime/runs.rs"]
 mod runs;
 #[path = "runtime/selection.rs"]

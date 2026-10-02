@@ -124,9 +124,10 @@ fn set_key(args: &[String]) -> Result<u8, String> {
     let store = credential_store()?;
     match &destination {
         Some(integration) => {
-            // An integration target appends to the pool bound under its
-            // Credential Reference: `openai:api-key`, then
-            // `openai:api-key/2`, and so on.
+            // An integration target - including a Provider Integration
+            // instance, which binds its credential under the instance id -
+            // appends to the pool bound under its Credential Reference:
+            // `openai:api-key`, then `openai:api-key/2`, and so on.
             let (member, created) = store
                 .add_pool_api_key(&reference, &material, integration)
                 .map_err(|error| error.to_string())?;
@@ -137,13 +138,13 @@ fn set_key(args: &[String]) -> Result<u8, String> {
                 );
             } else if member == reference {
                 println!(
-                    "Stored API key as credential {} bound to integration {}.",
+                    "Stored API key as credential {} bound to {}.",
                     reference.as_str(),
                     integration.as_str()
                 );
             } else {
                 println!(
-                    "Added API key to the {} pool as credential {} bound to integration {}.",
+                    "Added API key to the {} pool as credential {} bound to {}.",
                     reference.as_str(),
                     member.as_str(),
                     integration.as_str()
@@ -202,6 +203,31 @@ pub(crate) fn resolve_credential_ref(
 > {
     use aifuel_providers::ResolveError;
     let registry = crate::integration_registry()?;
+    // A Provider Integration instance binds its credential under the
+    // instance id: `credential` when the spec names one, otherwise a
+    // conventional `<id>-api-key` reference. Exact instance ids are checked
+    // before `resolve` because instances are not provider selectors.
+    let target_id = aifuel_core::IntegrationId::new(target);
+    if let Some(instance) = registry.instance(&target_id) {
+        let reference = instance
+            .credential
+            .clone()
+            .unwrap_or_else(|| CredentialRef::new(format!("{target}-api-key")));
+        // The instance rebinds the base integration's Authentication
+        // Binding, so the credential-kind check rides on the base's
+        // declared delivery.
+        let delivery = registry
+            .resolve(instance.integration.as_str())
+            .ok()
+            .and_then(|descriptor| match &descriptor.integration.execution {
+                ExecutionConfig::Http {
+                    auth: AuthBinding::ApiKey { delivery, .. },
+                    ..
+                } => Some(delivery.clone()),
+                _ => None,
+            });
+        return Ok((reference, Some(instance.id.clone()), delivery));
+    }
     let descriptor = match registry.resolve(target) {
         Ok(descriptor) => descriptor,
         Err(error @ ResolveError::Ambiguous { .. }) => {
@@ -320,19 +346,19 @@ pub(crate) fn removal_warnings(
     let entries = store.list().map_err(|error| error.to_string())?;
     let mut notes = Vec::new();
     let mut warnings = Vec::new();
+    // Removing one pool member strands the binding only when no member
+    // remains; surviving members keep the integration authenticating.
+    let remaining = |credential: &CredentialRef| -> usize {
+        entries
+            .iter()
+            .filter(|(r, meta)| {
+                meta.kind == CredentialKind::ApiKey
+                    && aifuel_providers::is_pool_member(credential, r)
+            })
+            .count()
+    };
     for descriptor in registry.list() {
         let id = descriptor.integration.id.as_str();
-        // Removing one pool member strands the binding only when no member
-        // remains; surviving members keep the integration authenticating.
-        let remaining = |credential: &CredentialRef| -> usize {
-            entries
-                .iter()
-                .filter(|(r, meta)| {
-                    meta.kind == CredentialKind::ApiKey
-                        && aifuel_providers::is_pool_member(credential, r)
-                })
-                .count()
-        };
         match &descriptor.integration.execution {
             ExecutionConfig::Http { auth, .. } => match auth {
                 // A cookie-delivered binding holds a session credential:
@@ -422,6 +448,35 @@ pub(crate) fn removal_warnings(
                 _ => {}
             },
             ExecutionConfig::Cli { .. } => {}
+        }
+    }
+    // An instance binds its credential under its own reference (defaulting
+    // to `<id>-api-key`); `set-key <instance>` pools under it, so the
+    // pool-aware wording applies here the same as a base binding.
+    for instance in registry.instances() {
+        let default_credential;
+        let credential = match &instance.credential {
+            Some(credential) => credential,
+            None => {
+                default_credential = CredentialRef::new(format!("{}-api-key", instance.id));
+                &default_credential
+            }
+        };
+        if !aifuel_providers::is_pool_member(credential, reference) {
+            continue;
+        }
+        let id = instance.id.as_str();
+        let remaining = remaining(credential);
+        if remaining > 0 {
+            notes.push(format!(
+                "The key pool of credential {credential} bound to instance {id} retains \
+                 {remaining} key(s)."
+            ));
+        } else {
+            warnings.push(format!(
+                "instance {id} binds credential {credential}, whose pool now holds no keys; \
+                 it will fail authentication until a replacement is stored"
+            ));
         }
     }
     Ok((notes, warnings))

@@ -149,6 +149,7 @@ impl AgentAdapter for CodexAdapter {
                     .then(|| options.selection.model.clone()),
                 resume_cursor: options.resume_cursor,
                 external_tools: options.external_tools,
+                env: options.env,
             },
             setup_tx,
         )?;

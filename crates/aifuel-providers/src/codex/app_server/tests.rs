@@ -63,6 +63,7 @@ fn request() -> RunRequest {
         access: AccessMode::ReadOnly,
         resume: Some("native-thread-42".to_owned()),
         timeout: None,
+        env: Default::default(),
         interaction_handler: Some(Arc::new(AnswerHandler)),
     }
 }

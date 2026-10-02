@@ -131,6 +131,7 @@ fn request(integration: &str) -> RunRequest {
         resume: None,
         timeout: None,
         interaction_handler: None,
+        env: Default::default(),
     }
 }
 
@@ -172,8 +173,12 @@ fn a_configured_anthropic_messages_endpoint_executes_a_run() {
     .expect("providers.json writes");
 
     let config = ProvidersConfig::load(&config_path).expect("config loads");
+    let crate::ProvidersConfigParts {
+        integrations: entries,
+        instances,
+    } = config.into_parts();
     let registry =
-        IntegrationRegistry::build(Vec::<IntegrationDescriptor>::new(), config.into_entries())
+        IntegrationRegistry::build(Vec::<IntegrationDescriptor>::new(), entries, instances)
             .expect("registry builds");
     let descriptor = registry
         .resolve("anthropic")

@@ -44,11 +44,7 @@ impl PendingInteraction {
         Self {
             kind: request.kind,
             options,
-            question_ids: request
-                .questions
-                .iter()
-                .map(|question| question.id.clone())
-                .collect(),
+            question_ids: request.question_ids(),
             response,
         }
     }

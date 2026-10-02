@@ -53,6 +53,8 @@ fn spawn_transport(setup: &SessionSetup) -> Result<Transport, AgentRuntimeError>
             command
                 .args(&setup.args)
                 .current_dir(&setup.cwd)
+                // The instance overlay applies to this child only.
+                .envs(&setup.env)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -109,6 +111,10 @@ pub(super) struct SessionSetup {
     /// The persisted ACP `sessionId` to `session/load` or
     /// `session/resume`; `None` opens a fresh session.
     pub resume_cursor: Option<String>,
+    /// The instance environment overlay applied to the agent process at
+    /// spawn. Resolved credential material may ride along - it is never
+    /// logged or persisted by this layer.
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// The fact `start` learns from a completed handshake: the provider

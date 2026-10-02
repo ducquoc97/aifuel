@@ -46,6 +46,10 @@ pub(super) struct SessionSetup {
     /// The persisted OpenCode session id to reattach; `None` opens a
     /// fresh session with `POST /session`.
     pub resume_cursor: Option<String>,
+    /// The instance environment overlay applied to the `opencode serve`
+    /// process at spawn. Resolved credential material may ride along -
+    /// it is never logged or persisted by this layer.
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// The report `start` waits on after launching the driver: the OpenCode

@@ -354,6 +354,7 @@ fn parse_run_args_with_context(
             .unwrap_or(launcher::AccessMode::ReadOnly),
         resume,
         timeout: None,
+        env: Default::default(),
         interaction_handler: None,
     };
     let resolved = config

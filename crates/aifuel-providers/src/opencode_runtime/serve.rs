@@ -33,28 +33,45 @@ pub(super) type Connector =
 
 /// Spawn `opencode serve` and return its endpoint as a [`ServeHandle`].
 pub(super) fn default_connector() -> Connector {
-    Arc::new(|setup| spawn_serve(&setup.cwd))
+    Arc::new(|setup| spawn_serve(&setup.cwd, &setup.env))
 }
 
 /// Basic-auth material the spawned server requires, read from the
 /// documented environment variables the serve process itself honors.
-#[derive(Debug, Clone)]
+///
+/// `Debug` and `Clone` are derived: the struct is `pub(super)` and its
+/// password is returned only into the request headers for the matching
+/// spawn - it never lands in logs or receipts.
+#[derive(Clone)]
 pub(super) struct BasicAuth {
     pub username: String,
     pub password: String,
 }
 
+impl std::fmt::Debug for BasicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BasicAuth")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
 impl BasicAuth {
-    /// The credentials the spawned server would enforce, or `None` when
-    /// the environment asks for no auth.
-    pub(super) fn from_environment() -> Option<Self> {
-        let password = std::env::var(SERVER_PASSWORD_ENV)
-            .ok()
-            .filter(|password| !password.is_empty())?;
-        let username = std::env::var(SERVER_USERNAME_ENV)
-            .ok()
-            .filter(|username| !username.is_empty())
-            .unwrap_or_else(|| DEFAULT_SERVER_USERNAME.to_owned());
+    /// The credentials the spawned server enforces given the environment it
+    /// actually runs with: the instance overlay wins over the inherited
+    /// process environment, matching `Command::envs` precedence. `None`
+    /// when neither asks for auth.
+    pub(super) fn resolve(env: &std::collections::BTreeMap<String, String>) -> Option<Self> {
+        let read = |name: &str| {
+            env.get(name)
+                .cloned()
+                .or_else(|| std::env::var(name).ok())
+                .filter(|value| !value.is_empty())
+        };
+        let password = read(SERVER_PASSWORD_ENV)?;
+        let username =
+            read(SERVER_USERNAME_ENV).unwrap_or_else(|| DEFAULT_SERVER_USERNAME.to_owned());
         Some(Self { username, password })
     }
 }
@@ -90,7 +107,10 @@ fn free_port() -> Result<u16, AgentRuntimeError> {
 /// `cwd`. Stdout is dropped (the serve logs its listen line to stderr
 /// on some versions and stdout on others; stderr is captured for
 /// diagnostics, stdout is not a protocol surface here).
-pub(super) fn spawn_serve(cwd: &Path) -> Result<ServeHandle, AgentRuntimeError> {
+pub(super) fn spawn_serve(
+    cwd: &Path,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<ServeHandle, AgentRuntimeError> {
     let port = free_port()?;
     for candidate in program_candidates("opencode") {
         let mut command = owned_command(&candidate, |command| {
@@ -103,6 +123,9 @@ pub(super) fn spawn_serve(cwd: &Path) -> Result<ServeHandle, AgentRuntimeError> 
                     &port.to_string(),
                 ])
                 .current_dir(cwd)
+                // The instance overlay applies to this child only - the
+                // server sees it, the parent environment never mutates.
+                .envs(env)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped());
@@ -120,7 +143,7 @@ pub(super) fn spawn_serve(cwd: &Path) -> Result<ServeHandle, AgentRuntimeError> 
                             "the opencode server base URL is malformed: {error}"
                         ))
                     })?,
-                    auth: BasicAuth::from_environment(),
+                    auth: BasicAuth::resolve(env),
                     child: Some(child),
                     stderr,
                 });

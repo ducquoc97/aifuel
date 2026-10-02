@@ -19,6 +19,9 @@ where
     if args.first().map(String::as_str) == Some("auth") {
         return aifuel::auth_cli::run(&args[1..]);
     }
+    if args.first().map(String::as_str) == Some("instance") {
+        return aifuel::instance_cli::run(&args[1..]);
+    }
     if args.first().map(String::as_str) == Some("approve") {
         return run_local_approval(&args[1..]);
     }
@@ -264,6 +267,7 @@ fn print_help() {
     println!("Usage: aifuel [--text | --json]");
     println!("       aifuel run --integration INTEGRATION_ID [OPTIONS]");
     println!("       aifuel auth list|set-key|remove");
+    println!("       aifuel instance list|show|add|remove");
     println!("       aifuel profile list|save|remove");
     println!("       aifuel model list|refresh [--provider PROVIDER_ID] [--json]");
     println!("       aifuel approve --run RUN_ID --input INPUT_ID --decision DECISION");
