@@ -3,6 +3,7 @@ use aifuel_core::{StatusCollector, StatusReport};
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::process::Command;
+use std::sync::Arc;
 use std::thread;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
@@ -22,7 +23,7 @@ pub fn serve<C>(
     facade: MonitoringFacade<C>,
 ) -> Result<(), String>
 where
-    C: StatusCollector,
+    C: StatusCollector + 'static,
 {
     let server = Server::http(format!("{host}:{port}"))
         .map_err(|error| format!("could not start dashboard server: {error}"))?;
@@ -44,9 +45,64 @@ where
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("could not start dashboard runtime: {error}"))?;
 
+    // The `/v1` gateway shares this listener. A failure to build the
+    // execution surface (for example an unreadable providers.json) degrades
+    // it to an answered error - monitoring keeps working.
+    let gateway = match aifuel::gateway::Gateway::new() {
+        Ok(gateway) => Some(gateway),
+        Err(error) => {
+            eprintln!("aifuel: /v1 gateway unavailable: {error}");
+            None
+        }
+    };
+
+    // One thread per request: a held-open `/v1` SSE stream must never block
+    // `/api/usage` or the static assets behind the same listener.
+    let shared = Arc::new(Shared {
+        facade,
+        runtime,
+        gateway,
+    });
     for request in server.incoming_requests() {
-        let mut request = request;
-        if !is_local_request(&request) {
+        let shared = Arc::clone(&shared);
+        let _ = thread::Builder::new()
+            .name("aifuel-http".to_owned())
+            .spawn(move || dispatch(&shared, request));
+    }
+    Ok(())
+}
+
+/// Server state shared by every request thread.
+struct Shared<C: StatusCollector> {
+    facade: MonitoringFacade<C>,
+    runtime: tokio::runtime::Runtime,
+    gateway: Option<aifuel::gateway::Gateway>,
+}
+
+fn dispatch<C>(shared: &Shared<C>, mut request: Request)
+where
+    C: StatusCollector,
+{
+    // The Host check is the DNS-rebinding boundary every route shares.
+    if !is_loopback_host(&request) {
+        drain_body(&mut request);
+        respond(
+            request,
+            403,
+            "forbidden: cross-origin request rejected",
+            "text/plain",
+        );
+        return;
+    }
+    let path = request.url().split('?').next().unwrap_or(request.url());
+    if path.starts_with("/v1") {
+        // `/v1` is an API surface for local apps: browser clients on other
+        // loopback ports send a loopback Origin, so the dashboard's
+        // same-origin rule would reject the intended traffic. Loopback
+        // origins pass; remote origins are still rejected. Bearer shape is
+        // enforced by the gateway itself, never ambient cookies, so there
+        // is no dashboard credential to forge here.
+        if !has_loopback_origin(&request) {
             drain_body(&mut request);
             respond(
                 request,
@@ -54,11 +110,27 @@ where
                 "forbidden: cross-origin request rejected",
                 "text/plain",
             );
-            continue;
+            return;
         }
-        handle_request(request, &facade, &runtime);
+        aifuel::gateway::handle(
+            request,
+            shared.gateway.as_ref(),
+            &shared.facade,
+            &shared.runtime,
+        );
+        return;
     }
-    Ok(())
+    if !is_local_request(&request) {
+        drain_body(&mut request);
+        respond(
+            request,
+            403,
+            "forbidden: cross-origin request rejected",
+            "text/plain",
+        );
+        return;
+    }
+    handle_request(request, &shared.facade, &shared.runtime);
 }
 
 fn handle_request<C>(
@@ -248,26 +320,12 @@ fn respond(request: Request, status: u16, body: impl Into<String>, content_type:
 }
 
 fn is_local_request(request: &Request) -> bool {
-    let host = request
-        .headers()
-        .iter()
-        .find(|header| header.field.equiv("Host"))
-        .map(|header| host_without_port(header.value.as_str()))
-        .unwrap_or_else(|| "127.0.0.1".to_owned());
-    if !matches!(host.as_str(), "127.0.0.1" | "localhost" | "[::1]" | "::1") {
+    let host = request_host(request);
+    if !is_loopback_host(&request) {
         return false;
     }
-    if let Some(origin) = request
-        .headers()
-        .iter()
-        .find(|header| header.field.equiv("Origin"))
-        .map(|header| header.value.as_str())
-    {
-        let origin_host = origin
-            .split_once("://")
-            .map(|(_, value)| host_without_port(value))
-            .unwrap_or_default();
-        if origin != "null" && origin_host != host {
+    if let Some(origin) = origin_host(request) {
+        if origin != "null" && origin != host {
             return false;
         }
     }
@@ -280,6 +338,47 @@ fn is_local_request(request: &Request) -> bool {
         return false;
     }
     true
+}
+
+/// Whether the request targets the loopback listener: the Host header is a
+/// loopback name or absent. This is the DNS-rebinding boundary.
+fn is_loopback_host(request: &Request) -> bool {
+    matches!(
+        request_host(request).as_str(),
+        "127.0.0.1" | "localhost" | "[::1]" | "::1"
+    )
+}
+
+/// Whether the request's Origin header is absent or a loopback origin -
+/// local browser apps (Open WebUI, NextChat) served from another loopback
+/// port, and non-browser clients that send no Origin at all.
+fn has_loopback_origin(request: &Request) -> bool {
+    origin_host(request).is_none_or(|origin| {
+        origin == "null" || matches!(origin.as_str(), "127.0.0.1" | "localhost" | "[::1]" | "::1")
+    })
+}
+
+fn request_host(request: &Request) -> String {
+    request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Host"))
+        .map(|header| host_without_port(header.value.as_str()))
+        .unwrap_or_else(|| "127.0.0.1".to_owned())
+}
+
+fn origin_host(request: &Request) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Origin"))
+        .map(|header| header.value.as_str())
+        .map(|origin| {
+            origin
+                .split_once("://")
+                .map(|(_, value)| host_without_port(value))
+                .unwrap_or_default()
+        })
 }
 
 fn host_without_port(value: &str) -> String {
