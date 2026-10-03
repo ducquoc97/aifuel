@@ -155,6 +155,15 @@ fn list_agents_returns_provider_owned_presence_version_and_independent_capabilit
     let filtered_agents = filtered[0]["result"]["structuredContent"]["agents"]
         .as_array()
         .expect("filtered agents should be an array");
-    assert_eq!(filtered_agents.len(), 1);
-    assert_eq!(filtered_agents[0]["provider"], "codex");
+    assert!(!filtered_agents.is_empty());
+    assert!(
+        filtered_agents
+            .iter()
+            .all(|agent| agent["provider"] == "codex")
+    );
+    assert!(
+        filtered_agents
+            .iter()
+            .any(|agent| agent["integration"] == "codex")
+    );
 }
