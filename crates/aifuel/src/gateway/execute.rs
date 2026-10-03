@@ -79,6 +79,11 @@ impl AgentRunOutputHandler for DeltaSink {
     }
 }
 
+/// Deepest configured-name expansion `resolve_attempts` follows: an
+/// alias may point at a combo or another alias, so cycles resolve as a
+/// loud 400 instead of recursing forever.
+const MAX_ROUTE_DEPTH: usize = 8;
+
 /// Resolve the inbound `model` string to the attempt chain - see the
 /// `crate::gateway` module docs for the addressing convention.
 pub(crate) fn resolve_attempts(
@@ -86,15 +91,30 @@ pub(crate) fn resolve_attempts(
     model: &str,
     status: &dyn Fn() -> StatusReport,
 ) -> Result<Vec<Attempt>, (u16, String)> {
+    resolve_attempts_at(gateway, model, status, 0)
+}
+
+fn resolve_attempts_at(
+    gateway: &Gateway,
+    model: &str,
+    status: &dyn Fn() -> StatusReport,
+    depth: usize,
+) -> Result<Vec<Attempt>, (u16, String)> {
     if let Some(resolution) = super::routes::resolve(model).map_err(|error| (500, error))? {
+        if depth >= MAX_ROUTE_DEPTH {
+            return Err((
+                400,
+                format!("route {model:?} resolves too deeply; check gateway.json for alias cycles"),
+            ));
+        }
         return match resolution {
             super::routes::Resolution::Alias(substituted) => {
-                resolve_attempts(gateway, &substituted, status)
+                resolve_attempts_at(gateway, &substituted, status, depth + 1)
             }
             super::routes::Resolution::Combo(selectors) => {
                 let mut attempts = Vec::new();
                 for selector in &selectors {
-                    attempts.extend(resolve_attempts(gateway, selector, status)?);
+                    attempts.extend(resolve_attempts_at(gateway, selector, status, depth + 1)?);
                 }
                 if attempts.is_empty() {
                     Err((404, format!("combo {model:?} resolved no candidates")))
