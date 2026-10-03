@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="color-scheme" content="light"/>
+<title>AI Fuel - Gateway</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23F97316'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' font-family='system-ui'%3E⛽%3C/text%3E%3C/svg%3E"/>
+<link rel="stylesheet" href="/dashboard.css"/>
+<link rel="stylesheet" href="/gateway_ui.css"/>
+<script src="/gateway_ui.js" defer></script>
+</head>
+<body>
+
+<header class="toolbar">
+  <div class="toolbar-inner">
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">⛽</span>
+      <span>aifuel</span>
+    </div>
+    <div class="toolbar-actions">
+      <span class="status-text" id="updated" aria-live="polite">loading…</span>
+      <a class="btn" href="/">Dashboard</a>
+      <button class="btn" id="refresh-btn" onclick="refreshAll()" aria-label="Refresh gateway data now">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
+          <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
+        </svg>
+        Refresh
+      </button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-text">
+      <h1 class="large-title" id="hero-title">Gateway</h1>
+      <p class="hero-sub">OpenAI-compatible gateway that routes chat requests to your locally configured AI coding integrations.</p>
+    </div>
+  </section>
+
+  <section class="gw-section" id="gw-providers" aria-labelledby="gw-providers-title">
+    <h2 class="gw-title" id="gw-providers-title">Providers</h2>
+    <p class="gw-sub">Executable integrations the gateway can route requests to.</p>
+    <div class="gw-card">
+      <table class="gw-table" id="providers-table">
+        <thead>
+          <tr><th>Integration</th><th>Provider</th><th>Streaming</th><th>Read-only</th></tr>
+        </thead>
+        <tbody id="providers-body"></tbody>
+      </table>
+    </div>
+    <div class="gw-msg" id="providers-msg" role="status" aria-live="polite" hidden></div>
+  </section>
+
+  <section class="gw-section" id="gw-keys" aria-labelledby="gw-keys-title">
+    <h2 class="gw-title" id="gw-keys-title">API Keys</h2>
+    <p class="gw-sub">Gateway keys authenticate clients as <code>Authorization: Bearer aifuel-gw-…</code>. Leave the model allowlist empty to permit every model.</p>
+
+    <div class="gw-callout" id="new-key-callout" role="status" hidden>
+      <div class="gw-callout-text">
+        <div class="gw-callout-title">Copy this key now - it will not be shown again.</div>
+        <div class="gw-callout-key" id="new-key-value"></div>
+        <div class="gw-callout-sub">Only the key prefix appears in this dashboard afterwards.</div>
+      </div>
+      <div class="gw-callout-actions">
+        <button class="btn" type="button" id="copy-key-btn" onclick="copyNewKey(this)">Copy</button>
+        <button class="btn" type="button" onclick="dismissNewKey()">Done</button>
+      </div>
+    </div>
+
+    <form class="gw-form" id="create-key-form" onsubmit="return createKey(event)">
+      <input class="gw-input" type="text" name="name" maxlength="80" required
+             placeholder="Key name - e.g. my app" aria-label="Key name">
+      <input class="gw-input gw-input-wide" type="text" name="models"
+             placeholder="Model allowlist, comma-separated (optional)"
+             aria-label="Model allowlist, optional">
+      <button class="btn" type="submit">Create key</button>
+    </form>
+
+    <div class="gw-card">
+      <table class="gw-table" id="keys-table">
+        <thead>
+          <tr><th>Name</th><th>Prefix</th><th>Created</th><th>Last used</th><th>Models</th><th aria-label="Actions"></th></tr>
+        </thead>
+        <tbody id="keys-body"></tbody>
+      </table>
+    </div>
+    <div class="gw-msg" id="keys-msg" role="status" aria-live="polite" hidden></div>
+  </section>
+
+  <section class="gw-section" id="gw-logs" aria-labelledby="gw-logs-title">
+    <h2 class="gw-title" id="gw-logs-title">Request Log</h2>
+    <p class="gw-sub">Latest gateway requests, newest first. Auto-refreshes every 10 seconds.</p>
+    <div class="gw-card">
+      <table class="gw-table" id="logs-table">
+        <thead>
+          <tr><th>Time</th><th>Model</th><th>Integration</th><th>Status</th><th>Stream</th><th class="gw-num">Tokens</th><th>Error</th></tr>
+        </thead>
+        <tbody id="logs-body"></tbody>
+      </table>
+    </div>
+    <div class="gw-msg" id="logs-msg" role="status" aria-live="polite" hidden></div>
+  </section>
+
+  <footer>
+    <span>The gateway API only accepts same-origin requests from this dashboard.</span>
+  </footer>
+</main>
+
+<div id="gw-toasts" aria-live="polite"></div>
+
+</body>
+</html>

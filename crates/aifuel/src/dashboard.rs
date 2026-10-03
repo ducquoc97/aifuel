@@ -11,6 +11,9 @@ const INDEX_HTML: &str = include_str!("../../../src/index.html");
 const DASHBOARD_CSS: &str = include_str!("../../../src/dashboard.css");
 const CONNECT_CSS: &str = include_str!("../../../src/connect.css");
 const CONNECT_JS: &str = include_str!("../../../src/connect.js");
+const GATEWAY_HTML: &str = include_str!("../../../src/gateway.html");
+const GATEWAY_CSS: &str = include_str!("../../../src/gateway_ui.css");
+const GATEWAY_JS: &str = include_str!("../../../src/gateway_ui.js");
 
 /// Mutation request bodies are small by contract (an integration id plus a
 /// pasted key); anything larger is rejected rather than buffered.
@@ -175,6 +178,18 @@ fn handle_request<C>(
             request,
             200,
             CONNECT_JS,
+            "application/javascript; charset=utf-8",
+        ),
+        (&Method::Get, "/gateway") => {
+            respond(request, 200, GATEWAY_HTML, "text/html; charset=utf-8")
+        }
+        (&Method::Get, "/gateway_ui.css") => {
+            respond(request, 200, GATEWAY_CSS, "text/css; charset=utf-8")
+        }
+        (&Method::Get, "/gateway_ui.js") => respond(
+            request,
+            200,
+            GATEWAY_JS,
             "application/javascript; charset=utf-8",
         ),
         (&Method::Get, "/api/usage") => {
