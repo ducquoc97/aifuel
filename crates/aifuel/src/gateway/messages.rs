@@ -108,6 +108,9 @@ pub(crate) fn handle<C: StatusCollector>(
     if model.is_empty() {
         return fail(request, "", parsed.stream, 400, "model is required");
     }
+    if let Err(reason) = super::keys::require_permits(&request, &model) {
+        return fail(request, &model, parsed.stream, 403, &reason);
+    }
     if parsed.messages.is_empty() {
         return fail(
             request,
@@ -277,6 +280,7 @@ fn error_type(status: u16) -> &'static str {
     match status {
         400 => "invalid_request_error",
         401 => "authentication_error",
+        403 => "permission_error",
         404 => "not_found_error",
         429 => "rate_limit_error",
         _ => "api_error",

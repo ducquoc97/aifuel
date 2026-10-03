@@ -121,6 +121,68 @@ fn permits_honors_the_stored_allowlist() {
 }
 
 #[test]
+fn update_replaces_and_clears_the_allowlist() {
+    // `update` moves only `models`: the row keeps its name, digest, and
+    // history, and `permits` tracks whichever list is current - the admin
+    // api's allowlist edit must take effect without reissuing the key.
+    let store = test_store("update");
+    let (summary, _) = store
+        .create("scoped", Some(vec!["auto".to_owned()]))
+        .expect("create scoped");
+    assert!(store.permits("scoped", "auto"));
+    assert!(!store.permits("scoped", "codex"));
+
+    store
+        .update(&summary.id, Some(vec!["codex".to_owned()]))
+        .expect("replace the allowlist");
+    assert!(
+        !store.permits("scoped", "auto"),
+        "a replaced allowlist drops the old members"
+    );
+    assert!(store.permits("scoped", "codex"));
+    let listed = store.list().expect("list");
+    assert_eq!(listed[0].models, Some(vec!["codex".to_owned()]));
+
+    store
+        .update(&summary.id, None)
+        .expect("clear the allowlist");
+    assert!(
+        store.permits("scoped", "auto") && store.permits("scoped", "anything"),
+        "a cleared allowlist restores the every-model posture"
+    );
+
+    assert!(
+        store.update("k_missing", None).is_err(),
+        "an unknown id reports instead of silently no-op'ing"
+    );
+}
+
+#[test]
+fn the_permits_gate_combines_authorize_and_the_allowlist() {
+    // `require_permits` is `authorize` then `permits` over the default
+    // store; a `tiny_http::Request` cannot be built in a unit test, so
+    // drive the same pair store-level: the identity authorize resolves is
+    // the identity the allowlist checks, and a rejected bearer means the
+    // gate errors before `permits` is ever consulted.
+    let store = test_store("require-permits");
+    let (_, raw) = store
+        .create("scoped", Some(vec!["auto".to_owned()]))
+        .expect("create scoped");
+
+    let identity = store.authorize(Some(&raw)).expect("valid key");
+    assert_eq!(identity, "scoped");
+    assert!(store.permits(&identity, "auto"));
+    assert!(
+        !store.permits(&identity, "gpt-5"),
+        "a valid key for a disallowed model is the 403 case"
+    );
+    assert!(
+        store.authorize(Some("aifuel-gw-bogus")).is_err(),
+        "an unknown bearer is the gate's first failure mode"
+    );
+}
+
+#[test]
 fn bearer_parsing_accepts_the_scheme_case_insensitively() {
     let header = |value: &str| {
         tiny_http::Header::from_bytes("Authorization", value).expect("header constructs")

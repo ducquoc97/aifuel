@@ -71,6 +71,8 @@ th.gw-num { text-align: right }
   white-space: nowrap;
 }
 .gw-dim { color: var(--label-3) }
+/* Route targets can be long selector lists - wrap instead of scrolling. */
+.gw-route-target { white-space: normal; word-break: break-word }
 .gw-err-cell {
   max-width: 260px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -81,6 +83,8 @@ th.gw-num { text-align: right }
 .badge.gw-yes     { color: var(--green); background: var(--green-tint) }
 .badge.gw-stream  { color: var(--blue);  background: var(--blue-tint) }
 .badge.gw-revoked { color: var(--red);   background: var(--red-tint) }
+.badge.gw-alias   { color: var(--blue);  background: var(--blue-tint) }
+.badge.gw-combo   { color: var(--green); background: var(--green-tint) }
 .gw-status {
   display: inline-block; min-width: 34px; text-align: center;
   font-size: 12px; font-weight: 600; letter-spacing: 0;

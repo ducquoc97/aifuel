@@ -49,6 +49,10 @@ pub(crate) fn completions<C: StatusCollector>(
         respond_error(request, 400, "model is required", "invalid_request_error");
         return;
     }
+    if let Err(reason) = super::keys::require_permits(&request, model) {
+        respond_error(request, 403, &reason, "permission_error");
+        return;
+    }
     if chat.messages.is_empty() {
         respond_error(
             request,

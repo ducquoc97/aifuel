@@ -85,6 +85,10 @@ pub(crate) fn handle<C: StatusCollector>(
         respond_error(request, 400, "model is required", "invalid_request_error");
         return;
     }
+    if let Err(reason) = super::keys::require_permits(&request, model) {
+        respond_error(request, 403, &reason, "permission_error");
+        return;
+    }
     let Some(prompt) = completion.prompt.map(Prompt::into_text) else {
         respond_error(request, 400, "prompt is required", "invalid_request_error");
         return;

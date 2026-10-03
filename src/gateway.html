@@ -54,6 +54,39 @@
     <div class="gw-msg" id="providers-msg" role="status" aria-live="polite" hidden></div>
   </section>
 
+  <section class="gw-section" id="gw-routes" aria-labelledby="gw-routes-title">
+    <h2 class="gw-title" id="gw-routes-title">Routes</h2>
+    <p class="gw-sub">Named routes stored in <code>gateway.json</code>. An alias rewrites a model name to another selector; a combo is an ordered failover list. When a name exists as both, the alias wins. Changes apply to new requests immediately.</p>
+
+    <form class="gw-form" id="add-alias-form" onsubmit="return addAlias(event)">
+      <input class="gw-input" type="text" name="name" maxlength="80" required
+             placeholder="Alias name - e.g. cheap" aria-label="Alias name">
+      <input class="gw-input gw-input-wide" type="text" name="target" required
+             placeholder="Model string - e.g. groq:api-key/llama-3.3-70b"
+             aria-label="Alias target model">
+      <button class="btn" type="submit">Add alias</button>
+    </form>
+
+    <form class="gw-form" id="add-combo-form" onsubmit="return addCombo(event)">
+      <input class="gw-input" type="text" name="name" maxlength="80" required
+             placeholder="Combo name - e.g. heavy" aria-label="Combo name">
+      <input class="gw-input gw-input-wide" type="text" name="selectors" required
+             placeholder="Selectors, comma-separated - e.g. codex, copilot, devin"
+             aria-label="Combo selectors">
+      <button class="btn" type="submit">Add combo</button>
+    </form>
+
+    <div class="gw-card">
+      <table class="gw-table" id="routes-table">
+        <thead>
+          <tr><th>Name</th><th>Kind</th><th>Target</th><th aria-label="Actions"></th></tr>
+        </thead>
+        <tbody id="routes-body"></tbody>
+      </table>
+    </div>
+    <div class="gw-msg" id="routes-msg" role="status" aria-live="polite" hidden></div>
+  </section>
+
   <section class="gw-section" id="gw-keys" aria-labelledby="gw-keys-title">
     <h2 class="gw-title" id="gw-keys-title">API Keys</h2>
     <p class="gw-sub">Gateway keys authenticate clients as <code>Authorization: Bearer aifuel-gw-…</code>. Leave the model allowlist empty to permit every model.</p>
