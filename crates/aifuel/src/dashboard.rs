@@ -7,13 +7,7 @@ use std::sync::Arc;
 use std::thread;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
-const INDEX_HTML: &str = include_str!("../../../src/index.html");
-const DASHBOARD_CSS: &str = include_str!("../../../src/dashboard.css");
-const CONNECT_CSS: &str = include_str!("../../../src/connect.css");
-const CONNECT_JS: &str = include_str!("../../../src/connect.js");
-const GATEWAY_HTML: &str = include_str!("../../../src/gateway.html");
-const GATEWAY_CSS: &str = include_str!("../../../src/gateway_ui.css");
-const GATEWAY_JS: &str = include_str!("../../../src/gateway_ui.js");
+mod ui;
 
 /// Mutation request bodies are small by contract (an integration id plus a
 /// pasted key); anything larger is rejected rather than buffered.
@@ -165,33 +159,32 @@ fn handle_request<C>(
         .split('?')
         .nth(1)
         .is_some_and(|query| query.split('&').any(|part| part == "force=1"));
-    let path = request.url().split('?').next().unwrap_or(request.url());
-    match (request.method(), path) {
-        (&Method::Get, "/") => respond(request, 200, INDEX_HTML, "text/html; charset=utf-8"),
-        (&Method::Get, "/dashboard.css") => {
-            respond(request, 200, DASHBOARD_CSS, "text/css; charset=utf-8")
+    let path = request
+        .url()
+        .split('?')
+        .next()
+        .unwrap_or(request.url())
+        .to_owned();
+    // GET pages render the shared shell; GET /ui/* serves the embedded
+    // static assets (styles, scripts, fonts). Both lookups answer with
+    // compiled-in content - a miss falls through to the API table.
+    if matches!(request.method(), Method::Get) {
+        if let Some(html) = ui::page(&path) {
+            respond(request, 200, html, "text/html; charset=utf-8");
+            return;
         }
-        (&Method::Get, "/connect.css") => {
-            respond(request, 200, CONNECT_CSS, "text/css; charset=utf-8")
+        if let Some(asset) = ui::asset(&path) {
+            respond_bytes(request, 200, asset.body, asset.content_type);
+            return;
         }
-        (&Method::Get, "/connect.js") => respond(
-            request,
-            200,
-            CONNECT_JS,
-            "application/javascript; charset=utf-8",
-        ),
-        (&Method::Get, "/gateway") => {
-            respond(request, 200, GATEWAY_HTML, "text/html; charset=utf-8")
+        if path.starts_with("/ui/") {
+            let mut request = request;
+            drain_body(&mut request);
+            respond(request, 404, "not found", "text/plain");
+            return;
         }
-        (&Method::Get, "/gateway_ui.css") => {
-            respond(request, 200, GATEWAY_CSS, "text/css; charset=utf-8")
-        }
-        (&Method::Get, "/gateway_ui.js") => respond(
-            request,
-            200,
-            GATEWAY_JS,
-            "application/javascript; charset=utf-8",
-        ),
+    }
+    match (request.method(), path.as_str()) {
         (&Method::Get, "/api/usage") => {
             let report = runtime.block_on(facade.status(force));
             respond_json(request, 200, &report);
@@ -219,6 +212,15 @@ fn handle_request<C>(
         },
         (&Method::Post, "/api/auth/set-key") => handle_set_key(request),
         (&Method::Post, "/api/auth/remove") => handle_remove(request),
+        // The sidebar's Quit button. Answer first, then exit on a short
+        // delay so the response reaches the browser before the socket dies.
+        (&Method::Post, "/api/shutdown") => {
+            respond(request, 200, "{\"ok\":true}", "application/json; charset=utf-8");
+            thread::spawn(|| {
+                thread::sleep(std::time::Duration::from_millis(120));
+                std::process::exit(0);
+            });
+        }
         _ => {
             let mut request = request;
             drain_body(&mut request);
@@ -342,6 +344,17 @@ fn respond_stream(request: Request, report: &StatusReport) {
 fn respond(request: Request, status: u16, body: impl Into<String>, content_type: &str) {
     let body = body.into();
     let mut response = Response::from_data(body.into_bytes()).with_status_code(StatusCode(status));
+    response.add_header(
+        Header::from_bytes("Content-Type", content_type).expect("static content type is valid"),
+    );
+    response.add_header(
+        Header::from_bytes("Cache-Control", "no-store").expect("static header is valid"),
+    );
+    let _ = request.respond(response);
+}
+
+fn respond_bytes(request: Request, status: u16, body: &[u8], content_type: &str) {
+    let mut response = Response::from_data(body.to_vec()).with_status_code(StatusCode(status));
     response.add_header(
         Header::from_bytes("Content-Type", content_type).expect("static content type is valid"),
     );

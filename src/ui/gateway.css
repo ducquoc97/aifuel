@@ -1,0 +1,388 @@
+/* ============================================================
+   Gateway console sections - Connect, Providers, Routes,
+   API Keys, Logs. Envi light tokens from app.css.
+   ============================================================ */
+
+.gw-content {
+  max-width: 1160px;
+  margin: 0 auto;
+}
+
+.gw-section { margin: 0 }
+/* Headline 3 for sub-groups inside a section */
+.gw-h3 {
+  margin: 20px 0 0;
+  font-size: 14px; font-weight: 600; letter-spacing: -0.008em;
+}
+.gw-sub {
+  margin: 0; max-width: 66ch;
+  color: var(--ink-48);
+  font-size: 13px; line-height: 1.45; letter-spacing: -0.006em;
+}
+.gw-sub code, .gw-hint code, .gw-endpoint-sub code, .gw-doc-list code {
+  font-size: 12px;
+  background: var(--fill-4);
+  padding: 1px 5px; border-radius: 5px;
+}
+.gw-hint {
+  margin: 6px 2px 0;
+  color: var(--ink-ter);
+  font-size: 12px; line-height: 1.4; letter-spacing: 0;
+}
+.gw-legend { margin-top: 10px; font-size: 12px; color: var(--ink-48) }
+
+/* ---- Card-wrapped tables ---- */
+.gw-card {
+  margin-top: 14px;
+  background: var(--canvas);
+  border: .5px solid var(--line);
+  border-radius: var(--r-surface);
+  box-shadow: var(--shadow-card);
+  padding: 6px 18px 10px;
+  overflow-x: auto;
+}
+.gw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px; letter-spacing: -0.004em;
+}
+.gw-table th {
+  text-align: left;
+  font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--ink-ter);
+  padding: 10px 12px 8px;
+  border-bottom: .5px solid var(--line);
+  white-space: nowrap;
+}
+.gw-table td {
+  padding: 9px 12px;
+  border-bottom: .5px solid var(--hairline);
+  color: var(--ink-48);
+  vertical-align: middle;
+}
+.gw-table tbody tr:last-child td { border-bottom: none }
+@media (hover:hover) {
+  .gw-table tbody tr:hover td { background: var(--fill-4) }
+}
+.gw-table td.gw-primary { color: var(--ink); font-weight: 500 }
+.gw-table td.gw-empty {
+  text-align: center; color: var(--ink-ter);
+  padding: 22px 12px;
+}
+.gw-table tr.gw-revoked td:not(:nth-last-child(-n+2)) { opacity: .5 }
+.gw-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+th.gw-num { text-align: right }
+.gw-mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px; letter-spacing: 0;
+  white-space: nowrap;
+}
+.gw-dim { color: var(--ink-ter) }
+/* Route targets can be long selector lists - wrap instead of scrolling. */
+.gw-route-target { white-space: normal; word-break: break-word }
+.gw-err-cell {
+  max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--err);
+}
+.gw-actions { text-align: right; white-space: nowrap }
+.gw-actions .btn + .btn { margin-left: 6px }
+
+/* ---- Badges, chips, and status pills ---- */
+.badge.gw-yes      { color: var(--ok);    background: var(--ok-tint) }
+.badge.gw-chat     { color: var(--accent); background: var(--accent-tint) }
+.badge.gw-embed    { color: var(--info);  background: var(--info-tint) }
+.badge.gw-revoked  { color: var(--err);   background: var(--err-tint) }
+.badge.gw-active   { color: var(--ok);    background: var(--ok-tint) }
+.badge.gw-alias    { color: var(--accent); background: var(--accent-tint) }
+.badge.gw-combo    { color: var(--ok);    background: var(--ok-tint) }
+.badge.gw-shadowed { color: var(--warn);  background: var(--warn-tint) }
+.badge.gw-kind     { color: var(--ink-48); background: var(--fill-3) }
+.badge.gw-stream   { color: var(--info);  background: var(--info-tint) }
+
+/* Small mono chip for selectors / allowlisted models. */
+.gw-chip {
+  display: inline-block;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px; letter-spacing: 0; line-height: 1.35;
+  color: var(--ink-48);
+  background: var(--fill-4);
+  border-radius: 6px;
+  padding: 2px 7px;
+  margin: 1px 4px 1px 0;
+  word-break: break-all;
+}
+
+.gw-status {
+  display: inline-block; min-width: 34px; text-align: center;
+  font-size: 12px; font-weight: 600; letter-spacing: 0;
+  padding: 3px 8px; border-radius: var(--r-pill);
+  font-variant-numeric: tabular-nums;
+}
+.gw-status.ok    { color: var(--ok);    background: var(--ok-tint) }
+.gw-status.warn  { color: var(--warn);  background: var(--warn-tint) }
+.gw-status.fail  { color: var(--err);   background: var(--err-tint) }
+.gw-status.other { color: var(--ink-48); background: var(--fill-4) }
+
+/* ---- Connect section ---- */
+.gw-endpoint { padding-top: 10px; padding-bottom: 12px }
+.gw-endpoint-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.gw-endpoint-info { flex: 1; min-width: 240px }
+.gw-endpoint-label {
+  font-size: 13px; font-weight: 600; letter-spacing: -0.006em;
+  color: var(--ink);
+}
+.gw-url {
+  display: block; margin-top: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px; letter-spacing: 0;
+  color: var(--ink);
+  background: var(--pearl);
+  border: .5px solid var(--line);
+  border-radius: var(--r-ctl);
+  padding: 8px 12px;
+  word-break: break-all;
+  user-select: all;
+}
+.gw-endpoint-sub {
+  margin-top: 6px;
+  color: var(--ink-48);
+  font-size: 12px; line-height: 1.4; letter-spacing: 0;
+  max-width: 64ch;
+}
+
+.gw-clients {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 12px;
+}
+.gw-client-card {
+  background: var(--canvas);
+  border: .5px solid var(--line);
+  border-radius: var(--r-surface);
+  box-shadow: var(--shadow-card);
+  padding: 14px 18px;
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.gw-client-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+}
+.gw-client-name {
+  font-size: 14px; font-weight: 600; letter-spacing: -0.008em;
+}
+.gw-client-sub {
+  margin-top: 4px;
+  color: var(--ink-48);
+  font-size: 12px; line-height: 1.4; letter-spacing: 0;
+}
+.gw-snippet {
+  margin: 10px 0 0;
+  background: var(--pearl);
+  border: .5px solid var(--line);
+  border-radius: var(--r-ctl);
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.5; letter-spacing: 0;
+  color: var(--ink);
+  white-space: pre;
+  flex: 1;
+}
+.gw-snippet code { font: inherit }
+
+/* Doc card: addressing rules */
+.gw-doc { padding-top: 10px; padding-bottom: 12px }
+.gw-doc-list {
+  margin: 0; padding-left: 18px;
+  color: var(--ink-48);
+  font-size: 13px; line-height: 1.5; letter-spacing: -0.006em;
+}
+.gw-doc-list li + li { margin-top: 6px }
+.gw-doc-list b { color: var(--ink); font-weight: 600 }
+
+/* ---- Provider cards ---- */
+.gw-group-title {
+  margin: 20px 0 0;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-ter);
+}
+.gw-group-title:first-child { margin-top: 14px }
+.gw-provider-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+.gw-p-card {
+  background: var(--canvas);
+  border: .5px solid var(--line);
+  border-radius: var(--r-surface);
+  box-shadow: var(--shadow-card);
+  padding: 12px 16px;
+  min-width: 0;
+}
+.gw-p-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.gw-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+}
+.gw-p-name {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px; font-weight: 600; letter-spacing: 0;
+  color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gw-p-provider {
+  margin-top: 4px;
+  color: var(--ink-48);
+  font-size: 12px; letter-spacing: 0;
+}
+.gw-p-card .badges { margin-top: 10px }
+
+/* ---- Forms ---- */
+.gw-form {
+  margin-top: 14px;
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
+}
+.gw-form-col { flex-direction: column; align-items: stretch }
+.gw-form-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
+.gw-form-row-fill > * { flex: 1; min-width: 0 }
+.gw-input {
+  appearance: none; font: inherit;
+  font-size: 12.5px; letter-spacing: -0.004em;
+  color: var(--ink);
+  background: var(--pearl);
+  border: .5px solid var(--line);
+  border-radius: var(--r-ctl);
+  padding: 7px 12px; width: 220px;
+}
+.gw-input-wide { flex: 1; min-width: 220px; width: auto }
+.gw-input::placeholder { color: var(--ink-ter) }
+.gw-select {
+  appearance: none; font: inherit;
+  font-size: 12.5px; letter-spacing: -0.004em;
+  color: var(--ink);
+  background: var(--pearl);
+  border: .5px solid var(--line);
+  border-radius: var(--r-ctl);
+  padding: 5px 10px;
+  margin: 0 4px;
+}
+
+/* Tag input: chips + free input, styled like .gw-input */
+.gw-tags {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 4px;
+  background: var(--pearl);
+  border: .5px solid var(--line);
+  border-radius: var(--r-ctl);
+  padding: 5px 8px;
+  min-width: 220px;
+  cursor: text;
+}
+.gw-tags:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.gw-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px; letter-spacing: 0;
+  color: var(--ink);
+  background: var(--fill-3);
+  border-radius: 6px;
+  padding: 2px 4px 2px 8px;
+}
+.gw-tag button {
+  appearance: none; border: none; cursor: pointer; font: inherit;
+  font-size: 12px; line-height: 1;
+  color: var(--ink-ter);
+  background: transparent;
+  padding: 1px 4px; border-radius: 4px;
+}
+.gw-tag button:hover { color: var(--err); background: var(--fill-4) }
+.gw-tag-input {
+  appearance: none; border: none; font: inherit;
+  font-size: 12px; letter-spacing: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--ink);
+  background: transparent;
+  padding: 4px 2px;
+  flex: 1; min-width: 120px;
+}
+.gw-tag-input:focus { outline: none }
+.gw-tag-input::placeholder { color: var(--ink-ter) }
+
+/* ---- New-key callout: the raw key is returned exactly once ---- */
+.gw-callout {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: var(--warn-tint);
+  border: .5px solid rgba(138,93,0,.30);
+  border-radius: var(--r-surface);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.gw-callout-text { flex: 1; min-width: 240px }
+.gw-callout-title {
+  color: var(--warn);
+  font-size: 13px; font-weight: 600; letter-spacing: -0.004em;
+}
+.gw-callout-key {
+  margin-top: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px; letter-spacing: 0;
+  color: var(--ink);
+  background: var(--canvas);
+  border: .5px solid var(--line);
+  border-radius: var(--r-ctl);
+  padding: 7px 12px;
+  word-break: break-all;
+  user-select: all;
+}
+.gw-callout-sub {
+  margin-top: 8px;
+  color: var(--ink-48);
+  font-size: 12px; letter-spacing: 0; line-height: 1.4;
+}
+.gw-callout-sub code {
+  font-size: 11.5px;
+  background: var(--fill-4);
+  padding: 1px 5px; border-radius: 5px;
+}
+.gw-callout-actions { display: flex; gap: 8px; flex: none }
+
+.gw-revoke { color: var(--err) }
+
+/* ---- Log controls ---- */
+.gw-log-controls {
+  margin-top: 10px;
+  display: flex; align-items: center; justify-content: flex-end;
+}
+.gw-log-limit {
+  color: var(--ink-48);
+  font-size: 12.5px; letter-spacing: -0.004em;
+}
+
+/* ---- Per-section inline messages ---- */
+.gw-msg {
+  margin-top: 12px;
+  color: var(--ink-48);
+  font-size: 12.5px; letter-spacing: -0.004em;
+}
+.gw-msg .err { color: var(--err) }
+
+/* ---- Legend (shared with usage footer) ---- */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px }
+.legend-item { display: flex; align-items: center; gap: 5px }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex: none }

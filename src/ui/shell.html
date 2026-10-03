@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="color-scheme" content="light"/>
+<title>aifuel - {{TITLE}}</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230066CC'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' font-family='system-ui'%3E⛽%3C/text%3E%3C/svg%3E"/>
+<link rel="stylesheet" href="/ui/fonts.css"/>
+<link rel="stylesheet" href="/ui/app.css"/>
+{{PAGE_CSS}}
+<script src="/ui/app.js" defer></script>
+{{PAGE_JS}}
+</head>
+<body data-active="{{ACTIVE}}" data-section="{{SECTION}}">
+
+<div class="scrim" id="scrim" hidden></div>
+
+<div class="app">
+  <!-- Sidebar: fixed chrome, OmniRoute-style grouped navigation -->
+  <aside class="sidebar" id="sidebar" aria-label="Primary">
+    <div class="sidebar-top">
+      <a class="brand" href="/" aria-label="aifuel usage dashboard">
+        <span class="brand-tile" aria-hidden="true"><span class="ms ms-local_gas_station"></span></span>
+        <span class="brand-word">aifuel</span>
+      </a>
+      <button class="iconbtn collapse-btn" id="collapse-btn" type="button"
+              aria-label="Collapse sidebar" aria-expanded="true">
+        <span class="ms ms-chevron_left" aria-hidden="true"></span>
+      </button>
+    </div>
+
+    <div class="sidebar-search">
+      <span class="ms ms-search search-ic" aria-hidden="true"></span>
+      <input id="nav-search" type="search" placeholder="Search" aria-label="Filter navigation" autocomplete="off"/>
+      <kbd>/</kbd>
+    </div>
+
+    <nav class="nav" id="nav">
+      <a class="nav-item" data-nav="usage" href="/">
+        <span class="ms ms-speed nav-ic" aria-hidden="true"></span>
+        <span class="nav-label">Usage</span>
+      </a>
+
+      <div class="nav-group">Gateway</div>
+      <a class="nav-item" data-nav="connect" href="/gateway">
+        <span class="ms ms-api nav-ic" aria-hidden="true"></span>
+        <span class="nav-label">Connect</span>
+      </a>
+      <a class="nav-item" data-nav="providers" href="/gateway/providers">
+        <span class="ms ms-dns nav-ic" aria-hidden="true"></span>
+        <span class="nav-label">Providers</span>
+      </a>
+      <a class="nav-item" data-nav="routes" href="/gateway/routes">
+        <span class="ms ms-route nav-ic" aria-hidden="true"></span>
+        <span class="nav-label">Routes</span>
+      </a>
+      <a class="nav-item" data-nav="keys" href="/gateway/keys">
+        <span class="ms ms-vpn_key nav-ic" aria-hidden="true"></span>
+        <span class="nav-label">API Keys</span>
+      </a>
+      <a class="nav-item" data-nav="logs" href="/gateway/logs">
+        <span class="ms ms-receipt_long nav-ic" aria-hidden="true"></span>
+        <span class="nav-label">Logs</span>
+      </a>
+
+      <div class="nav-group">Manage</div>
+      <a class="nav-item" data-nav="credentials" href="/credentials">
+        <span class="ms ms-key nav-ic" aria-hidden="true"></span>
+        <span class="nav-label">Credentials</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <span class="foot-version">aifuel v{{VERSION}}</span>
+      <button class="foot-btn" id="quit-btn" type="button" title="Stop the aifuel server">
+        <span class="ms ms-power_settings_new" aria-hidden="true"></span>
+        <span class="nav-label">Quit</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main column: sticky page header + scrollable content -->
+  <div class="main">
+    <header class="topbar">
+      <button class="iconbtn menu-btn" id="menu-btn" type="button" aria-label="Open navigation">
+        <span class="ms ms-menu" aria-hidden="true"></span>
+      </button>
+      <div class="page-id">
+        <span class="page-icon" aria-hidden="true"><span class="ms ms-{{ICON}}"></span></span>
+        <div class="page-titles">
+          <h1 class="page-title">{{TITLE}}</h1>
+          <p class="page-desc">{{DESCRIPTION}}</p>
+        </div>
+      </div>
+      <div class="topbar-actions">{{HEADER_ACTIONS}}</div>
+    </header>
+
+    <main class="content">
+      {{CONTENT}}
+    </main>
+  </div>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+
+</body>
+</html>
