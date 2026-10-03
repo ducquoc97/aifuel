@@ -216,7 +216,7 @@ fn dashboard_serves_embedded_html_over_loopback() {
     child.wait().expect("dashboard process should be reaped");
 
     assert!(response.starts_with("HTTP/1.1 200"));
-    assert!(response.contains("Subscription fuel gauge"));
+    assert!(response.contains("<title>aifuel - Usage</title>"));
 }
 
 #[test]

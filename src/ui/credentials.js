@@ -1,9 +1,15 @@
-// Connect panel: one row per AuthBinding::ApiKey HTTP integration, mirroring
-// `aifuel auth list` for source status and `aifuel auth set-key`/
+// Credentials page: one row per AuthBinding::ApiKey HTTP integration,
+// mirroring `aifuel auth list` for source status and `aifuel auth set-key`/
 // `set-session`/`remove` for mutations. `entry.kind` is "api_key" or
 // "session"; the server picks the store call from the binding's delivery,
 // so the panel only changes wording. Material travels only inside its POST
 // body to this loopback server; it is never rendered back into the page.
+
+// Escape API-supplied strings before they land in innerHTML.
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
 
 function connectLabels(entry) {
   return entry.kind === "session"

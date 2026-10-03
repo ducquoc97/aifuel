@@ -1,0 +1,408 @@
+// Usage page: streams /api/usage/stream line-by-line and paints provider
+// quota cards as they arrive. Extracted unchanged from the old index.html
+// inline script - auto-refresh, countdown tick, and skeleton states live here.
+
+const PERIOD_LABEL = { "5h":"5-hour", daily:"daily", weekly:"weekly", monthly:"monthly", unknown:"window" };
+const PERIOD_ORDER = ["monthly","weekly","daily","5h","unknown"];
+
+function anchorPeriod(windows) {
+  return windows.slice().sort((a,b) => PERIOD_ORDER.indexOf(a.period) - PERIOD_ORDER.indexOf(b.period))[0]?.period;
+}
+
+const PROVIDER_ICON = {
+  // Icons stay local so the dashboard does not contact third-party origins.
+};
+
+// Display names for the loading placeholders, shown before a provider's own
+// result (which carries the canonical name) has streamed in.
+const PROVIDER_NAME = {
+  claude:      "Claude Code",
+  codex:       "Codex CLI",
+  copilot:     "GitHub Copilot",
+  gemini:      "Gemini CLI",
+  antigravity: "Antigravity CLI",
+};
+
+// Incremental stream state: providers fill in one at a time, so we keep what has
+// arrived (RECEIVED), the full set still expected (EXPECTED, for skeletons), and
+// the generated_at from the final stream line.
+const RECEIVED = new Map();   // key -> provider result
+let EXPECTED = null;
+let DISCOVERY_ERRORS = [];
+let GENERATED_AT = null;
+let streamAbort = null;
+
+const WINDOW_LIMIT  = 6;
+const MODEL_PREVIEW = 3;
+const MODEL_PROVIDERS = new Set(["gemini","antigravity"]);
+const EXPANDED = new Set();
+
+// Mirror of the server's provider ranking so cards stay correctly ordered as
+// they stream in, without waiting for the whole set. (aifuel.collect)
+const PERIOD_RANK = { monthly:0, weekly:1, daily:2, "5h":3, unknown:4 };
+
+function effectiveRemaining(res) {
+  const ws = (res.windows || []).slice().sort(
+    (a, b) => (PERIOD_RANK[a.period] ?? 99) - (PERIOD_RANK[b.period] ?? 99));
+  for (const w of ws) {
+    if (w.remaining_percent !== null && w.remaining_percent !== undefined)
+      return w.remaining_percent;
+  }
+  return -1;
+}
+
+function sortProviders(list) {
+  return list.slice().sort((a, b) => {
+    const ae = effectiveRemaining(a) <= 0 ? 1 : 0;
+    const be = effectiveRemaining(b) <= 0 ? 1 : 0;
+    if (ae !== be) return ae - be;
+    const ar = a.reset_at != null ? a.reset_at : Infinity;
+    const br = b.reset_at != null ? b.reset_at : Infinity;
+    return ar - br;
+  });
+}
+
+// Escape any provider-supplied string (model id, plan, detail) before it lands
+// in innerHTML, so a value from a provider API or a local CLI cache file can't
+// inject markup/script into this dashboard.
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+function fmtCountdown(sec) {
+  if (sec === null || sec === undefined) return "-";
+  if (sec <= 0) return "resetting...";
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600),
+        m = Math.floor(sec % 3600 / 60), s = Math.floor(sec % 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  return `${m}m ${s}s`;
+}
+
+function fmtDate(ts) {
+  if (!ts) return "-";
+  return new Date(ts * 1000).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
+}
+
+function barColor(rem) {
+  if (rem === null) return "var(--ink-qua)";
+  if (rem <= 10)    return "var(--err)";
+  if (rem <= 30)    return "var(--warn)";
+  return "var(--ok)";
+}
+
+function modelFamily(label) {
+  return String(label).trim().split(/[-_/.]/)[0].toLowerCase();
+}
+
+function familyPreview(models, cap) {
+  const seen = new Set(), out = [];
+  for (const m of models) {
+    if (out.length >= cap) break;
+    const f = modelFamily(m.label);
+    if (seen.has(f)) continue;
+    seen.add(f); out.push(m);
+  }
+  for (const m of models) {
+    if (out.length >= cap) break;
+    if (!out.includes(m)) out.push(m);
+  }
+  return out;
+}
+
+function windowHTML(w, isAnchor) {
+  const rem = (w.remaining_percent !== null && w.remaining_percent !== undefined)
+    ? w.remaining_percent : null;
+  const used = (w.used_percent !== null && w.used_percent !== undefined)
+    ? w.used_percent : null;
+  const width  = rem === null ? 100 : Math.max(2, Math.min(100, rem));
+  const col    = barColor(rem);
+  const remTxt = rem === null ? "n/a" : rem.toFixed(0) + "% left";
+  const usedTxt = used === null || rem === null ? "" : `${used.toFixed(0)}% used · `;
+  const dimmed = rem === null ? 'opacity:.35;' : '';
+  return `
+   <div class="window">
+     <div class="window-head">
+       <span class="window-label">
+         <span class="name">${esc(w.label)}</span>
+         <span class="period-tag${isAnchor ? ' anchor' : ''}">${esc(PERIOD_LABEL[w.period] || w.period)}</span>
+       </span>
+       <span class="remaining" style="color:${col}">${remTxt}</span>
+     </div>
+     <div class="track" role="progressbar" aria-valuenow="${rem ?? 0}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(w.label)} remaining">
+       <div class="track-fill" style="width:${width}%;background:${col};${dimmed}"></div>
+     </div>
+     <div class="window-foot">
+       <span class="cd" data-reset="${w.resets_at || ''}">renews in -</span>
+       <span>${usedTxt}${fmtDate(w.resets_at)}</span>
+     </div>
+   </div>`;
+}
+
+function iconHTMLFor(key) {
+  return PROVIDER_ICON[key]
+    ? `<img class="provider-icon" src="${PROVIDER_ICON[key]}" width="20" height="20" alt="" onerror="this.style.display='none'">`
+    : "";
+}
+
+function resetCreditsHTML(resetCredits) {
+  const available = Number(resetCredits?.available_count);
+  if (!Number.isInteger(available) || available < 0) return "";
+  const noun = available === 1 ? "usage limit reset" : "usage limit resets";
+  const credits = (resetCredits.credits || []).filter(credit => credit && typeof credit === "object");
+  const details = credits.map(credit => {
+    const title = credit.title || credit.reset_type || "Usage limit reset";
+    const expiry = credit.expires_at ? `Expires ${fmtDate(credit.expires_at)}` : "";
+    return `<div class="reset-credit-detail">
+      <span>${esc(title)}</span>
+      ${expiry ? `<span>${esc(expiry)}</span>` : ""}
+    </div>`;
+  }).join("");
+  return `<section class="reset-credits" aria-label="Codex usage limit resets">
+    <div class="reset-credits-title">Redeem usage limit reset</div>
+    <div class="reset-credits-count">You have <b>${available} ${noun}</b> available.</div>
+    ${details}
+  </section>`;
+}
+
+function providerCard(p, i) {
+  const card = document.createElement("div");
+  card.className = "card" + (i === 0 ? " urgent" : "");
+  card.setAttribute("role", "listitem");
+
+  const srcClass = p.source === "live" ? "live" : "error";
+  const srcText  = p.source === "live" ? "Live" : "Error";
+
+  const allW     = p.windows || [];
+  const expanded = EXPANDED.has(p.key);
+  const isModels = MODEL_PROVIDERS.has(p.key);
+  const noun     = isModels ? "models" : "windows";
+  const preview  = isModels ? familyPreview(allW, MODEL_PREVIEW) : allW.slice(0, WINDOW_LIMIT);
+
+  let shown = allW, disclosure = null;
+  if (allW.length > preview.length) {
+    shown = expanded ? allW : preview;
+    disclosure = expanded ? "Show less" : `Show all ${allW.length} ${noun}`;
+  }
+
+  let wins = "";
+  if (allW.length) {
+    const anchor = anchorPeriod(allW);
+    shown.forEach(w => { wins += windowHTML(w, w.period === anchor); });
+  } else {
+    wins = `<div class="empty" role="status"><span class="empty-icon ms ms-query_stats" aria-hidden="true"></span>${esc(p.detail || "No data available")}</div>`;
+  }
+
+  if (disclosure) {
+    wins += `<button class="disclosure${expanded ? ' open' : ''}" onclick="toggleExpand('${p.key}')" aria-expanded="${expanded}">
+      <span class="chev" aria-hidden="true">›</span>${disclosure}
+    </button>`;
+  }
+
+  const rankLabel = i === 0 ? "resets soonest" : `#${i + 1}`;
+  const resetCredits = p.key === "codex" ? resetCreditsHTML(p.reset_credits) : "";
+
+  card.innerHTML = `
+    <div class="rank${i === 0 ? ' urgent' : ''}" aria-label="${rankLabel}">${rankLabel}</div>
+    <div class="provider">${iconHTMLFor(p.key)}${esc(p.name)}</div>
+    <div class="badges">
+      ${p.plan ? `<span class="badge">${esc(p.plan.charAt(0).toUpperCase() + p.plan.slice(1))}</span>` : ""}
+      <span class="badge ${srcClass}">${esc(srcText)}</span>
+    </div>
+    ${p.detail && p.windows && p.windows.length ? `<div class="detail">${esc(p.detail)}</div>` : ""}
+    ${resetCredits}
+    ${allW.length ? '<hr class="card-divider" aria-hidden="true">' : ""}
+    ${wins}`;
+  return card;
+}
+
+function skeletonCard(key) {
+  const card = document.createElement("div");
+  card.className = "card skeleton";
+  card.setAttribute("role", "listitem");
+  card.setAttribute("aria-busy", "true");
+  const name = PROVIDER_NAME[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+  card.innerHTML = `
+    <div class="provider">${iconHTMLFor(key)}<span class="name">${esc(name)}</span>
+      <span class="spinner" role="status" aria-label="Loading ${esc(name)}"></span></div>
+    <div class="badges"><span class="skel skel-badge"></span></div>
+    <hr class="card-divider" aria-hidden="true">
+    <div class="skel skel-line"></div>
+    <div class="skel skel-line"></div>
+    <div class="skel skel-line short"></div>`;
+  return card;
+}
+
+function discoveryCard() {
+  const card = document.createElement("div");
+  card.className = "card skeleton";
+  card.setAttribute("role", "status");
+  card.setAttribute("aria-busy", "true");
+  card.innerHTML = `
+    <div class="provider"><span class="name">Finding configured providers</span>
+      <span class="spinner" aria-hidden="true"></span></div>
+    <div class="badges"><span class="skel skel-badge"></span></div>
+    <hr class="card-divider" aria-hidden="true">
+    <div class="skel skel-line"></div>
+    <div class="skel skel-line short"></div>`;
+  return card;
+}
+
+function emptyStateCard() {
+  const card = document.createElement("div");
+  card.className = "card empty-state";
+  card.setAttribute("role", "listitem");
+  card.innerHTML = `
+    <div class="empty-state-content" role="status">
+      <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M7 8.5h10M8.5 12h7M10 15.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <rect x="3.5" y="3.5" width="17" height="17" rx="5" stroke="currentColor" stroke-width="1.5"/>
+      </svg>
+      <h2 class="empty-state-title">No configured providers found</h2>
+      <p class="empty-state-copy">Sign in with an AI coding provider, then refresh this dashboard.</p>
+    </div>`;
+  return card;
+}
+
+// Render whatever has arrived so far: ranked real cards first, loading skeletons
+// for providers still in flight. Called on every stream message.
+function render() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+
+  if (EXPECTED === null) {
+    grid.appendChild(discoveryCard());
+    return;
+  }
+
+  if (EXPECTED.length === 0 && RECEIVED.size === 0) {
+    grid.appendChild(emptyStateCard());
+    return;
+  }
+
+  const arrived = sortProviders([...RECEIVED.values()]);
+  arrived.forEach((p, i) => grid.appendChild(providerCard(p, i)));
+
+  EXPECTED.filter(k => !RECEIVED.has(k))
+          .forEach(k => grid.appendChild(skeletonCard(k)));
+
+  tick();
+}
+
+function toggleExpand(key) {
+  EXPANDED.has(key) ? EXPANDED.delete(key) : EXPANDED.add(key);
+  render();
+}
+
+function tick() {
+  const now = Date.now() / 1000;
+  document.querySelectorAll(".cd").forEach(el => {
+    const r = parseFloat(el.dataset.reset);
+    el.textContent = r ? ("renews in " + fmtCountdown(r - now)) : "no reset clock";
+  });
+}
+
+// Stream the per-provider results and paint each card as it arrives, instead of
+// blocking on the slowest provider. On the first open we clear to skeletons; a
+// background refresh keeps the existing cards and updates them in place.
+async function load(force, initial) {
+  if (streamAbort) streamAbort.abort();
+  const ac = new AbortController();
+  streamAbort = ac;
+
+  const status = document.getElementById("updated");
+  const refreshBtn = document.getElementById("refresh-btn");
+  refreshBtn.classList.add("loading");   // spin the icon while reloading
+  refreshBtn.setAttribute("aria-busy", "true");
+  if (initial) {
+    RECEIVED.clear();
+    EXPECTED = null;
+    DISCOVERY_ERRORS = [];
+    render();               // show neutral discovery state immediately
+    status.textContent = "Loading...";
+  }
+
+  try {
+    const r = await fetch("/api/usage/stream" + (force ? "?force=1" : ""),
+                          { signal: ac.signal });
+    if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", got = 0;
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const msg = JSON.parse(line);
+        if (msg.providers_expected) {
+          EXPECTED = msg.providers_expected;
+          DISCOVERY_ERRORS = msg.discovery_errors || [];
+          for (const key of RECEIVED.keys()) {
+            if (!EXPECTED.includes(key)) RECEIVED.delete(key);
+          }
+          render();
+        } else if (msg.provider) {
+          RECEIVED.set(msg.provider.key, msg.provider);
+          got++;
+          render();
+          status.textContent = `Loading ${got}/${EXPECTED.length}...`;
+        } else if (msg.done) {
+          GENERATED_AT = msg.generated_at;
+          if (DISCOVERY_ERRORS.length) {
+            const names = DISCOVERY_ERRORS.map(error =>
+              error.provider?.name || error.provider?.key || error.provider).join(", ");
+            status.innerHTML = `<span class="err">Discovery failed: ${esc(names)}</span>`;
+            status.title = DISCOVERY_ERRORS.map(
+              error => `${error.provider?.name || error.provider?.key || error.provider}: ${error.detail}`).join("\n");
+          } else {
+            status.textContent = "Updated " +
+              new Date(GENERATED_AT * 1000).toLocaleTimeString();
+            status.removeAttribute("title");
+          }
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError") return;   // superseded by a newer load()
+    status.innerHTML = '<span class="err">fetch failed: ' + esc(String(e)) + '</span>';
+  } finally {
+    // Only the most recent load() clears the spinner; a superseded one leaves it
+    // spinning for the load that replaced it.
+    if (streamAbort === ac) {
+      streamAbort = null;
+      refreshBtn.classList.remove("loading");
+      refreshBtn.removeAttribute("aria-busy");
+    }
+  }
+}
+
+let autoRefreshInterval = null;
+
+function setAutoRefresh(enabled) {
+  const chk = document.getElementById("auto-refresh-btn");
+  const footer = document.getElementById("footer-auto-refresh");
+  chk.checked = enabled;
+  footer.hidden = !enabled;
+  if (enabled) {
+    if (!autoRefreshInterval) autoRefreshInterval = setInterval(() => load(false, false), 300000);
+  } else {
+    if (autoRefreshInterval) { clearInterval(autoRefreshInterval); autoRefreshInterval = null; }
+  }
+  localStorage.setItem("autoRefresh", enabled ? "1" : "0");
+}
+
+function toggleAutoRefresh() {
+  setAutoRefresh(document.getElementById("auto-refresh-btn").checked);
+}
+
+load(false, true);
+setInterval(tick, 1000);
+setAutoRefresh(localStorage.getItem("autoRefresh") === "1");

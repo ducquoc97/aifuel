@@ -1,0 +1,251 @@
+/* ============================================================
+   Usage page - provider quota cards on the app shell.
+   Envi light tokens from app.css.
+   ============================================================ */
+
+/* ---- Card grid ---- */
+.grid {
+  max-width: 1160px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+  gap: 12px;
+}
+
+/* ---- Card ---- */
+.card {
+  background: var(--canvas);
+  border: .5px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 18px 20px;
+  position: relative;
+  box-shadow: var(--shadow-card);
+  transition: transform .2s cubic-bezier(.25,.46,.45,.94),
+              box-shadow .2s cubic-bezier(.25,.46,.45,.94);
+  overflow: hidden;
+}
+@media (hover:hover) {
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(29,29,31,.10), 0 0 0 .5px rgba(29,29,31,.04);
+  }
+}
+/* First card accent - "resets soonest" emphasis */
+.card.urgent::before {
+  content: "";
+  position: absolute; inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--warn) 0%, transparent 100%);
+}
+
+/* ---- Rank badge ---- */
+.rank {
+  position: absolute; top: 14px; right: 14px;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.004em;
+  color: var(--ink-ter);
+  background: var(--fill-3);
+  padding: 3px 8px; border-radius: var(--r-pill);
+  font-variant-numeric: tabular-nums;
+}
+.rank.urgent {
+  color: var(--warn); background: var(--warn-tint);
+}
+
+/* ---- Provider header ---- */
+.provider {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 15px; font-weight: 600;
+  letter-spacing: -0.011em;
+  padding-right: 72px;
+}
+.provider-icon {
+  width: 20px; height: 20px;
+  border-radius: 5px;
+  object-fit: contain; flex: none;
+  background: #fff; padding: 1px;
+  border: .5px solid var(--line);
+}
+
+/* ---- Badges ---- */
+.badges { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap }
+
+/* Codex's earned allowance to reset its rate-limit windows. */
+.reset-credits {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-ctl);
+  background: var(--accent-tint);
+}
+.reset-credits-title {
+  color: var(--accent);
+  font-size: 12.5px; font-weight: 600;
+  letter-spacing: -0.004em;
+}
+.reset-credits-count {
+  margin-top: 3px;
+  color: var(--ink-48);
+  font-size: 12.5px; line-height: 1.4;
+  letter-spacing: -0.004em;
+}
+.reset-credit-detail {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin-top: 6px;
+  color: var(--ink-48);
+  font-size: 12px; letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.reset-credit-detail span:last-child {
+  color: var(--ink-ter);
+  text-align: right;
+}
+
+.detail {
+  color: var(--ink-48);
+  font-size: 13px; line-height: 1.4;
+  letter-spacing: -0.004em;
+  margin-top: 10px;
+}
+
+/* ---- Window / gauge row ---- */
+.window { margin-top: 14px }
+.window:first-child { margin-top: 0 }
+
+.window-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+}
+.window-label {
+  color: var(--ink);
+  font-size: 13px; font-weight: 500;
+  letter-spacing: -0.006em;
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.window-label .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+
+.period-tag {
+  flex: none; font-size: 11px; font-weight: 500;
+  letter-spacing: 0.004em;
+  padding: 2px 7px; border-radius: var(--r-pill);
+  color: var(--ink-ter); background: var(--fill-4);
+}
+.period-tag.anchor { color: var(--accent); background: var(--accent-tint) }
+
+.remaining {
+  flex: none;
+  font-size: 13px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.006em;
+}
+
+/* ---- Progress track ---- */
+.track {
+  height: 6px; border-radius: var(--r-pill);
+  background: var(--fill-3);
+  margin-top: 8px; overflow: hidden;
+}
+.track-fill {
+  height: 100%; border-radius: var(--r-pill);
+  transition: width .6s cubic-bezier(.34,1.2,.64,1);
+}
+
+/* ---- Window footer ---- */
+.window-foot {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin-top: 7px;
+  font-size: 11.5px; letter-spacing: 0;
+  color: var(--ink-ter);
+  font-variant-numeric: tabular-nums;
+}
+.window-foot .cd { color: var(--ink-48) }
+
+.empty {
+  color: var(--ink-ter);
+  font-size: 13px; letter-spacing: -0.006em;
+  margin-top: 10px;
+  text-align: center;
+  padding: 20px 0 8px;
+}
+.empty-icon { font-size: 26px; display: block; margin-bottom: 6px; opacity: .55 }
+
+/* ---- Disclosure button ---- */
+.disclosure {
+  appearance: none; border: none; cursor: pointer;
+  margin-top: 14px; width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font: inherit;
+  font-size: 12.5px; font-weight: 500; letter-spacing: -0.004em;
+  color: var(--accent);
+  background: var(--fill-4);
+  padding: 9px; border-radius: var(--r-ctl);
+  transition: background .15s ease, transform .1s ease;
+}
+.chev { font-size: 14px; line-height: 0; transition: transform .2s cubic-bezier(.25,.46,.45,.94) }
+.disclosure.open .chev { transform: rotate(90deg) }
+@media (hover:hover) {
+  .disclosure:hover { background: var(--fill-3) }
+}
+.disclosure:active { transform: scale(.99) }
+
+/* ---- Footer / legend ---- */
+.usage-footer {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 22px 2px 40px;
+  color: var(--ink-ter);
+  font-size: 12px; line-height: 1.45; letter-spacing: -0.004em;
+}
+.usage-footer b { color: var(--ink-48); font-weight: 600 }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px }
+.legend-item { display: flex; align-items: center; gap: 5px }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex: none }
+
+/* ---- Loading skeleton + spinner ---- */
+.card.skeleton { pointer-events: none }
+.card.skeleton .provider { padding-right: 0 }
+.spinner {
+  margin-left: auto; flex: none;
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 2px solid var(--fill-2);
+  border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+}
+
+.skel {
+  background: linear-gradient(100deg,
+    var(--fill-4) 30%, var(--fill-2) 50%, var(--fill-4) 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+.skel-badge { height: 20px; width: 72px; border-radius: var(--r-pill); margin-top: 10px }
+.skel-line  { height: 12px; border-radius: 6px; margin-top: 14px }
+.skel-line.short { width: 55% }
+
+.card.empty-state {
+  grid-column: 1 / -1;
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+.empty-state-content { max-width: 360px }
+.empty-state-icon {
+  width: 36px; height: 36px; margin: 0 auto 14px;
+  color: var(--ink-ter);
+}
+.empty-state-title {
+  margin: 0 0 8px;
+  font-size: 15px; line-height: 1.35; font-weight: 600;
+  letter-spacing: -0.011em;
+}
+.empty-state-copy {
+  margin: 0;
+  color: var(--ink-48);
+  font-size: 13px; line-height: 1.45;
+}
+
+/* ---- Reduced motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  .card, .track-fill, .chev, .disclosure { transition: none }
+  .spinner, .skel { animation: none }
+}
