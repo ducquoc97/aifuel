@@ -9,9 +9,8 @@ function anchorPeriod(windows) {
   return windows.slice().sort((a,b) => PERIOD_ORDER.indexOf(a.period) - PERIOD_ORDER.indexOf(b.period))[0]?.period;
 }
 
-const PROVIDER_ICON = {
-  // Icons stay local so the dashboard does not contact third-party origins.
-};
+// Monogram tiles stand in for brand icons so the dashboard does not
+// contact third-party origins (providerMonogram lives in app.js).
 
 // Display names for the loading placeholders, shown before a provider's own
 // result (which carries the canonical name) has streamed in.
@@ -141,9 +140,7 @@ function windowHTML(w, isAnchor) {
 }
 
 function iconHTMLFor(key) {
-  return PROVIDER_ICON[key]
-    ? `<img class="provider-icon" src="${PROVIDER_ICON[key]}" width="20" height="20" alt="" onerror="this.style.display='none'">`
-    : "";
+  return providerMonogram(key);
 }
 
 function resetCreditsHTML(resetCredits) {
