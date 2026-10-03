@@ -1,64 +1,22 @@
-//! `POST /v1/chat/completions`: resolve the inbound `model` selector to one
-//! or more execution targets, run the first that accepts the request, and
-//! answer in OpenAI Chat Completions shape - SSE `chat.completion.chunk`
-//! frames for `stream: true`, one `chat.completion` JSON otherwise.
+//! `POST /v1/chat/completions`: run the resolved attempt chain through
+//! `execute` and answer in OpenAI Chat Completions shape - SSE
+//! `chat.completion.chunk` frames for `stream: true`, one
+//! `chat.completion` JSON otherwise.
 //!
-//! Failover only happens before the response commits: an attempt that ends
-//! without emitting a delta lets the next ranked candidate answer the same
-//! HTTP request. Once the first chunk is written the attempt owns the
-//! stream and a mid-run failure surfaces as an error frame, matching how
-//! `run --provider auto` stops the chain once a run reached its provider.
+//! This module owns only the wire format; the attempt chain, failover,
+//! and cancellation machinery lives in `execute`.
 
-use super::flatten::flatten_messages;
+use super::execute::{self, Feed, Flow, Outcome};
+use super::flatten::{ParsedAnswer, flatten_messages, flatten_tools, parse_tool_calls};
 use super::types::ChatRequest;
-use super::{Gateway, cors_headers, read_body, respond, respond_error};
+use super::{Gateway, cors_headers, logs, read_body, respond, respond_error};
 use aifuel_app::MonitoringFacade;
-use aifuel_core::{
-    AccessMode, AgentExecutionAdapter, AgentRunError, AgentRunOutputHandler, IntegrationId,
-    OutputFormat, RunCancellationToken, RunRequest, RunResult, RunStatus, StatusCollector,
-    StatusReport, TokenUsage,
-};
+use aifuel_core::{StatusCollector, TokenUsage};
 use serde_json::{Value, json};
 use std::io::Write;
-use std::sync::{Arc, mpsc};
-use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Heartbeat interval on an open SSE stream, so a dead client is detected
-/// without waiting for the next token.
-const KEEPALIVE: Duration = Duration::from_secs(15);
-
-/// One ranked execution target: the integration to attempt and the model
-/// override the inbound selector pinned, if any.
-struct Attempt {
-    integration: IntegrationId,
-    model: Option<String>,
-}
-
-/// One attempt's terminal routing decision: `Done` means the HTTP request
-/// was answered (successfully or with a terminal error); `Retry` records
-/// why and lets the next candidate take the uncommitted request.
-enum Flow {
-    Done,
-    Retry(String),
-}
-
-/// The two messages a run worker can post back: one answer delta, or the
-/// finished run outcome.
-enum Event {
-    Delta(String),
-    Done(Result<RunResult, AgentRunError>),
-}
-
-/// Normalized answer deltas from the adapter into the attempt channel.
-#[derive(Debug)]
-struct DeltaSink(mpsc::Sender<Event>);
-
-impl AgentRunOutputHandler for DeltaSink {
-    fn on_output(&self, delta: &str) {
-        let _ = self.0.send(Event::Delta(delta.to_owned()));
-    }
-}
+const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
 
 /// Handle one `POST /v1/chat/completions` request end to end.
 pub(crate) fn completions<C: StatusCollector>(
@@ -100,8 +58,8 @@ pub(crate) fn completions<C: StatusCollector>(
         );
         return;
     }
-    let prompt = flatten_messages(&chat.messages);
-    if prompt.trim().is_empty() {
+    let transcript = flatten_messages(&chat.messages);
+    if transcript.trim().is_empty() {
         respond_error(
             request,
             400,
@@ -110,109 +68,49 @@ pub(crate) fn completions<C: StatusCollector>(
         );
         return;
     }
-    let attempts = match attempts(gateway, model, &|| Gateway::status(facade, runtime)) {
-        Ok(attempts) => attempts,
-        Err((status, message)) => {
-            respond_error(request, status, &message, "invalid_request_error");
-            return;
-        }
+    // Tool declarations become a prompt preamble - the run contract is
+    // prompt-only, so tool calling is emulated: declare the tools, then
+    // parse the fenced call block back out of the answer.
+    let tools_preamble = flatten_tools(&chat.tool_functions(), chat.tool_choice().as_ref());
+    let parse_tools = !tools_preamble.is_empty();
+    let prompt = if parse_tools {
+        format!("{tools_preamble}\n\n{transcript}")
+    } else {
+        transcript
     };
-    run_chain(request, gateway, &chat, model, &prompt, attempts);
-}
-
-/// Resolve the inbound `model` string to the attempt chain - see the
-/// `crate::gateway` module docs for the addressing convention.
-fn attempts(
-    gateway: &Gateway,
-    model: &str,
-    status: &dyn Fn() -> StatusReport,
-) -> Result<Vec<Attempt>, (u16, String)> {
-    if model == aifuel_core::AUTO_PROVIDER {
-        return plan(model, None, status);
-    }
-    if let Some(filter) = model.strip_prefix("auto/") {
-        return plan(model, Some(filter.to_owned()), status);
-    }
-    if let Some((selector, pinned)) = model.split_once('/') {
-        return match gateway.resolve(selector) {
-            Ok(integration) => Ok(vec![Attempt {
-                integration,
-                model: Some(pinned.to_owned()),
-            }]),
-            Err(AgentRunError::AmbiguousIntegration { provider, .. }) => Err((
-                400,
-                format!(
-                    "{provider} maps to multiple integrations; name an integration id explicitly"
-                ),
-            )),
-            Err(_) => Err((
-                404,
-                format!("unknown integration or provider {selector:?} in model {model:?}"),
-            )),
+    let attempts =
+        match execute::resolve_attempts(gateway, model, &|| Gateway::status(facade, runtime)) {
+            Ok(attempts) => attempts,
+            Err((status, message)) => {
+                respond_error(request, status, &message, "invalid_request_error");
+                return;
+            }
         };
-    }
-    match gateway.resolve(model) {
-        Ok(integration) => Ok(vec![Attempt {
-            integration,
-            model: None,
-        }]),
-        Err(AgentRunError::AmbiguousIntegration { provider, .. }) => Err((
-            400,
-            format!("{provider} maps to multiple integrations; name an integration id explicitly"),
-        )),
-        // Not a selector at all: treat the string as a catalog model id and
-        // let the planner pick the ranked provider advertising it.
-        Err(_) => plan(model, Some(model.to_owned()), status),
-    }
+    serve(
+        request,
+        gateway,
+        &chat,
+        model,
+        &prompt,
+        attempts,
+        parse_tools,
+    );
 }
 
-/// Plan the `auto` chain over a fresh cached status snapshot.
-fn plan(
-    requested: &str,
-    model: Option<String>,
-    status: &dyn Fn() -> StatusReport,
-) -> Result<Vec<Attempt>, (u16, String)> {
-    let report = status();
-    let registry = crate::integration_registry().map_err(|error| (500, error.clone()))?;
-    let config_dir = crate::aifuel_config_dir().map_err(|error| (500, error.clone()))?;
-    let credentials = aifuel_providers::CredentialStore::new(config_dir);
-    let candidates = crate::route_planner::provider_candidates(
-        model.as_deref(),
-        &report,
-        &registry,
-        &credentials,
-    )
-    .map_err(|error| (500, error))?;
-    if candidates.is_empty() {
-        return Err((
-            404,
-            match &model {
-                Some(model) => format!(
-                    "{requested:?} found no Discovered Provider or keyed integration advertising {model:?}; refresh evidence with `aifuel model refresh`"
-                ),
-                None => format!(
-                    "{requested:?} found no Discovered Provider or keyed API-key integration; `aifuel status` shows which credential sources are present"
-                ),
-            },
-        ));
-    }
-    Ok(candidates
-        .into_iter()
-        .map(|candidate| Attempt {
-            integration: candidate.integration,
-            model: model.clone(),
-        })
-        .collect())
-}
-
-/// Walk the attempt chain, streaming or buffering per `chat.stream`.
-fn run_chain(
+/// Feed the chain's deltas into `chat.completion.chunk` frames, or buffer
+/// them for the one-shot JSON when `stream` is false. `parse_tools` marks
+/// a request that declared tools: its answer may carry the fenced
+/// `aifuel_tool_calls` block, so deltas are buffered (never streamed
+/// mid-run) and the parsed result goes out as the tail chunks - a partial
+/// block must not reach the client as text.
+fn serve(
     request: tiny_http::Request,
     gateway: &Gateway,
     chat: &ChatRequest,
     model_echo: &str,
     prompt: &str,
-    attempts: Vec<Attempt>,
+    attempts: Vec<execute::Attempt>,
+    parse_tools: bool,
 ) {
     let completion_id = format!(
         "chatcmpl-{:x}",
@@ -225,202 +123,155 @@ fn run_chain(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let include_usage = chat
+        .stream_options
+        .as_ref()
+        .and_then(|options| options.include_usage)
+        .unwrap_or(false);
+    let stream = chat.stream;
+
     let mut slot = Some(request);
     let mut writer: Option<Box<dyn Write + Send>> = None;
-    let mut last_failure = "no executable provider candidate".to_owned();
-    let mut attempted = false;
-    for attempt in attempts {
-        let Some(adapter) = gateway.adapter(&attempt.integration) else {
-            last_failure = format!("{} has no execution adapter", attempt.integration);
-            continue;
-        };
-        let run_request = RunRequest {
-            integration: attempt.integration.clone(),
-            model: attempt.model.clone(),
-            effort: None,
-            external_tools: None,
-            account: None,
-            prompt: prompt.to_owned(),
-            output: OutputFormat::Text,
-            working_directory: None,
-            access: AccessMode::ReadOnly,
-            resume: None,
-            timeout: None,
-            env: Default::default(),
-            interaction_handler: None,
-        };
-        if let Err(error) = adapter.validate(&run_request) {
-            last_failure = error.to_string();
-            continue;
-        }
-        if attempted {
-            eprintln!(
-                "aifuel: gateway failing over to {} ({last_failure})",
-                attempt.integration
+    let mut collected = String::new();
+    let outcome = execute::run(gateway, attempts, prompt, &mut |feed| match feed {
+        Feed::Delta(delta) => {
+            collected.push_str(delta);
+            if !stream || parse_tools {
+                return Flow::Continue;
+            }
+            if writer.is_none()
+                && commit(&mut slot, &mut writer, &completion_id, created, model_echo).is_err()
+            {
+                return Flow::Stop;
+            }
+            let frame = chunk_frame(
+                &completion_id,
+                created,
+                model_echo,
+                json!({"content": delta}),
+                None,
             );
-        } else {
-            eprintln!("aifuel: gateway selected {}", attempt.integration);
+            if write_all(
+                writer.as_mut().expect("commit stores the writer"),
+                frame.as_bytes(),
+            )
+            .is_ok()
+            {
+                Flow::Continue
+            } else {
+                Flow::Stop
+            }
         }
-        attempted = true;
-        match drive(
-            adapter,
-            run_request,
-            &mut slot,
-            &mut writer,
-            chat.stream,
-            chat.stream_options
-                .as_ref()
-                .and_then(|options| options.include_usage)
-                .unwrap_or(false),
-            &completion_id,
-            created,
-            model_echo,
-        ) {
-            Flow::Done => return,
-            Flow::Retry(reason) => last_failure = reason,
+        Feed::Keepalive => {
+            if let Some(writer) = writer.as_mut()
+                && writer
+                    .write_all(b": keep-alive\n\n")
+                    .and_then(|()| writer.flush())
+                    .is_err()
+            {
+                return Flow::Stop;
+            }
+            Flow::Continue
         }
-    }
-    // Every candidate declined or failed before committing: the request is
-    // still answerable with a normal error response.
-    if let Some(request) = slot.take() {
-        let status = if attempted { 502 } else { 404 };
-        respond_error(request, status, &last_failure, "server_error");
-    }
-}
-
-/// Run one attempt, forwarding answer deltas onto the SSE stream once it
-/// commits. [`Flow::Done`] always means the request has been fully
-/// answered - including "the client went away", which cancels the run.
-#[allow(clippy::too_many_arguments)]
-fn drive(
-    adapter: Arc<dyn AgentExecutionAdapter>,
-    run_request: RunRequest,
-    slot: &mut Option<tiny_http::Request>,
-    writer: &mut Option<Box<dyn Write + Send>>,
-    stream: bool,
-    include_usage: bool,
-    completion_id: &str,
-    created: u64,
-    model_echo: &str,
-) -> Flow {
-    let (sender, receiver) = mpsc::channel::<Event>();
-    let cancellation = RunCancellationToken::new();
-    let worker_cancel = cancellation.clone();
-    let sink = DeltaSink(sender.clone());
-    let worker = thread::spawn(move || {
-        let result = adapter.execute_with_output_handler(&run_request, &worker_cancel, &sink);
-        let _ = sender.send(Event::Done(result));
     });
 
-    // `collected` reconstructs the answer for adapters that report their
-    // text only through deltas; `saw_delta` keeps a streamed attempt from
-    // re-emitting the same text from `RunResult.output`.
-    let mut collected = String::new();
-    let mut saw_delta = false;
-    let flow = loop {
-        match receiver.recv_timeout(KEEPALIVE) {
-            Ok(Event::Delta(delta)) => {
-                saw_delta = true;
-                collected.push_str(&delta);
-                if stream
-                    && let Err(()) =
-                        write_delta(slot, writer, completion_id, created, model_echo, &delta)
-                {
-                    cancellation.cancel();
-                    break Flow::Done;
-                }
-            }
-            Ok(Event::Done(result)) => {
-                break finish(
-                    result,
-                    slot,
-                    writer,
-                    stream,
-                    include_usage,
-                    completion_id,
-                    created,
-                    model_echo,
-                    &collected,
-                    saw_delta,
-                );
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Some(writer) = writer.as_mut()
-                    && writer
-                        .write_all(b": keep-alive\n\n")
-                        .and_then(|()| writer.flush())
-                        .is_err()
-                {
-                    cancellation.cancel();
-                    break Flow::Done;
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                break Flow::Retry("the provider run ended without a result".to_owned());
-            }
-        }
-    };
-    let _ = worker.join();
-    flow
-}
-
-/// Classify one finished attempt into the routing decision.
-#[allow(clippy::too_many_arguments)]
-fn finish(
-    result: Result<RunResult, AgentRunError>,
-    slot: &mut Option<tiny_http::Request>,
-    writer: &mut Option<Box<dyn Write + Send>>,
-    stream: bool,
-    include_usage: bool,
-    completion_id: &str,
-    created: u64,
-    model_echo: &str,
-    collected: &str,
-    saw_delta: bool,
-) -> Flow {
-    match result {
-        Ok(result) if result.status == RunStatus::Succeeded => {
-            let answer = if saw_delta {
-                collected
+    match outcome {
+        Outcome::Success { text, result } => {
+            logs::record(logs::Entry {
+                ts_unix: unix_secs(),
+                model: model_echo.to_owned(),
+                integration: Some(result.integration_id.to_string()),
+                status: 200,
+                stream,
+                usage: result.usage.as_ref().map(|usage| {
+                    json!({
+                        "prompt_tokens": usage.input_tokens,
+                        "completion_tokens": usage.output_tokens,
+                        "total_tokens": usage.input_tokens.unwrap_or(0) + usage.output_tokens.unwrap_or(0),
+                    })
+                }),
+                error: None,
+            });
+            // Only a request that declared tools can yield the fenced
+            // call block; other answers pass through unparsed.
+            let parsed = if parse_tools {
+                parse_tool_calls(&text)
             } else {
-                result.output.as_str()
+                None
             };
             if let Some(writer) = writer.as_mut() {
-                // Deltas already streamed: close out the committed response.
+                // Deltas already streamed: close out the committed
+                // response. Reaching here means parse_tools was off, so
+                // the finish is always a plain stop.
                 let _ = write_terminal(
                     writer,
+                    "stop",
                     result.usage.as_ref(),
                     include_usage,
-                    completion_id,
+                    &completion_id,
                     created,
                     model_echo,
                 )
                 .and_then(|()| write_all(writer, b"data: [DONE]\n\n"));
             } else if stream {
-                // The answer arrived whole (a non-streaming adapter): commit
-                // now and replay it as one chunk sequence.
-                if commit(slot, writer, completion_id, created, model_echo).is_err() {
-                    return Flow::Done;
+                // The answer arrived whole (a non-streaming adapter, or a
+                // tool request buffering for the call block): commit now
+                // and replay it as one chunk sequence.
+                if commit(&mut slot, &mut writer, &completion_id, created, model_echo).is_err() {
+                    return;
                 }
                 let writer = writer.as_mut().expect("commit stores the writer");
-                if !answer.is_empty() {
-                    let _ = write_all(
-                        writer,
-                        chunk_frame(
-                            completion_id,
-                            created,
-                            model_echo,
-                            json!({"content": answer}),
-                            None,
-                        )
-                        .as_bytes(),
-                    );
-                }
+                let finish_reason = match &parsed {
+                    Some(answer) => {
+                        if !answer.content.is_empty() {
+                            let _ = write_all(
+                                writer,
+                                chunk_frame(
+                                    &completion_id,
+                                    created,
+                                    model_echo,
+                                    json!({"content": answer.content}),
+                                    None,
+                                )
+                                .as_bytes(),
+                            );
+                        }
+                        let _ = write_all(
+                            writer,
+                            chunk_frame(
+                                &completion_id,
+                                created,
+                                model_echo,
+                                json!({"tool_calls": answer.calls_json(true)}),
+                                None,
+                            )
+                            .as_bytes(),
+                        );
+                        "tool_calls"
+                    }
+                    None => {
+                        if !text.is_empty() {
+                            let _ = write_all(
+                                writer,
+                                chunk_frame(
+                                    &completion_id,
+                                    created,
+                                    model_echo,
+                                    json!({"content": text}),
+                                    None,
+                                )
+                                .as_bytes(),
+                            );
+                        }
+                        "stop"
+                    }
+                };
                 let _ = write_terminal(
                     writer,
+                    finish_reason,
                     result.usage.as_ref(),
                     include_usage,
-                    completion_id,
+                    &completion_id,
                     created,
                     model_echo,
                 )
@@ -431,10 +282,11 @@ fn finish(
                     request,
                     200,
                     serde_json::to_vec(&completion_body(
-                        completion_id,
+                        &completion_id,
                         created,
                         model_echo,
-                        answer,
+                        &text,
+                        parsed.as_ref(),
                         result.usage.as_ref(),
                     ))
                     .expect("a completion body serializes"),
@@ -442,84 +294,65 @@ fn finish(
                     cors_headers(),
                 );
             }
-            Flow::Done
         }
-        Ok(result) => {
-            let reason = result
-                .error
-                .clone()
-                .or(result.diagnostics.clone())
-                .unwrap_or_else(|| format!("the provider run ended as {}", result.status.as_str()));
-            if writer.is_none() && retriable_result(&result) {
-                Flow::Retry(reason)
-            } else if writer.is_some() {
-                let _ = write_error_frame(writer.as_mut().expect("writer present"), &reason);
-                Flow::Done
-            } else {
-                let request = slot.take().expect("an uncommitted request is present");
-                respond_error(request, status_for_result(&result), &reason, "server_error");
-                Flow::Done
+        Outcome::Failed {
+            committed: true,
+            status,
+            message,
+        } => {
+            logs::record(logs::Entry {
+                ts_unix: unix_secs(),
+                model: model_echo.to_owned(),
+                integration: None,
+                status,
+                stream,
+                usage: None,
+                error: Some(message.clone()),
+            });
+            if let Some(writer) = writer.as_mut() {
+                let _ = write_error_frame(writer, &message);
+            } else if let Some(request) = slot.take() {
+                // Deltas reached the sink but were buffered for tool
+                // parsing and never committed, so the request is still
+                // answerable with a normal error response.
+                respond_error(request, status, &message, "server_error");
             }
         }
-        Err(error) => {
-            if writer.is_none() && retriable_error(&error) {
-                Flow::Retry(error.to_string())
-            } else if writer.is_some() {
-                let _ =
-                    write_error_frame(writer.as_mut().expect("writer present"), &error.to_string());
-                Flow::Done
-            } else {
-                let request = slot.take().expect("an uncommitted request is present");
-                respond_error(
-                    request,
-                    status_for_error(&error),
-                    &error.to_string(),
-                    "server_error",
-                );
-                Flow::Done
+        Outcome::Failed {
+            status, message, ..
+        } => {
+            logs::record(logs::Entry {
+                ts_unix: unix_secs(),
+                model: model_echo.to_owned(),
+                integration: None,
+                status,
+                stream,
+                usage: None,
+                error: Some(message.clone()),
+            });
+            if let Some(request) = slot.take() {
+                respond_error(request, status, &message, "server_error");
             }
         }
-    }
-}
-
-/// Whether a completed-but-failed run may move to the next candidate: only
-/// provider-reported quota or rate-limit exhaustion, mirroring the `auto`
-/// chain's post-execution retry rule.
-fn retriable_result(result: &RunResult) -> bool {
-    result.quota_exhausted
-        || result
-            .error
-            .as_deref()
-            .is_some_and(crate::route_planner::provider_quota_wording)
-        || result
-            .diagnostics
-            .as_deref()
-            .is_some_and(crate::route_planner::provider_quota_wording)
-}
-
-/// Whether a launch-time error may move to the next candidate: everything
-/// except timeouts and cancellation, mirroring `auto`'s error verdicts.
-fn retriable_error(error: &AgentRunError) -> bool {
-    !matches!(error, AgentRunError::Timeout(_) | AgentRunError::Cancelled)
-}
-
-fn status_for_result(result: &RunResult) -> u16 {
-    if result.timed_out || result.status == RunStatus::Timeout {
-        504
-    } else {
-        502
-    }
-}
-
-fn status_for_error(error: &AgentRunError) -> u16 {
-    match error {
-        AgentRunError::Timeout(_) => 504,
-        AgentRunError::UnsupportedIntegration(_) | AgentRunError::AmbiguousIntegration { .. } => {
-            404
+        Outcome::Aborted => {
+            logs::record(logs::Entry {
+                ts_unix: unix_secs(),
+                model: model_echo.to_owned(),
+                integration: None,
+                status: 499,
+                stream,
+                usage: None,
+                error: Some("client disconnected".to_owned()),
+            });
         }
-        AgentRunError::InvalidRequest(_) => 400,
-        _ => 502,
     }
+}
+
+fn unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Write the SSE head and the assistant role chunk - the point of no
@@ -546,45 +379,26 @@ fn commit(
     Ok(())
 }
 
-const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
-
-/// Commit on the first delta when streaming, then write the delta chunk.
-fn write_delta(
-    slot: &mut Option<tiny_http::Request>,
-    writer: &mut Option<Box<dyn Write + Send>>,
-    completion_id: &str,
-    created: u64,
-    model_echo: &str,
-    delta: &str,
-) -> Result<(), ()> {
-    if writer.is_none() {
-        commit(slot, writer, completion_id, created, model_echo)?;
-    }
-    let frame = chunk_frame(
-        completion_id,
-        created,
-        model_echo,
-        json!({"content": delta}),
-        None,
-    );
-    write_all(
-        writer.as_mut().expect("commit stores the writer"),
-        frame.as_bytes(),
-    )
-}
-
-/// The terminal chunk (`finish_reason: "stop"`) plus the spec-shaped usage
-/// chunk when the caller asked for it.
+/// The terminal chunk carrying `finish_reason` (`"stop"` or
+/// `"tool_calls"`) plus the spec-shaped usage chunk when the caller
+/// asked for it.
 fn write_terminal(
     writer: &mut Box<dyn Write + Send>,
+    finish_reason: &str,
     usage: Option<&TokenUsage>,
     include_usage: bool,
     completion_id: &str,
     created: u64,
     model_echo: &str,
 ) -> Result<(), ()> {
-    let stop = chunk_frame(completion_id, created, model_echo, json!({}), Some("stop"));
-    write_all(writer, stop.as_bytes())?;
+    let finish = chunk_frame(
+        completion_id,
+        created,
+        model_echo,
+        json!({}),
+        Some(finish_reason),
+    );
+    write_all(writer, finish.as_bytes())?;
     if include_usage {
         let usage_frame = usage_chunk(completion_id, created, model_echo, usage);
         write_all(writer, usage_frame.as_bytes())?;
@@ -659,14 +473,33 @@ fn usage_chunk(
     )
 }
 
-/// The non-streamed `chat.completion` body.
+/// The non-streamed `chat.completion` body. A parsed tool-call block
+/// becomes `message.tool_calls` with `finish_reason "tool_calls"`, and
+/// `content` is the text outside the block - null when the model left
+/// nothing else. Anything unparseable stays a plain stop answer.
 fn completion_body(
     completion_id: &str,
     created: u64,
     model_echo: &str,
     answer: &str,
+    parsed: Option<&ParsedAnswer>,
     usage: Option<&TokenUsage>,
 ) -> Value {
+    let (message, finish_reason) = match parsed {
+        Some(answer) => (
+            json!({
+                "role": "assistant",
+                "content": if answer.content.is_empty() {
+                    Value::Null
+                } else {
+                    json!(answer.content)
+                },
+                "tool_calls": answer.calls_json(false),
+            }),
+            "tool_calls",
+        ),
+        None => (json!({"role": "assistant", "content": answer}), "stop"),
+    };
     json!({
         "id": completion_id,
         "object": "chat.completion",
@@ -674,8 +507,8 @@ fn completion_body(
         "model": model_echo,
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": answer},
-            "finish_reason": "stop",
+            "message": message,
+            "finish_reason": finish_reason,
         }],
         "usage": usage.map(|usage| json!({
             "prompt_tokens": usage.input_tokens,
@@ -685,9 +518,32 @@ fn completion_body(
     })
 }
 
+impl ParsedAnswer {
+    /// The OpenAI `tool_calls` array. Streamed deltas key each entry by
+    /// `index`; the non-streamed message form omits it.
+    fn calls_json(&self, indexed: bool) -> Vec<Value> {
+        self.calls
+            .iter()
+            .enumerate()
+            .map(|(index, call)| {
+                let mut value = json!({
+                    "id": format!("call_{index}"),
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": call.arguments},
+                });
+                if indexed {
+                    value["index"] = json!(index);
+                }
+                value
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::flatten::ParsedCall;
 
     /// The SSE frames must match the shape OpenAI SDKs and litellm parse:
     /// `data:` prefix, `chat.completion.chunk` object, `choices[].delta`,
@@ -729,7 +585,7 @@ mod tests {
 
     #[test]
     fn completion_body_is_openai_shaped() {
-        let body = completion_body("chatcmpl-1", 10, "auto", "done", None);
+        let body = completion_body("chatcmpl-1", 10, "auto", "done", None, None);
         assert_eq!(body["object"], "chat.completion");
         assert_eq!(body["choices"][0]["message"]["content"], "done");
         assert_eq!(body["choices"][0]["finish_reason"], "stop");
@@ -737,43 +593,87 @@ mod tests {
     }
 
     #[test]
-    fn retry_verdicts_mirror_the_auto_chain() {
-        // Only quota exhaustion retries after a run was accepted; only
-        // timeout/cancellation stop the chain before execution.
-        let mut failed = RunResult {
-            run_id: "r".to_owned(),
-            local_session_id: "s".to_owned(),
-            session_id: None,
-            resumed_from: None,
-            provider_id: aifuel_core::ProviderId::new("codex"),
-            integration_id: IntegrationId::new("codex"),
-            requested_model: None,
-            requested_effort: None,
-            effective_model: None,
-            effective_effort: None,
-            requested_account_id: None,
-            account_id: None,
-            execution_mode: aifuel_core::ExecutionMode::PromptOnly,
-            permission_profile: AccessMode::ReadOnly,
-            status: RunStatus::Failed,
-            exit_code: Some(1),
-            output: String::new(),
-            error: Some("HTTP 429: rate limit".to_owned()),
-            diagnostics: None,
-            usage: None,
-            timed_out: false,
-            quota_exhausted: true,
-            working_directory: std::path::PathBuf::new(),
-        };
-        assert!(retriable_result(&failed));
-        failed.quota_exhausted = false;
-        failed.error = Some("exit code 1".to_owned());
-        assert!(!retriable_result(&failed));
+    fn fenced_block_parses_into_calls() {
+        // The whole emulation hinges on this round-trip: the preamble
+        // tells the model one fenced block, and a compliant answer must
+        // come back as calls plus whatever text surrounded it.
+        let answer = "checking first\n\n```aifuel_tool_calls\n{\"calls\":[{\"name\":\"lookup\",\"arguments\":{\"q\":\"rust\"}}]}\n```\n";
+        let parsed = parse_tool_calls(answer).expect("a well-formed block parses");
+        assert_eq!(parsed.content, "checking first");
+        assert_eq!(parsed.calls.len(), 1);
+        assert_eq!(parsed.calls[0].name, "lookup");
+        assert_eq!(parsed.calls[0].arguments, r#"{"q":"rust"}"#);
+    }
 
-        assert!(retriable_error(&AgentRunError::InvalidRequest(
-            "launch failed".to_owned()
-        )));
-        assert!(!retriable_error(&AgentRunError::Timeout("t".to_owned())));
-        assert!(!retriable_error(&AgentRunError::Cancelled));
+    #[test]
+    fn block_only_answer_leaves_no_content() {
+        let answer =
+            "```aifuel_tool_calls\n{\"calls\":[{\"name\":\"lookup\",\"arguments\":{}}]}\n```";
+        let parsed = parse_tool_calls(answer).expect("a bare block parses");
+        assert!(parsed.content.is_empty());
+        assert_eq!(parsed.calls[0].arguments, "{}");
+    }
+
+    #[test]
+    fn malformed_blocks_fall_back_to_plain_content() {
+        // A model that half-follows the contract - truncated fence, bad
+        // JSON, empty calls - must not lose its answer: the gateway
+        // passes the text through rather than emitting a broken call.
+        for answer in [
+            "```aifuel_tool_calls\n{\"calls\":[{\"name\":\"x\"}]",
+            "```aifuel_tool_calls\nnot json\n```",
+            "```aifuel_tool_calls\n{\"calls\":[]}\n```",
+            "```aifuel_tool_calls\n{\"calls\":[{\"arguments\":{}}]}\n```",
+            "plain text, no fence",
+        ] {
+            assert!(parse_tool_calls(answer).is_none(), "{answer:?}");
+        }
+    }
+
+    #[test]
+    fn completion_body_carries_tool_calls() {
+        // Roo/Cline decide "call a tool" off finish_reason and
+        // tool_calls alone; content must be the leftover text or null,
+        // never the raw fenced block.
+        let answer = "```aifuel_tool_calls\n{\"calls\":[{\"name\":\"lookup\",\"arguments\":{\"q\":\"rust\"}}]}\n```";
+        let parsed = parse_tool_calls(answer).expect("a well-formed block parses");
+        let body = completion_body("chatcmpl-1", 10, "auto", answer, Some(&parsed), None);
+        let choice = &body["choices"][0];
+        assert_eq!(choice["finish_reason"], "tool_calls");
+        assert_eq!(choice["message"]["content"], Value::Null);
+        let call = &choice["message"]["tool_calls"][0];
+        assert_eq!(call["type"], "function");
+        assert_eq!(call["function"]["name"], "lookup");
+        // arguments is a JSON string on the wire, not an object.
+        assert_eq!(call["function"]["arguments"], r#"{"q":"rust"}"#);
+        assert!(
+            call["id"].as_str().expect("an id").starts_with("call_"),
+            "call ids keep the call_ prefix clients pattern-match"
+        );
+    }
+
+    #[test]
+    fn streamed_calls_carry_index() {
+        // Delta tool_calls are index-keyed so clients can accumulate
+        // parallel calls; the message form must not carry the key.
+        let parsed = ParsedAnswer {
+            content: String::new(),
+            calls: vec![
+                ParsedCall {
+                    name: "a".to_owned(),
+                    arguments: "{}".to_owned(),
+                },
+                ParsedCall {
+                    name: "b".to_owned(),
+                    arguments: "{}".to_owned(),
+                },
+            ],
+        };
+        let delta = parsed.calls_json(true);
+        assert_eq!(delta[0]["index"], 0);
+        assert_eq!(delta[1]["index"], 1);
+        assert_eq!(delta[1]["id"], "call_1");
+        let message = parsed.calls_json(false);
+        assert!(message[0].get("index").is_none());
     }
 }

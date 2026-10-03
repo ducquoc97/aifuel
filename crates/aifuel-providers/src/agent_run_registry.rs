@@ -7,11 +7,33 @@ static ADAPTERS: &[&dyn AgentExecutionAdapter] = &[
     &crate::gemini::AGENT_RUN_ADAPTER,
     &crate::antigravity::AGENT_RUN_ADAPTER,
     &crate::devin::AGENT_RUN_ADAPTER,
+    // The `*:oauth` direct HTTP adapters follow the CLI set: a bare
+    // provider lookup keeps preferring the provider CLI, and the suffixed
+    // ids can never alias it.
+    &crate::codex_oauth::ADAPTER,
+    &crate::copilot_oauth::ADAPTER,
+    &crate::devin_oauth::ADAPTER,
 ];
 
 /// Return the compiled execution adapters registered for the built-in providers.
 pub fn agent_run_adapters() -> &'static [&'static dyn AgentExecutionAdapter] {
     ADAPTERS
+}
+
+/// The compiled `*:oauth` execution adapter an integration id names, when
+/// one exists. OAuth adapters run as direct HTTP executions - the
+/// provider-owned credential file authenticates them, not a spawned CLI -
+/// so the owned execution surface serves them directly instead of routing
+/// through a runtime session. They stay in the compiled table so the
+/// runtime and picker surfaces resolve them the same way as a CLI adapter.
+pub fn oauth_execution_adapter(id: &str) -> Option<&'static dyn AgentExecutionAdapter> {
+    if !id.ends_with(":oauth") {
+        return None;
+    }
+    ADAPTERS
+        .iter()
+        .copied()
+        .find(|adapter| adapter.integration().as_str() == id)
 }
 
 #[cfg(test)]
@@ -23,26 +45,48 @@ mod tests {
     fn execution_registration_is_independent_of_monitoring_catalog_membership() {
         // Every built-in CLI adapter registers one integration whose id
         // equals its catalog provider id and whose upstream provider is the
-        // same catalog id.
+        // same catalog id. The `*:oauth` adapters follow: their provider is
+        // the same catalog id but the suffixed integration id can never
+        // alias the CLI integration.
         let registered = agent_run_adapters()
             .iter()
             .map(|adapter| (adapter.integration(), adapter.provider()))
             .collect::<Vec<_>>();
 
+        let cli: Vec<(IntegrationId, ProviderId)> = [
+            ProviderKey::Claude,
+            ProviderKey::Codex,
+            ProviderKey::Copilot,
+            ProviderKey::Gemini,
+            ProviderKey::Antigravity,
+            ProviderKey::Devin,
+        ]
+        .into_iter()
+        .map(|key| (IntegrationId::from(key), ProviderId::from(key)))
+        .collect();
+        let oauth = [
+            ("codex:oauth", ProviderKey::Codex),
+            ("copilot:oauth", ProviderKey::Copilot),
+            ("devin:oauth", ProviderKey::Devin),
+        ]
+        .into_iter()
+        .map(|(id, key)| (IntegrationId::new(id), ProviderId::from(key)));
+        assert_eq!(registered, cli.into_iter().chain(oauth).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn oauth_execution_adapter_resolves_only_suffixed_ids() {
         assert_eq!(
-            registered,
-            [
-                ProviderKey::Claude,
-                ProviderKey::Codex,
-                ProviderKey::Copilot,
-                ProviderKey::Gemini,
-                ProviderKey::Antigravity,
-                ProviderKey::Devin,
-            ]
-            .into_iter()
-            .map(|key| (IntegrationId::from(key), ProviderId::from(key)))
-            .collect::<Vec<_>>()
+            oauth_execution_adapter("codex:oauth")
+                .map(|adapter| adapter.integration().as_str().to_owned())
+                .as_deref(),
+            Some("codex:oauth")
         );
+        assert!(
+            oauth_execution_adapter("codex").is_none(),
+            "a bare CLI id must not resolve to the OAuth adapter"
+        );
+        assert!(oauth_execution_adapter("codex:unknown").is_none());
     }
 
     #[test]
