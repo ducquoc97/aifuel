@@ -130,6 +130,7 @@ fn request(integration: &str) -> RunRequest {
         access: AccessMode::ReadOnly,
         resume: None,
         timeout: None,
+        optimize: Default::default(),
         interaction_handler: None,
         env: Default::default(),
     }
@@ -176,10 +177,17 @@ fn a_configured_anthropic_messages_endpoint_executes_a_run() {
     let crate::ProvidersConfigParts {
         integrations: entries,
         instances,
+        chains,
+        optimizer,
     } = config.into_parts();
-    let registry =
-        IntegrationRegistry::build(Vec::<IntegrationDescriptor>::new(), entries, instances)
-            .expect("registry builds");
+    let registry = IntegrationRegistry::build(
+        Vec::<IntegrationDescriptor>::new(),
+        entries,
+        instances,
+        chains,
+        optimizer,
+    )
+    .expect("registry builds");
     let descriptor = registry
         .resolve("anthropic")
         .expect("the bare provider id resolves to the one integration");

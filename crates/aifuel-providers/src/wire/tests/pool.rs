@@ -181,6 +181,7 @@ fn request() -> RunRequest {
         access: AccessMode::ReadOnly,
         resume: None,
         timeout: None,
+        optimize: Default::default(),
         interaction_handler: None,
         env: BTreeMap::new(),
     }

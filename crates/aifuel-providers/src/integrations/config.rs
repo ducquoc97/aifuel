@@ -90,13 +90,15 @@ pub const PROVIDERS_SCHEMA_VERSION: u32 = 1;
 /// The config file name inside the AI Fuel config directory.
 pub const PROVIDERS_FILE_NAME: &str = "providers.json";
 
-/// A decoded `providers.json`: one result per `integrations` entry and one
-/// per `instances` entry so a single malformed entry reports its own error
-/// while file-level failures stay hard errors.
+/// A decoded `providers.json`: one result per `integrations` entry, one
+/// per `instances` entry, and one per `chains` entry so a single malformed
+/// entry reports its own error while file-level failures stay hard errors.
 #[derive(Debug)]
 pub struct ProvidersConfig {
     entries: Vec<Result<IntegrationDescriptor, ConfigError>>,
     instances: Vec<Result<super::instances::InstanceDescriptor, ConfigError>>,
+    chains: Vec<Result<super::chains::ChainDescriptor, ConfigError>>,
+    optimizer: aifuel_core::OptimizePlan,
 }
 
 impl ProvidersConfig {
@@ -113,6 +115,8 @@ impl ProvidersConfig {
                 return Ok(Self {
                     entries: Vec::new(),
                     instances: Vec::new(),
+                    chains: Vec::new(),
+                    optimizer: aifuel_core::OptimizePlan::default(),
                 });
             }
             Err(error) => return Err(ConfigError::Io(error)),
@@ -141,7 +145,18 @@ impl ProvidersConfig {
             .into_iter()
             .map(|(id, raw)| super::instances::build_instance(&id, raw))
             .collect();
-        Ok(Self { entries, instances })
+        let chains = file
+            .chains
+            .into_iter()
+            .map(|(name, raw)| super::chains::build_chain(&name, raw))
+            .collect();
+        let optimizer = file.optimizer.unwrap_or_default();
+        Ok(Self {
+            entries,
+            instances,
+            chains,
+            optimizer,
+        })
     }
 
     /// One result per `integrations` entry, in file order.
@@ -154,23 +169,42 @@ impl ProvidersConfig {
         &self.instances
     }
 
-    /// Consume both entry lists for [`super::IntegrationRegistry::build`].
+    /// One result per `chains` entry, in name order.
+    pub fn chains(&self) -> &[Result<super::chains::ChainDescriptor, ConfigError>] {
+        &self.chains
+    }
+
+    /// The `optimizer` section as an [`aifuel_core::OptimizePlan`]; the
+    /// inert default when the file does not declare one.
+    pub fn optimizer(&self) -> &aifuel_core::OptimizePlan {
+        &self.optimizer
+    }
+
+    /// Consume the decoded sections for
+    /// [`super::IntegrationRegistry::build`]: per-entry results so one
+    /// malformed entry fails alone.
     pub fn into_parts(self) -> ProvidersConfigParts {
         ProvidersConfigParts {
             integrations: self.entries,
             instances: self.instances,
+            chains: self.chains,
+            optimizer: self.optimizer,
         }
     }
 }
 
-/// The decoded `providers.json` entry lists `ProvidersConfig` hands to
+/// The decoded `providers.json` sections `ProvidersConfig` hands to
 /// [`super::IntegrationRegistry::build`]: per-entry results so one malformed
-/// entry fails alone.
+/// entry fails alone, plus the file-level optimizer plan.
 pub struct ProvidersConfigParts {
     /// One result per `integrations` entry, in file order.
     pub integrations: Vec<Result<IntegrationDescriptor, ConfigError>>,
     /// One result per `instances` entry, in file order.
     pub instances: Vec<Result<super::instances::InstanceDescriptor, ConfigError>>,
+    /// One result per `chains` entry, in name order.
+    pub chains: Vec<Result<super::chains::ChainDescriptor, ConfigError>>,
+    /// The `optimizer` section; inert when the file does not declare one.
+    pub optimizer: aifuel_core::OptimizePlan,
 }
 
 /// A minimal decode of the version field, checked before the full parse so a
@@ -193,6 +227,15 @@ struct ProvidersFile {
     /// the environment overlay and credential binding it applies.
     #[serde(default)]
     instances: BTreeMap<String, serde_json::Value>,
+    /// The named fallback chains: the map key is the chain name and the
+    /// value declares its strategy and ordered steps.
+    #[serde(default)]
+    chains: BTreeMap<String, serde_json::Value>,
+    /// The token-optimization plan for every run this config serves.
+    /// Decoding is strict at the file boundary: an unknown level or stack
+    /// name is an `InvalidFile` error, never a silent default.
+    #[serde(default)]
+    optimizer: Option<aifuel_core::OptimizePlan>,
 }
 
 #[derive(Deserialize)]
@@ -276,6 +319,8 @@ pub enum ConfigError {
     },
     /// One `instances` entry failed validation.
     InvalidInstance { id: String, reason: String },
+    /// One `chains` entry failed validation.
+    InvalidChain { name: String, reason: String },
 }
 
 impl fmt::Display for ConfigError {
@@ -298,6 +343,9 @@ impl fmt::Display for ConfigError {
             },
             Self::InvalidInstance { id, reason } => {
                 write!(f, "providers config instance '{id}': {reason}")
+            }
+            Self::InvalidChain { name, reason } => {
+                write!(f, "providers config chain '{name}': {reason}")
             }
         }
     }

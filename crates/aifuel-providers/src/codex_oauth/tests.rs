@@ -121,6 +121,7 @@ fn request() -> RunRequest {
         resume: None,
         timeout: Some(Duration::from_secs(20)),
         env: Default::default(),
+        optimize: Default::default(),
         interaction_handler: None,
     }
 }
@@ -344,7 +345,7 @@ fn oauth_client_id_prefers_the_claim_then_app_audience_then_the_constant() {
 
 #[test]
 fn request_body_matches_the_backend_strict_shape() {
-    let body = request_body("gpt-5-codex", "hi there");
+    let body = request_body("gpt-5-codex", "hi there", None);
     assert_eq!(body["model"], "gpt-5-codex");
     assert_eq!(body["instructions"], INSTRUCTIONS);
     assert_eq!(body["store"], false);

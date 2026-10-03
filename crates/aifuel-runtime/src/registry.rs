@@ -43,6 +43,9 @@ pub(crate) struct Registry {
     /// instance itself carries only the environment spec and credential
     /// binding the session start resolves.
     instances: BTreeMap<IntegrationId, InstanceDescriptor>,
+    /// The token-optimization plan `providers.json` declared, stamped onto
+    /// every `session.create` so provider sessions optimize their inputs.
+    optimize: aifuel_core::OptimizePlan,
 }
 
 impl Registry {
@@ -51,6 +54,7 @@ impl Registry {
         descriptors: Vec<IntegrationDescriptor>,
         discovery: AdapterDiscovery,
         instances: Vec<InstanceDescriptor>,
+        optimize: aifuel_core::OptimizePlan,
     ) -> Self {
         Self {
             adapters,
@@ -60,7 +64,13 @@ impl Registry {
                 .into_iter()
                 .map(|instance| (instance.id.clone(), instance))
                 .collect(),
+            optimize,
         }
+    }
+
+    /// The file-level token-optimization plan sessions carry.
+    pub(crate) fn optimizer(&self) -> &aifuel_core::OptimizePlan {
+        &self.optimize
     }
 
     /// Resolve one Integration Identity to its serving descriptor and the

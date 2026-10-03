@@ -130,6 +130,9 @@ fn resolve_attempts_at(
     if let Some(filter) = model.strip_prefix("auto/") {
         return plan(model, Some(filter.to_owned()), status);
     }
+    if let Some(name) = model.strip_prefix(aifuel_core::CHAIN_PROVIDER_PREFIX) {
+        return plan_chain(model, name);
+    }
     if let Some((selector, pinned)) = model.split_once('/') {
         return match gateway.resolve(selector) {
             Ok(integration) => Ok(vec![Attempt {
@@ -202,6 +205,35 @@ fn plan(
         .collect())
 }
 
+/// Plan a named `providers.json` chain: the file's declared step order
+/// becomes the attempt chain, each step's model override pinned.
+fn plan_chain(requested: &str, name: &str) -> Result<Vec<Attempt>, (u16, String)> {
+    let registry = crate::integration_registry().map_err(|error| (500, error.clone()))?;
+    let Some(chain) = registry.chain(name) else {
+        let known = registry
+            .chains()
+            .map(|chain| chain.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err((
+            404,
+            if known.is_empty() {
+                format!("{requested:?} names no chain in providers.json")
+            } else {
+                format!("{requested:?} names no chain in providers.json; known chains: {known}")
+            },
+        ));
+    };
+    Ok(chain
+        .steps
+        .iter()
+        .map(|step| Attempt {
+            integration: step.integration.clone(),
+            model: step.model.clone(),
+        })
+        .collect())
+}
+
 /// Walk the attempt chain, feeding deltas to `feed`. The caller owns all
 /// wire formatting - this only decides which attempt answers and how the
 /// chain ends.
@@ -211,6 +243,9 @@ pub(crate) fn run(
     prompt: &str,
     feed: &mut dyn FnMut(Feed<'_>) -> Flow,
 ) -> Outcome {
+    // The providers.json optimizer plan rides every attempt's RunRequest
+    // so wire integrations receive the caveman instruction.
+    let optimize = super::request_plan();
     let mut last_failure = "no executable provider candidate".to_owned();
     let mut committed = false;
     let mut attempted = false;
@@ -232,6 +267,7 @@ pub(crate) fn run(
             resume: None,
             timeout: None,
             env: Default::default(),
+            optimize: optimize.clone(),
             interaction_handler: None,
         };
         if let Err(error) = adapter.validate(&run_request) {

@@ -51,6 +51,14 @@ impl RunManager {
             .expect("a resolved selection always names a registered integration");
         let mut resolved = request.clone();
         resolved.integration = integration;
+        // The request's optimization plan applies at this shared funnel:
+        // every manager-mediated path - `aifuel run`, sessions, MCP
+        // execution, gateway runs - carries the same transformed prompt.
+        // The plan is fail-open and never grows a payload, so an inert
+        // plan leaves the prompt byte-identical.
+        if resolved.optimize.is_active() {
+            resolved.prompt = resolved.optimize.apply(&resolved.prompt);
+        }
         if resolved.access == aifuel_core::AccessMode::ReadOnly
             && let Some(tools) = &resolved.external_tools
         {

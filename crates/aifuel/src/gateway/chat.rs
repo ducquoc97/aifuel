@@ -62,7 +62,11 @@ pub(crate) fn completions<C: StatusCollector>(
         );
         return;
     }
-    let transcript = flatten_messages(&chat.messages);
+    // The providers.json optimizer plan applies to this request: `rtk`
+    // compresses tool-role content at flatten, and `execute::run` loads
+    // the same plan so wire integrations receive the caveman instruction.
+    let optimize = super::request_plan();
+    let transcript = flatten_messages(&chat.messages, &optimize);
     if transcript.trim().is_empty() {
         respond_error(
             request,

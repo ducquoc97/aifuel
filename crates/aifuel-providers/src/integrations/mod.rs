@@ -15,17 +15,22 @@
 //!   map in `providers.json`) - selection overlays that carry per-instance
 //!   environment and credential bindings without changing the base
 //!   integration's identity or capabilities.
+//! - [`chains`]: the named fallback chains (`chains` map in
+//!   `providers.json`) - user-configured ordered fallback lists over
+//!   registered integrations, `--chain NAME`'s target.
 //! - [`builtin`]: the compiled [`IntegrationDescriptor`] set - six CLI
 //!   integrations, the runtime-adapter integrations, the local OpenAI-
 //!   compatible endpoints, and the API-key provider catalog.
 
 mod builtin;
+mod chains;
 mod config;
 mod evidence;
 mod instances;
 mod registry;
 
 pub use builtin::builtin_integrations;
+pub use chains::{ChainDescriptor, ChainStep, ChainStrategy};
 pub use config::{
     ConfigError, PROVIDERS_FILE_NAME, PROVIDERS_SCHEMA_VERSION, ProvidersConfig,
     ProvidersConfigParts,

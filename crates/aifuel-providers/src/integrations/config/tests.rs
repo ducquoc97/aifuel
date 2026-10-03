@@ -390,3 +390,88 @@ fn one_bad_instance_reports_its_own_error() {
     ));
     assert!(instances[1].is_ok());
 }
+
+#[test]
+fn chains_and_optimizer_decode_alongside_integrations() {
+    // The full documented providers.json shape: named chains plus the
+    // file-level optimizer plan, both spellings of a level.
+    let dir = TestDir::new();
+    let path = dir.write(
+        r#"{
+            "schema_version": 1,
+            "integrations": [],
+            "chains": {
+                "main": {
+                    "strategy": "priority",
+                    "steps": [
+                        { "integration": "claude" },
+                        { "integration": "glm:api-key", "model": "glm-4.7" }
+                    ]
+                }
+            },
+            "optimizer": {
+                "stack": ["rtk", "caveman"],
+                "rtk": "standard",
+                "caveman": { "level": "full" }
+            }
+        }"#,
+    );
+    let config = ProvidersConfig::load(path).expect("file is well-formed");
+    let chains = config.chains();
+    assert_eq!(chains.len(), 1);
+    let main = chains[0].as_ref().expect("main chain is valid");
+    assert_eq!(main.name, "main");
+    assert_eq!(main.steps.len(), 2);
+    assert_eq!(main.steps[1].model.as_deref(), Some("glm-4.7"));
+    assert_eq!(config.optimizer().rtk, aifuel_core::RtkLevel::Standard);
+    assert_eq!(config.optimizer().caveman, aifuel_core::CavemanLevel::Full);
+}
+
+#[test]
+fn one_bad_chain_reports_its_own_error() {
+    // Same per-entry isolation as instances: a malformed chain reports
+    // `InvalidChain` keyed by its map name while siblings still decode.
+    let dir = TestDir::new();
+    let path = dir.write(
+        r#"{
+            "schema_version": 1,
+            "chains": {
+                "good": { "strategy": "priority", "steps": [{ "integration": "claude" }] },
+                "bad": { "strategy": "weighted", "steps": [{ "integration": "claude" }] }
+            }
+        }"#,
+    );
+    let config = ProvidersConfig::load(path).expect("file is well-formed");
+    let chains = config.chains();
+    assert_eq!(chains.len(), 2);
+    assert!(matches!(
+        chains[0],
+        Err(ConfigError::InvalidChain { ref name, .. }) if name == "bad"
+    ));
+    assert!(chains[1].is_ok());
+}
+
+#[test]
+fn a_malformed_optimizer_is_a_file_error_not_a_silent_default() {
+    // Optimization changes model-visible bytes, so a misspelled level can
+    // never fall back to "off" - the operator must fix the file.
+    let dir = TestDir::new();
+    let path = dir.write(
+        r#"{
+            "schema_version": 1,
+            "optimizer": { "rtk": "supersonic" }
+        }"#,
+    );
+    assert!(matches!(
+        ProvidersConfig::load(path),
+        Err(ConfigError::InvalidFile { .. })
+    ));
+}
+
+#[test]
+fn an_absent_optimizer_is_the_inert_plan() {
+    let dir = TestDir::new();
+    let path = dir.write(r#"{ "schema_version": 1 }"#);
+    let config = ProvidersConfig::load(path).expect("file is well-formed");
+    assert!(!config.optimizer().is_active());
+}

@@ -27,7 +27,14 @@ use super::types::{ChatMessage, ToolFunction};
 /// sides of the convention can never drift apart.
 pub(crate) const TOOL_CALLS_OPEN: &str = "```aifuel_tool_calls";
 
-pub(crate) fn flatten_messages(messages: &[ChatMessage]) -> String {
+/// `optimize` applies to `tool` message content only: tool results are
+/// the payload the `rtk` engine exists to compress (command output, logs,
+/// search hits), while conversation text - what the caller wrote -
+/// passes through verbatim. An inert plan is byte-exact with before.
+pub(crate) fn flatten_messages(
+    messages: &[ChatMessage],
+    optimize: &aifuel_core::OptimizePlan,
+) -> String {
     if let [message] = messages
         && message.role == "user"
     {
@@ -50,12 +57,13 @@ pub(crate) fn flatten_messages(messages: &[ChatMessage]) -> String {
                 block
             }
             "tool" => format!(
-                "Tool ({}): {text}",
+                "Tool ({}): {}",
                 message
                     .tool_call_id
                     .as_deref()
                     .or(message.name.as_deref())
-                    .unwrap_or("unknown")
+                    .unwrap_or("unknown"),
+                optimize.apply(&text)
             ),
             role => format!("{}: {text}", capitalize(role)),
         };
@@ -217,6 +225,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const INERT: aifuel_core::OptimizePlan = aifuel_core::OptimizePlan {
+        stack: Vec::new(),
+        rtk: aifuel_core::RtkLevel::Off,
+        caveman: aifuel_core::CavemanLevel::Off,
+    };
+
     fn message(role: &str, content: Value) -> ChatMessage {
         ChatMessage {
             role: role.to_owned(),
@@ -232,7 +246,7 @@ mod tests {
         // The single-turn path is byte-exact: no transcript scaffolding
         // wraps the one prompt an app actually sent.
         let messages = vec![message("user", json!("Explain ownership"))];
-        assert_eq!(flatten_messages(&messages), "Explain ownership");
+        assert_eq!(flatten_messages(&messages, &INERT), "Explain ownership");
     }
 
     #[test]
@@ -244,7 +258,7 @@ mod tests {
             message("user", json!("Now what?")),
         ];
         assert_eq!(
-            flatten_messages(&messages),
+            flatten_messages(&messages, &INERT),
             "Be terse.\n\nUser: Hi\n\nAssistant: Hello\n\nUser: Now what?"
         );
     }
@@ -265,7 +279,7 @@ mod tests {
             ),
         ];
         assert_eq!(
-            flatten_messages(&messages),
+            flatten_messages(&messages, &INERT),
             "x\n\nUser: What is [image_url part omitted]in this picture?"
         );
     }
@@ -289,7 +303,7 @@ mod tests {
                 tool_call_id: Some("call_1".to_owned()),
             },
         ];
-        let flat = flatten_messages(&messages);
+        let flat = flatten_messages(&messages, &INERT);
         assert!(flat.contains("Tool calls:") && flat.contains("lookup"));
         assert!(flat.contains("Tool (call_1): result text"));
     }
@@ -349,5 +363,30 @@ mod tests {
     fn no_tools_means_no_preamble() {
         assert!(flatten_tools(&[], None).is_empty());
         assert!(flatten_tools(&[], Some(&json!("required"))).is_empty());
+    }
+
+    #[test]
+    fn tool_content_optimizes_but_conversation_text_stays_verbatim() {
+        // A configured plan compresses what a tool returned; the user's
+        // own words and the system lead never get rewritten by it.
+        let plan = aifuel_core::OptimizePlan {
+            stack: vec![aifuel_core::OptimizerKind::Rtk],
+            rtk: aifuel_core::RtkLevel::Ultra,
+            caveman: aifuel_core::CavemanLevel::Off,
+        };
+        let log = (0..30)
+            .map(|i| format!("2026-01-01T00:00:{i:02} INFO heartbeat"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let messages = vec![
+            message("system", json!("Be terse.")),
+            message("tool", json!(log.clone())),
+            message("user", json!("just actually what happened?")),
+        ];
+        let flat = flatten_messages(&messages, &plan);
+        assert!(flat.contains("Be terse."));
+        assert!(flat.contains("just actually what happened?"));
+        let tool_block = flat.split("Tool (unknown): ").nth(1).expect("tool block");
+        assert!(tool_block.len() < log.len());
     }
 }

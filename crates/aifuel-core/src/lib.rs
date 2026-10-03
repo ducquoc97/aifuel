@@ -11,6 +11,7 @@ mod agent_mcp_registration;
 mod agent_runtime;
 mod execution;
 mod integration;
+pub mod optimize;
 mod run_management;
 mod status;
 pub use agent_integration::{
@@ -42,6 +43,7 @@ pub use integration::{
     ExecutionConfig, Integration, IntegrationId, KeyDelivery, MonitoringConfig, OAuthProfileId,
     ProviderId, SelectorMatch, WireApi, cookie_header_value, match_selector,
 };
+pub use optimize::{CavemanLevel, OptimizePlan, OptimizerKind, RtkLevel};
 pub use run_management::{
     DEFAULT_EVENT_PAGE_BYTES, MAX_ACTIVE_RUNS, MAX_ANSWER_BYTES_PER_RUN, MAX_COMPLETED_CONTENT,
     MAX_EVENT_BYTES_PER_RUN, MAX_EVENT_PAGE_BYTES, MAX_OWNER_CONTENT_BYTES, MAX_RUN_RECORDS,
@@ -142,6 +144,14 @@ struct ProviderMetadata {
 /// Integration Identity - `providers.json` rejects it and selection
 /// resolves it before a real Integration is named.
 pub const AUTO_PROVIDER: &str = "auto";
+
+/// The marker prefix a `--chain NAME` run carries in place of a literal
+/// Integration Identity until the chain runner substitutes each step's
+/// integration: `chain:main`. Like `auto`, it is never a registered
+/// Integration Identity - `providers.json` ids are validated by the same
+/// non-empty rule, and a literal `chain:` id would collide only with a
+/// config-defined name, which resolution then handles exactly.
+pub const CHAIN_PROVIDER_PREFIX: &str = "chain:";
 
 impl fmt::Display for ProviderKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

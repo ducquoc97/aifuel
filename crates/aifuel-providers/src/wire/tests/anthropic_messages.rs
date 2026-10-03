@@ -41,7 +41,7 @@ fn messages_url_appends_the_versioned_path() {
 fn request_body_carries_the_required_max_tokens_and_stream_flag() {
     // The Messages API rejects a request without `max_tokens`; the run
     // contract has no token budget, so the adapter declares one.
-    let body = request_body("claude-stub-4", "say hi");
+    let body = request_body("claude-stub-4", "say hi", None);
     assert_eq!(body["model"], "claude-stub-4");
     assert_eq!(body["stream"], true);
     assert!(

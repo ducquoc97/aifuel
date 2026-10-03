@@ -284,7 +284,11 @@ impl CodexOAuthAdapter {
             .map(str::trim)
             .filter(|model| !model.is_empty())
             .unwrap_or(DEFAULT_MODEL);
-        let body = request_body(model, &request.prompt);
+        let body = request_body(
+            model,
+            &request.prompt,
+            request.optimize.caveman_instruction(),
+        );
         let headers = Self::request_headers(&credentials)?;
         let secrets = [
             credentials.access_token.as_str(),
@@ -493,11 +497,16 @@ fn write_refreshed(
 /// The Responses-protocol body the Codex backend accepts: `instructions`
 /// and `input` are required by its strict schema, `store: false` keeps the
 /// run out of server-side history, and `stream: true` requests the SSE
-/// form this adapter reads.
-fn request_body(model: &str, prompt: &str) -> Value {
+/// form this adapter reads. An active optimizer plan appends its system
+/// instruction to the required `instructions` field.
+fn request_body(model: &str, prompt: &str, system: Option<&str>) -> Value {
+    let instructions = match system {
+        Some(system) => format!("{INSTRUCTIONS}\n\n{system}"),
+        None => INSTRUCTIONS.to_owned(),
+    };
     json!({
         "model": model,
-        "instructions": INSTRUCTIONS,
+        "instructions": instructions,
         "input": [{
             "type": "message",
             "role": "user",

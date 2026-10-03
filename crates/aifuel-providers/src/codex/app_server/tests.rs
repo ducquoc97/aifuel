@@ -64,6 +64,7 @@ fn request() -> RunRequest {
         resume: Some("native-thread-42".to_owned()),
         timeout: None,
         env: Default::default(),
+        optimize: Default::default(),
         interaction_handler: Some(Arc::new(AnswerHandler)),
     }
 }

@@ -171,6 +171,7 @@ mod tests {
             env: Default::default(),
             resume: None,
             timeout: None,
+            optimize: Default::default(),
             interaction_handler: None,
         };
 

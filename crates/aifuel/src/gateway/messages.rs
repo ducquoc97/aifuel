@@ -120,7 +120,11 @@ pub(crate) fn handle<C: StatusCollector>(
             "messages must not be empty",
         );
     }
-    let prompt = flatten_messages(&to_chat_messages(parsed.system.as_ref(), &parsed.messages));
+    let optimize = super::request_plan();
+    let prompt = flatten_messages(
+        &to_chat_messages(parsed.system.as_ref(), &parsed.messages),
+        &optimize,
+    );
     if count_tokens {
         // The documented estimate doubles as the token-count answer: no
         // provider round trip, matching the endpoint's contract.
@@ -342,7 +346,10 @@ mod tests {
         }))
         .expect("the request parses");
         assert!(parsed.stream);
-        let flat = flatten_messages(&to_chat_messages(parsed.system.as_ref(), &parsed.messages));
+        let flat = flatten_messages(
+            &to_chat_messages(parsed.system.as_ref(), &parsed.messages),
+            &Default::default(),
+        );
         assert_eq!(flat, "be terse\n\nUser: hi");
     }
 
@@ -356,7 +363,10 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            flatten_messages(&to_chat_messages(parsed.system.as_ref(), &parsed.messages)),
+            flatten_messages(
+                &to_chat_messages(parsed.system.as_ref(), &parsed.messages),
+                &Default::default()
+            ),
             "Explain ownership"
         );
     }
@@ -380,7 +390,10 @@ mod tests {
             ],
         }))
         .unwrap();
-        let flat = flatten_messages(&to_chat_messages(parsed.system.as_ref(), &parsed.messages));
+        let flat = flatten_messages(
+            &to_chat_messages(parsed.system.as_ref(), &parsed.messages),
+            &Default::default(),
+        );
         assert!(flat.contains("Tool calls:"), "{flat}");
         assert!(flat.contains("tu_1") && flat.contains("lookup"), "{flat}");
         assert!(flat.contains("Tool (tu_1): found it"), "{flat}");
@@ -400,7 +413,10 @@ mod tests {
             ]}],
         }))
         .unwrap();
-        let flat = flatten_messages(&to_chat_messages(None, &parsed.messages));
+        let flat = flatten_messages(
+            &to_chat_messages(None, &parsed.messages),
+            &Default::default(),
+        );
         let (first, calls, second) = (
             flat.find("first").expect("first text"),
             flat.find("Tool calls:").expect("a calls block"),
@@ -423,7 +439,10 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            flatten_messages(&to_chat_messages(None, &parsed.messages)),
+            flatten_messages(
+                &to_chat_messages(None, &parsed.messages),
+                &Default::default()
+            ),
             "what is [image part omitted]showing?"
         );
     }

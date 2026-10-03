@@ -60,6 +60,7 @@ fn request() -> RunRequest {
         resume: None,
         timeout: Some(Duration::from_secs(20)),
         env: Default::default(),
+        optimize: Default::default(),
         interaction_handler: None,
     }
 }

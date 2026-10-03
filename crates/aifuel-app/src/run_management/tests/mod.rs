@@ -253,6 +253,7 @@ fn request() -> RunRequest {
         resume: None,
         timeout: None,
         env: Default::default(),
+        optimize: Default::default(),
         interaction_handler: None,
     }
 }

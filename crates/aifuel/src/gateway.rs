@@ -107,6 +107,17 @@ impl Gateway {
     }
 }
 
+/// The providers.json optimizer plan for one inbound request: `rtk`
+/// compresses tool-role content at flatten, and the plan rides the
+/// RunRequest so wire integrations receive the caveman instruction. A
+/// registry that cannot load reads as the inert plan - the gateway keeps
+/// answering rather than failing on config it did not write.
+pub(crate) fn request_plan() -> aifuel_core::OptimizePlan {
+    crate::integration_registry()
+        .map(|registry| registry.optimizer().clone())
+        .unwrap_or_default()
+}
+
 /// Dispatch one `/v1` request. `None` gateway answers every route with an
 /// OpenAI-shaped 503 - the dashboard stays up when the execution surface
 /// cannot build.

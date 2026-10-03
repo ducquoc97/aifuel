@@ -139,6 +139,7 @@ impl AgentAdapter for CliAdapter {
             // The probe exists for `validate`, which never spawns a
             // process, so no environment is attached.
             env: std::collections::BTreeMap::new(),
+            optimize: Default::default(),
             interaction_handler: None,
         };
         self.execution
@@ -156,6 +157,7 @@ impl AgentAdapter for CliAdapter {
             resume_cursor.clone(),
             options.external_tools,
             options.env,
+            options.optimize,
         );
         session.emit(AgentEventKind::SessionCreated {
             integration_id: integration.id.clone(),

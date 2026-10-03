@@ -337,6 +337,7 @@ pub(super) fn options(provider: ProviderKey, access: AccessMode) -> StartOptions
         resume_cursor: None,
         external_tools: Vec::new(),
         env: Default::default(),
+        optimize: Default::default(),
     }
 }
 

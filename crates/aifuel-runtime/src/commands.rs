@@ -108,6 +108,7 @@ impl AgentRuntime {
                 resume_cursor,
                 external_tools: external_tools.clone(),
                 env,
+                optimize: self.registry.optimizer().clone(),
             },
         ) {
             Ok(handle) => handle,

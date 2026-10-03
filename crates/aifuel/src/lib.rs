@@ -81,11 +81,15 @@ pub fn integration_registry() -> Result<aifuel_providers::IntegrationRegistry, S
     let aifuel_providers::ProvidersConfigParts {
         integrations: entries,
         instances,
+        chains,
+        optimizer,
     } = config.into_parts();
     aifuel_providers::IntegrationRegistry::build(
         aifuel_providers::builtin_integrations(),
         entries,
         instances,
+        chains,
+        optimizer,
     )
     .map_err(|error| error.to_string())
 }

@@ -334,7 +334,11 @@ impl CopilotOAuthAdapter {
             .await?;
         let model = request.model.as_deref().expect("validate requires a model");
         let url = openai_chat::completions_url(&session.api_base);
-        let body = openai_chat::request_body(model, &request.prompt);
+        let body = openai_chat::request_body(
+            model,
+            &request.prompt,
+            request.optimize.caveman_instruction(),
+        );
         let headers = Self::chat_headers(&session.bearer)?;
         let secrets = [session.bearer.as_str(), oauth_token.as_str()];
         let mut response = oauth_http::send(

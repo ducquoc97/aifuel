@@ -792,6 +792,8 @@ mod tests {
             ],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            aifuel_core::OptimizePlan::default(),
         )
         .expect("the registry builds");
 
@@ -833,6 +835,8 @@ mod tests {
             vec![http_descriptor("local:local", "local", AuthBinding::None)],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            aifuel_core::OptimizePlan::default(),
         )
         .expect("the registry builds");
         // No evidence context: local candidacy cannot be established.
@@ -871,6 +875,8 @@ mod tests {
             ],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            aifuel_core::OptimizePlan::default(),
         )
         .expect("the registry builds");
 

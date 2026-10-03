@@ -4,7 +4,7 @@
 
 use crate::{
     AccessMode, AgentEventKind, AgentRuntimeError, ApprovalDecision, CheckpointId, Integration,
-    ModelDescriptor, ModelSelection, RequestId, RunId, SessionId, UserInput,
+    ModelDescriptor, ModelSelection, OptimizePlan, RequestId, RunId, SessionId, UserInput,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -62,6 +62,11 @@ pub struct StartOptions {
     /// persisted, or printed - `Debug` reports variable names only.
     #[serde(skip)]
     pub env: std::collections::BTreeMap<String, String>,
+    /// The token-optimization plan the runtime resolved for this session's
+    /// host. Adapters apply it to every input they dispatch; the inert
+    /// default keeps sessions byte-identical to before the feature.
+    #[serde(default)]
+    pub optimize: OptimizePlan,
 }
 
 impl std::fmt::Debug for StartOptions {
@@ -74,6 +79,7 @@ impl std::fmt::Debug for StartOptions {
             .field("resume_cursor", &self.resume_cursor)
             .field("external_tools", &self.external_tools)
             .field("env", &self.env.keys().collect::<Vec<_>>())
+            .field("optimize", &self.optimize.describe())
             .finish()
     }
 }

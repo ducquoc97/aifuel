@@ -167,12 +167,19 @@ fn run_mcp_execution(args: &[String]) -> Result<u8, String> {
             .map(|provider| runtime.block_on(aifuel::refresh_model_catalog(provider)))
             .collect::<Result<Vec<_>, _>>()
     };
+    // The `providers.json` optimizer plan rides every request the endpoint
+    // builds; a registry that cannot load reads as the inert plan so the
+    // server still starts.
+    let optimize = aifuel::integration_registry()
+        .map(|registry| registry.optimizer().clone())
+        .unwrap_or_default();
     match options {
         Some((host, port)) => aifuel_mcp::execution::http::serve(
             aifuel::execution_run_manager,
             selection,
             catalog,
             refresh_catalog,
+            optimize,
             &host,
             port,
         )?,
@@ -183,6 +190,7 @@ fn run_mcp_execution(args: &[String]) -> Result<u8, String> {
                 selection,
                 catalog,
                 refresh_catalog,
+                optimize,
             )?;
         }
     }
@@ -341,10 +349,16 @@ fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("could not start MCP Gateway runtime: {error}"))?;
     let allowed_tools = (!allowed_tools.is_empty()).then_some(allowed_tools);
+    // Tool result text compresses through the `providers.json` optimizer
+    // plan before it answers the host.
+    let optimize = aifuel::integration_registry()
+        .map(|registry| registry.optimizer().clone())
+        .unwrap_or_default();
     if http {
         runtime.block_on(aifuel_mcp::gateway::serve_http_with_tool_allowlist(
             facade,
             allowed_tools,
+            optimize,
             &host,
             port,
         ))?;
@@ -353,6 +367,7 @@ fn run_mcp_gateway(args: &[String]) -> Result<u8, String> {
     runtime.block_on(aifuel_mcp::gateway::serve_with_tool_allowlist(
         facade,
         allowed_tools,
+        optimize,
     ))?;
     Ok(0)
 }

@@ -144,7 +144,8 @@ pub(crate) fn handle<C: StatusCollector>(
     if let Err(message) = flatten_input(&responses.input, &mut messages) {
         return fail(request, &model, responses.stream, 400, &message);
     }
-    let transcript = flatten_messages(&messages);
+    let optimize = super::request_plan();
+    let transcript = flatten_messages(&messages, &optimize);
     if transcript.trim().is_empty() {
         return fail(
             request,
@@ -387,7 +388,7 @@ mod tests {
     fn input_string_and_message_items_flatten_to_prompt_text() {
         let mut messages = Vec::new();
         flatten_input(&json!("hello"), &mut messages).unwrap();
-        assert_eq!(flatten_messages(&messages), "hello");
+        assert_eq!(flatten_messages(&messages, &Default::default()), "hello");
 
         let mut messages = Vec::new();
         flatten_input(
@@ -405,7 +406,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            flatten_messages(&messages),
+            flatten_messages(&messages, &Default::default()),
             "User: What is [input_image part omitted]this?\n\nAssistant: An owl."
         );
     }
@@ -425,7 +426,7 @@ mod tests {
             &mut messages,
         )
         .unwrap();
-        let flat = flatten_messages(&messages);
+        let flat = flatten_messages(&messages, &Default::default());
         assert!(flat.contains("Tool calls:") && flat.contains("call_1") && flat.contains("shell"));
         assert!(flat.contains("Tool (call_1): a.rs"));
         assert!(flat.contains("apply_patch") && flat.contains("Tool (call_2): ok"));
@@ -462,7 +463,10 @@ mod tests {
             &mut messages,
         )
         .unwrap();
-        assert!(flatten_messages(&messages).contains("[web_search_call item omitted]"));
+        assert!(
+            flatten_messages(&messages, &Default::default())
+                .contains("[web_search_call item omitted]")
+        );
     }
 
     #[test]

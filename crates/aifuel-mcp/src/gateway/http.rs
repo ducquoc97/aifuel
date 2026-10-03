@@ -44,11 +44,17 @@ impl GatewayHttpSession {
     pub(super) fn start(
         facade: McpGatewayFacade,
         allowed_tools: Option<Vec<String>>,
+        optimize: aifuel_core::OptimizePlan,
         runtime: tokio::runtime::Handle,
     ) -> Result<Self, String> {
         let limits = facade.gateway_limits().clone();
         let overflow = CancellationToken::new();
-        let state = Arc::new(GatewayState::new(facade, overflow.clone(), allowed_tools));
+        let state = Arc::new(GatewayState::new(
+            facade,
+            overflow.clone(),
+            allowed_tools,
+            optimize,
+        ));
         let cancellation = CancellationToken::new();
         let (inbound_tx, inbound_rx) = tokio_mpsc::unbounded_channel();
         let shared = Arc::new(SessionShared {
