@@ -45,6 +45,7 @@ function renderCombos(combos, aliases) {
     const shadowed = Object.prototype.hasOwnProperty.call(aliases, name);
     const card = document.createElement("div");
     card.className = "gw-combo-card";
+    card.dataset.name = name;
     card.innerHTML = `
       <div class="gw-combo-head">
         <span class="gw-combo-name">${esc(name)}</span>
