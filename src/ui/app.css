@@ -65,6 +65,9 @@
 
 /* ---- Reset & base ---- */
 *, *::before, *::after { box-sizing: border-box }
+/* Any component that sets display (e.g. .gw-callout) would otherwise
+   override the UA [hidden] rule and leak hidden state. */
+[hidden] { display: none !important }
 html { -webkit-text-size-adjust: 100% }
 body {
   margin: 0;
