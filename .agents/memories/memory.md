@@ -38,3 +38,12 @@
 - `AIFUEL_HOME` steers only the DiscoveryContext home; the Credential Store follows `XDG_CONFIG_HOME`/`HOME`, so dashboard tests and manual runs must override those to isolate the store.
 - `cargo run` under a sandboxed HOME breaks rustup's toolchain resolution; pin `RUSTUP_HOME`/`CARGO_HOME` to the real dotdirs when exercising the dashboard with a fake HOME.
 - Requiring `application/json` bodies on mutation endpoints doubles as CSRF hardening - a cross-site HTML form cannot produce that content type, complementing the loopback Host/Origin/Sec-Fetch-Site check.
+
+## OpenAI Gateway (Tier 2/3)
+
+- The per-key model allowlist gates the verbatim inbound `model` string, not the resolved integration/model - `model` lives in the request body, so enforcement belongs inside each handler after parsing, not at dispatch. `tiny_http::Request` has no test constructor; test `authorize`/`permits` at the `KeyStore` level and rely on live E2E for the HTTP wrapper.
+- `routes::resolve` reads `gateway.json` fresh on every call by design - a PUT that validates and atomically rewrites (temp + rename, 0600) takes effect on the next request with no cache invalidation. Alias shadows a same-named combo; PUT mirrors that precedence rather than rejecting the collision.
+- Embeddings cannot ride `AgentExecutionAdapter` (prompt-in/text-out). Route `ExecutionConfig::Http` + `WireApi::OpenAiChat` integrations to `{base_url}/embeddings` through a providers-crate seam that applies the instance `AuthBinding` and scrubs credential echoes from upstream error bodies.
+- Inline OAuth refresh belongs inside `execute` when the access token is expired or inside a ~60s margin and a `refresh_token` exists - never refresh a valid token (rotation is consuming), write back atomically preserving unknown fields, serialize with a per-adapter `OnceLock<tokio::Mutex>` (tokio `Mutex::new` is not const, so a static adapter cannot hold one inline).
+- GitHub Copilot Business seats reject `POST /copilot_internal/v2/token` with 403, not 404 - auth-class failures (401/403/404/410) must all reconcile through `/copilot_internal/user`, which reports the seat's real `endpoints.api` (e.g. `api.business.githubcopilot.com`) where the `gho_` token works as bearer directly.
+- A branch whose base commits entered `main` via squash merge rebases cleanly with `git rebase --onto origin/main <last-merged-commit>` - a plain rebase tries to re-apply already-merged commits and conflicts.

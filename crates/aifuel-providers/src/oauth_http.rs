@@ -15,9 +15,11 @@
 //!   for the serving integration id, and only the fields the request needs.
 //!   Listing surfaces report file presence through discovery evidence and
 //!   never read contents.
-//! - Monitoring reads the same files through its own collectors; nothing
-//!   here persists, refreshes, or writes credential material back. A
-//!   rotation-consuming refresh flow is never run.
+//! - Monitoring reads the same files through its own collectors; the
+//!   shared machinery here persists nothing and writes no credential
+//!   material back. A rotation-consuming refresh flow is an adapter's own
+//!   boundary decision - `codex:oauth` runs one against its provider-owned
+//!   file inside `execute`; this module never starts one.
 //! - Resolved material is marked sensitive on the wire, scrubbed from
 //!   endpoint-controlled error text via [`redact_secrets`], and never
 //!   appears in logs, diagnostics, or errors.
@@ -161,6 +163,17 @@ pub(crate) fn reject_unsupported(
             "{integration} cannot provide verified JSONL output"
         )));
     }
+    Ok(())
+}
+
+/// The model requirement for direct endpoints that carry no provider-side
+/// default. Adapters with a compiled default (`codex:oauth` serves
+/// `DEFAULT_MODEL`) do not call this; endpoints without one (`copilot:oauth`)
+/// do, so a bare selector fails before the credential file is read.
+pub(crate) fn require_model(
+    integration: &IntegrationId,
+    request: &RunRequest,
+) -> Result<(), AgentRunError> {
     if request
         .model
         .as_deref()
@@ -376,14 +389,21 @@ pub(crate) fn stream_result(
     )
 }
 
+/// The decoded JSON payload of a JWT-shaped token, when the token is one
+/// and the payload parses. An unreadable token yields `None` - the
+/// endpoint then decides freshness at request time instead of the adapter
+/// guessing.
+pub(crate) fn jwt_payload(token: &str) -> Option<serde_json::Value> {
+    let payload = token.split('.').nth(1)?;
+    let decoded = base64url_decode(payload)?;
+    serde_json::from_slice(&decoded).ok()
+}
+
 /// The `exp` claim of a JWT-shaped access token, when the token is one and
 /// the claim parses. An unreadable token yields `None` - the endpoint then
 /// decides freshness at request time instead of the adapter guessing.
 pub(crate) fn jwt_exp(token: &str) -> Option<u64> {
-    let payload = token.split('.').nth(1)?;
-    let decoded = base64url_decode(payload)?;
-    let value: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    value.get("exp")?.as_u64()
+    jwt_payload(token)?.get("exp")?.as_u64()
 }
 
 /// Decode base64url (RFC 4648 section 5, no padding required) without a

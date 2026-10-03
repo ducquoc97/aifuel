@@ -54,8 +54,8 @@ struct StoredKey {
     created_at: u64,
     /// Optional model-selector allowlist: `null` permits every inbound
     /// `model` value, a list permits exactly its members. Stored and
-    /// reported through the admin api; `/v1` enforcement lands with the
-    /// rest of #109.
+    /// reported through the admin api and enforced on `/v1` by
+    /// `require_permits`.
     #[serde(default)]
     models: Option<Vec<String>>,
     #[serde(default)]
@@ -179,6 +179,18 @@ impl KeyStore {
             return Err(format!("unknown key {id:?}"));
         };
         key.revoked = true;
+        self.write(&file)
+    }
+
+    /// Replace one key's model allowlist: `None` restores "every model".
+    /// The row keeps its digest, name, and history - only `models` moves.
+    fn update(&self, id: &str, models: Option<Vec<String>>) -> Result<(), String> {
+        let _guard = STORE_IO.lock().expect("gateway key store mutex");
+        let mut file = self.read()?;
+        let Some(key) = file.keys.iter_mut().find(|key| key.id == id) else {
+            return Err(format!("unknown key {id:?}"));
+        };
+        key.models = models;
         self.write(&file)
     }
 
@@ -322,14 +334,33 @@ pub(crate) fn revoke(id: &str) -> Result<(), String> {
     default_store()?.revoke(id)
 }
 
+/// Replace a key's model allowlist for `POST /api/gateway/keys/update`.
+/// `None` clears the allowlist back to "every model".
+pub(crate) fn update(id: &str, models: Option<Vec<String>>) -> Result<(), String> {
+    default_store()?.update(id, models)
+}
+
 /// Whether the caller resolved to `identity` may use `model`, honoring the
-/// stored `models` allowlist. `/v1` enforcement is deferred to the rest of
-/// #109; this is the check the wire will call.
-#[allow(dead_code)] // exposed for #109; no caller wires it yet
+/// stored `models` allowlist.
 pub(crate) fn permits(identity: &str, model: &str) -> bool {
     match default_store() {
         Ok(store) => store.permits(identity, model),
         Err(_) => false,
+    }
+}
+
+/// The `/v1` model-permission gate: resolve the caller identity the same
+/// way `authorize` does, then check the stored allowlist for the inbound
+/// `model` string verbatim. `Err` carries the rejection message - the
+/// caller maps it to 403 (or the wire format's equivalent).
+pub(crate) fn require_permits(request: &tiny_http::Request, model: &str) -> Result<(), String> {
+    let identity = authorize(request)?;
+    if permits(&identity, model) {
+        Ok(())
+    } else {
+        Err(format!(
+            "key {identity:?} is not permitted to use model {model:?}"
+        ))
     }
 }
 

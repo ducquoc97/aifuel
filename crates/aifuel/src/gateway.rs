@@ -27,6 +27,7 @@
 mod admin;
 mod chat;
 mod completions;
+mod embeddings;
 mod execute;
 mod flatten;
 mod keys;
@@ -34,6 +35,7 @@ mod logs;
 mod messages;
 mod models;
 mod responses;
+mod route_config;
 mod routes;
 mod types;
 
@@ -149,6 +151,9 @@ pub fn handle<C: StatusCollector>(
         }
         (&tiny_http::Method::Post, "/v1/completions") => {
             completions::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/embeddings") => {
+            embeddings::handle(request, gateway, facade, runtime);
         }
         (&tiny_http::Method::Post, "/v1/messages")
         | (&tiny_http::Method::Post, "/v1/messages/count_tokens") => {

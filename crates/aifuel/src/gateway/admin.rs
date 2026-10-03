@@ -30,6 +30,11 @@ pub(crate) fn handle(request: Request, gateway: &Gateway) {
         },
         (&Method::Post, "/api/gateway/keys") => create_key(request),
         (&Method::Post, "/api/gateway/keys/revoke") => revoke_key(request),
+        (&Method::Post, "/api/gateway/keys/update") => update_key(request),
+        (&Method::Get, "/api/gateway/routes") => super::route_config::get(request),
+        (&Method::Put, "/api/gateway/routes") | (&Method::Post, "/api/gateway/routes") => {
+            super::route_config::put(request)
+        }
         (&Method::Get, "/api/gateway/logs") => list_logs(request),
         (&Method::Get, "/api/gateway/providers") => {
             respond_json(request, 200, &json!({"providers": providers(gateway)}))
@@ -71,6 +76,25 @@ fn revoke_key(mut request: Request) {
         Err(error) => return respond_admin_error(request, 400, &error),
     };
     match super::keys::revoke(&body.id) {
+        Ok(()) => respond_json(request, 200, &json!({"ok": true})),
+        Err(error) => respond_admin_error(request, 400, &error),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateKeyBody {
+    id: String,
+    #[serde(default)]
+    models: Option<Vec<String>>,
+}
+
+/// `POST /api/gateway/keys/update`: replace a key's model allowlist.
+fn update_key(mut request: Request) {
+    let body: UpdateKeyBody = match read_json_body(&mut request) {
+        Ok(body) => body,
+        Err(error) => return respond_admin_error(request, 400, &error),
+    };
+    match super::keys::update(&body.id, body.models) {
         Ok(()) => respond_json(request, 200, &json!({"ok": true})),
         Err(error) => respond_admin_error(request, 400, &error),
     }

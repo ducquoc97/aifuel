@@ -111,6 +111,9 @@ pub(crate) fn handle<C: StatusCollector>(
     if model.is_empty() {
         return fail(request, "", responses.stream, 400, "model is required");
     }
+    if let Err(reason) = super::keys::require_permits(&request, &model) {
+        return fail(request, &model, responses.stream, 403, &reason);
+    }
     if let Some(previous) = responses.previous_response_id.as_deref() {
         return fail(
             request,

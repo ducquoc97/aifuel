@@ -36,9 +36,20 @@ fn reject_unsupported_gates_every_demand_beyond_prompt_completion() {
     denied(|req| req.resume = Some("cursor".to_owned()));
     denied(|req| req.account = Some("acc".to_owned()));
     denied(|req| req.output = OutputFormat::Jsonl);
-    denied(|req| req.model = None);
     // A read-only prompt completion with a model is accepted.
     assert!(reject_unsupported(&integration, &request()).is_ok());
+}
+
+#[test]
+fn require_model_rejects_a_bare_selector_and_accepts_a_pinned_one() {
+    let integration = IntegrationId::new("test:oauth");
+    let mut req = request();
+    req.model = None;
+    assert!(require_model(&integration, &req).is_err());
+    req.model = Some("  ".to_owned());
+    assert!(require_model(&integration, &req).is_err());
+    req.model = Some("a-model".to_owned());
+    assert!(require_model(&integration, &req).is_ok());
 }
 
 #[test]

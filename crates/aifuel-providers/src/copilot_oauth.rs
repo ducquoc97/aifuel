@@ -434,7 +434,8 @@ impl AgentExecutionAdapter for CopilotOAuthAdapter {
                 "prompt must not be empty".to_owned(),
             ));
         }
-        oauth_http::reject_unsupported(&self.integration(), request)
+        oauth_http::reject_unsupported(&self.integration(), request)?;
+        oauth_http::require_model(&self.integration(), request)
     }
 
     fn execute(
