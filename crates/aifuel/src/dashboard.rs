@@ -11,6 +11,9 @@ const INDEX_HTML: &str = include_str!("../../../src/index.html");
 const DASHBOARD_CSS: &str = include_str!("../../../src/dashboard.css");
 const CONNECT_CSS: &str = include_str!("../../../src/connect.css");
 const CONNECT_JS: &str = include_str!("../../../src/connect.js");
+const GATEWAY_HTML: &str = include_str!("../../../src/gateway.html");
+const GATEWAY_CSS: &str = include_str!("../../../src/gateway_ui.css");
+const GATEWAY_JS: &str = include_str!("../../../src/gateway_ui.js");
 
 /// Mutation request bodies are small by contract (an integration id plus a
 /// pasted key); anything larger is rejected rather than buffered.
@@ -120,6 +123,23 @@ where
         );
         return;
     }
+    if path.starts_with("/api/gateway") {
+        // The gateway admin surface mutates local state (downstream keys)
+        // and reads request logs, so it keeps the dashboard's strict
+        // same-origin guard rather than the relaxed `/v1` policy.
+        if !is_local_request(&request) {
+            drain_body(&mut request);
+            respond(
+                request,
+                403,
+                "forbidden: cross-origin request rejected",
+                "text/plain",
+            );
+            return;
+        }
+        aifuel::gateway::handle_admin(request, shared.gateway.as_ref());
+        return;
+    }
     if !is_local_request(&request) {
         drain_body(&mut request);
         respond(
@@ -158,6 +178,18 @@ fn handle_request<C>(
             request,
             200,
             CONNECT_JS,
+            "application/javascript; charset=utf-8",
+        ),
+        (&Method::Get, "/gateway") => {
+            respond(request, 200, GATEWAY_HTML, "text/html; charset=utf-8")
+        }
+        (&Method::Get, "/gateway_ui.css") => {
+            respond(request, 200, GATEWAY_CSS, "text/css; charset=utf-8")
+        }
+        (&Method::Get, "/gateway_ui.js") => respond(
+            request,
+            200,
+            GATEWAY_JS,
             "application/javascript; charset=utf-8",
         ),
         (&Method::Get, "/api/usage") => {

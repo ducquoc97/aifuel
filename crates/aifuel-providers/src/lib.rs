@@ -19,17 +19,22 @@ mod claude_web;
 mod cli_adapter;
 mod code_assist;
 mod codex;
+mod codex_oauth;
 pub mod codex_runtime;
 mod copilot;
+mod copilot_oauth;
 mod credentials;
 mod deepseek;
 mod devin;
+mod devin_oauth;
 mod discovery;
+mod embeddings;
 mod gemini;
 mod integrations;
 mod local_adapter;
 mod model_catalog;
 mod monitoring;
+mod oauth_http;
 pub mod opencode_runtime;
 mod openrouter;
 mod quota;
@@ -41,7 +46,7 @@ mod wire;
 mod zai;
 
 pub use acp_runtime::{AcpAdapter, acp_adapter};
-pub use agent_run_registry::agent_run_adapters;
+pub use agent_run_registry::{agent_run_adapters, oauth_execution_adapter};
 pub use catalog::free_tier_note;
 pub use claude_runtime::{ClaudeAdapter, claude_adapter};
 pub use cli_adapter::{
@@ -54,6 +59,7 @@ pub use credentials::{
     env_override, is_pool_member, valid_env_var_name,
 };
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
+pub use embeddings::{EmbeddingsOutcome, embeddings};
 pub use integrations::{
     ChainDescriptor, ChainStep, ChainStrategy, ConfigError, EvidenceContext, EvidenceSource,
     InstanceDescriptor, InstanceEnvSource, IntegrationDescriptor, IntegrationOrigin,

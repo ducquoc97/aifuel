@@ -16,11 +16,11 @@
 
 mod anthropic_messages;
 mod capabilities;
-mod http;
-mod openai_chat;
+pub(crate) mod http;
+pub(crate) mod openai_chat;
 mod pool;
 pub(crate) mod sse;
-mod stream;
+pub(crate) mod stream;
 
 use crate::integrations::InstanceDescriptor;
 use crate::{ApiKeyState, CredentialStore, ResolvedAuth};

@@ -374,6 +374,17 @@ fn execution_adapters() -> Result<Vec<Arc<dyn AgentExecutionAdapter>>, String> {
     for descriptor in registry.list() {
         match &descriptor.integration.execution {
             ExecutionConfig::Cli { adapter } => {
+                // A `*:oauth` integration is a compiled direct HTTP
+                // execution: the provider-owned credential file
+                // authenticates it, not a spawned provider process, so it
+                // is served on this surface directly - the same way the
+                // compiled run surface serves it - not through a runtime
+                // session.
+                if let Some(execution) = aifuel_providers::oauth_execution_adapter(adapter.as_str())
+                {
+                    adapters.push(Arc::new(StaticAdapter(execution)));
+                    continue;
+                }
                 match aifuel_runtime::RuntimeExecutionAdapter::resolve(&runtime, descriptor.id()) {
                     Some(shim) => adapters.push(Arc::new(shim)),
                     None => eprintln!(

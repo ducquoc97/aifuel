@@ -16,6 +16,15 @@
 //! `~/.cursor/cli-config.json` plus the `CURSOR_API_KEY`/`CURSOR_AUTH_TOKEN`
 //! environment variables.
 //!
+//! The `<provider>:oauth` integrations also carry `ExecutionConfig::Cli`,
+//! bound to the compiled `*_oauth` direct HTTP adapters: they run prompt
+//! completion over the provider-owned subscription API surfaces using the
+//! provider's own local credential files - no endpoint or auth binding is
+//! configured because the adapter, not the credential store, reads the
+//! file. Their ids carry the `:oauth` suffix so a selection can never
+//! alias the provider's CLI integration: `codex` and `codex:oauth` are
+//! distinct billing surfaces and bare `codex` always resolves to the CLI.
+//!
 //! The HTTP builtins cover local OpenAI-compatible servers (`ollama:local`,
 //! `lmstudio:local`) with explicit `AuthBinding::None`, plus the
 //! API-key provider catalog in [`api_keys`]. An API-key
@@ -40,14 +49,16 @@ const LMSTUDIO_BASE_URL: &str = "http://localhost:1234/v1";
 
 /// The built-in integration descriptors: the six compiled-adapter CLI
 /// integrations in pinned catalog order, the OpenCode runtime adapter
-/// integration, then the local-server and API-key HTTP integrations.
+/// integration, the compiled `*:oauth` direct HTTP adapters, then the
+/// local-server and API-key HTTP integrations.
 ///
 /// CLI integration ids equal the catalog provider ids (`claude`, `codex`,
 /// ...) so they match what the compiled CLI adapters report and what stored
 /// legacy selections already name; `opencode` follows the same convention
-/// for its runtime adapter. HTTP builtins carry a distinguishing
-/// suffix (`ollama:local`, `openai:api-key`) because their provider ids may
-/// later gain sibling integrations.
+/// for its runtime adapter. The OAuth and HTTP builtins carry a
+/// distinguishing suffix (`codex:oauth`, `ollama:local`, `openai:api-key`)
+/// because their provider ids have sibling integrations and a bare
+/// provider id must keep resolving to the canonical one.
 pub fn builtin_integrations() -> Vec<IntegrationDescriptor> {
     vec![
         cli(
@@ -105,6 +116,35 @@ pub fn builtin_integrations() -> Vec<IntegrationDescriptor> {
                 EvidenceSource::EnvVar("CURSOR_AUTH_TOKEN".to_owned()),
             ],
         ),
+        // The compiled OAuth direct-HTTP adapters: subscription-backed
+        // execution without the provider CLI. `devin:oauth` is registered
+        // for honest listing (unavailable) since no documented direct
+        // inference path exists for its local credential.
+        oauth_cli(
+            ProviderKey::Codex,
+            "Codex (ChatGPT OAuth)",
+            vec![EvidenceSource::File(".codex/auth.json".to_owned())],
+        ),
+        oauth_cli(
+            ProviderKey::Copilot,
+            "GitHub Copilot (OAuth)",
+            vec![
+                EvidenceSource::File(".copilot/config.json".to_owned()),
+                EvidenceSource::File(".config/github-copilot/hosts.json".to_owned()),
+                EvidenceSource::File(".config/github-copilot/apps.json".to_owned()),
+            ],
+        ),
+        oauth_cli(
+            ProviderKey::Devin,
+            "Devin (OAuth)",
+            vec![
+                EvidenceSource::File(".local/share/devin/credentials.toml".to_owned()),
+                EvidenceSource::File(
+                    "Library/Application Support/devin/credentials.toml".to_owned(),
+                ),
+                EvidenceSource::File("AppData/Roaming/devin/credentials.toml".to_owned()),
+            ],
+        ),
         local_endpoint(
             "ollama:local",
             "ollama",
@@ -142,6 +182,27 @@ fn cli(key: ProviderKey, sources: Vec<EvidenceSource>) -> IntegrationDescriptor 
             name: key.display_name().to_owned(),
             execution: ExecutionConfig::Cli {
                 adapter: CliAdapterId::new(key.as_str()),
+            },
+            monitoring: None,
+        },
+        sources,
+    )
+}
+
+/// A compiled OAuth HTTP adapter bound as a `Cli` execution, like `cli`
+/// but with the distinguishing `<provider>:oauth` id. The adapter owns the
+/// provider's local credential file - `Cli` carries no endpoint or auth
+/// fields for it - and the id's suffix keeps it from ever aliasing the
+/// provider's CLI integration.
+fn oauth_cli(key: ProviderKey, name: &str, sources: Vec<EvidenceSource>) -> IntegrationDescriptor {
+    let id = format!("{}:oauth", key.as_str());
+    IntegrationDescriptor::builtin(
+        Integration {
+            id: IntegrationId::new(&id),
+            provider: ProviderId::from(key),
+            name: name.to_owned(),
+            execution: ExecutionConfig::Cli {
+                adapter: CliAdapterId::new(&id),
             },
             monitoring: None,
         },
@@ -207,7 +268,8 @@ mod tests {
     #[test]
     fn the_cli_integrations_appear_in_catalog_order() {
         // The six compiled-adapter integrations in pinned catalog order,
-        // then the runtime-adapter integrations (`opencode`).
+        // then the runtime-adapter integrations (`opencode`, `cursor`),
+        // then the compiled OAuth direct HTTP adapters.
         let descriptors = builtin_integrations();
         let cli: Vec<(&str, &str)> = descriptors
             .iter()
@@ -225,20 +287,24 @@ mod tests {
                 ("devin", "devin"),
                 ("opencode", "opencode"),
                 ("cursor", "cursor"),
+                ("codex:oauth", "codex"),
+                ("copilot:oauth", "copilot"),
+                ("devin:oauth", "devin"),
             ]
         );
     }
 
     #[test]
     fn cli_integrations_bind_compiled_adapters_and_no_credentials() {
-        // A Cli execution owns no endpoint or credential: the provider CLI
-        // owns auth. The adapter id equals the catalog provider key so the
-        // compiled adapter factory can map back to a ProviderKey.
+        // A Cli execution owns no endpoint or credential: the provider owns
+        // auth. The adapter id equals the integration id, so an OAuth
+        // adapter cannot alias a bare CLI integration and execution
+        // resolution cannot disagree with evidence.
         for descriptor in builtin_integrations() {
             let ExecutionConfig::Cli { adapter } = &descriptor.integration.execution else {
                 continue;
             };
-            assert_eq!(adapter.as_str(), descriptor.integration.provider.as_str());
+            assert_eq!(adapter.as_str(), descriptor.integration.id.as_str());
         }
     }
 
@@ -298,22 +364,26 @@ mod tests {
     }
 
     #[test]
-    fn every_builtin_provider_resolves_to_exactly_one_integration() {
-        // A bare provider id is a billing-sensitive selector: it must be
-        // unambiguous across the whole builtin set, or resolve() would have
-        // to error on ordinary invocations.
+    fn every_builtin_provider_resolves_unambiguously() {
+        // A bare provider id is a billing-sensitive selector: exact-match
+        // resolution wins over candidates, so a provider may gain `*:oauth`
+        // siblings only while exactly one integration keeps the bare id.
         let descriptors = builtin_integrations();
-        let mut by_provider: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut by_provider: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for descriptor in &descriptors {
-            *by_provider
+            by_provider
                 .entry(descriptor.integration.provider.as_str())
-                .or_default() += 1;
+                .or_default()
+                .push(descriptor.integration.id.as_str());
         }
-        for (provider, count) in by_provider {
-            assert_eq!(
-                count, 1,
-                "provider '{provider}' is ambiguous among builtins"
-            );
+        for (provider, ids) in by_provider {
+            if ids.len() > 1 {
+                assert!(
+                    ids.contains(&provider),
+                    "provider '{provider}' has {ids:?} but none owns the bare id, \
+                     so a bare selection would be ambiguous"
+                );
+            }
         }
     }
 }

@@ -24,7 +24,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// managed auth material onto a different host; reqwest would strip the
 /// headers and follow, but a silent unauthenticated follow is a wrong
 /// answer, not a failure.
-pub(super) fn build_client() -> Result<reqwest::Client, reqwest::Error> {
+pub(crate) fn build_client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             let same_origin = attempt.previous().last().is_some_and(|previous| {
@@ -133,7 +133,7 @@ fn valid_cookie_name(name: &str) -> bool {
 /// The transport headers every wire request sends: a JSON body, an SSE
 /// accept, and the aifuel user agent. Protocol modules add their own
 /// protocol headers on top.
-pub(super) fn transport_headers() -> HeaderMap {
+pub(crate) fn transport_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
@@ -202,7 +202,7 @@ pub(super) fn apply_auth(
 
 /// Insert credential material as a sensitive header so reqwest strips it on
 /// any redirect and never prints it in header `Debug` output.
-fn insert_sensitive(
+pub(crate) fn insert_sensitive(
     headers: &mut HeaderMap,
     name: HeaderName,
     value: &str,

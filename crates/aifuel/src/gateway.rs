@@ -24,9 +24,19 @@
 //! do not round-trip yet; see the module docs on `flatten` for the
 //! convention.
 
+mod admin;
 mod chat;
+mod completions;
+mod embeddings;
+mod execute;
 mod flatten;
+mod keys;
+mod logs;
+mod messages;
 mod models;
+mod responses;
+mod route_config;
+mod routes;
 mod types;
 
 use aifuel_app::MonitoringFacade;
@@ -97,6 +107,17 @@ impl Gateway {
     }
 }
 
+/// The providers.json optimizer plan for one inbound request: `rtk`
+/// compresses tool-role content at flatten, and the plan rides the
+/// RunRequest so wire integrations receive the caveman instruction. A
+/// registry that cannot load reads as the inert plan - the gateway keeps
+/// answering rather than failing on config it did not write.
+pub(crate) fn request_plan() -> aifuel_core::OptimizePlan {
+    crate::integration_registry()
+        .map(|registry| registry.optimizer().clone())
+        .unwrap_or_default()
+}
+
 /// Dispatch one `/v1` request. `None` gateway answers every route with an
 /// OpenAI-shaped 503 - the dashboard stays up when the execution surface
 /// cannot build.
@@ -122,6 +143,10 @@ pub fn handle<C: StatusCollector>(
         );
         return;
     };
+    if let Err(reason) = keys::authorize(&request) {
+        respond_error(request, 401, &reason, "authentication_error");
+        return;
+    }
     match (request.method(), path) {
         (&tiny_http::Method::Get, "/v1/models") => {
             respond(
@@ -135,11 +160,40 @@ pub fn handle<C: StatusCollector>(
         (&tiny_http::Method::Post, "/v1/chat/completions") => {
             chat::completions(request, gateway, facade, runtime);
         }
+        (&tiny_http::Method::Post, "/v1/completions") => {
+            completions::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/embeddings") => {
+            embeddings::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/messages")
+        | (&tiny_http::Method::Post, "/v1/messages/count_tokens") => {
+            messages::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/responses")
+        | (&tiny_http::Method::Post, "/v1/responses/compact") => {
+            responses::handle(request, gateway, facade, runtime);
+        }
         _ => respond_error(
             request,
             404,
             "unknown /v1 endpoint",
             "invalid_request_error",
+        ),
+    }
+}
+
+/// Dispatch one `/api/gateway/*` request - the admin surface runs under
+/// the dashboard's strict same-origin guard. A `None` gateway answers 503
+/// like the `/v1` routes.
+pub fn handle_admin(request: tiny_http::Request, gateway: Option<&Gateway>) {
+    match gateway {
+        Some(gateway) => admin::handle(request, gateway),
+        None => respond_error(
+            request,
+            503,
+            "the execution surface is unavailable; check `aifuel run` works on this host",
+            "server_error",
         ),
     }
 }
