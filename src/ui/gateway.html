@@ -86,12 +86,16 @@
       <button class="btn" type="submit">Add combo</button>
     </form>
 
+    <h3 class="gw-h3">Combos - ordered failover chains</h3>
+    <div id="combo-list"></div>
+
+    <h3 class="gw-h3">Aliases - name rewrites</h3>
     <div class="gw-card">
       <table class="gw-table" id="routes-table">
         <thead>
-          <tr><th>Name</th><th>Kind</th><th>Target</th><th aria-label="Actions"></th></tr>
+          <tr><th>Name</th><th>Rewrites to</th><th aria-label="Actions"></th></tr>
         </thead>
-        <tbody id="routes-body"></tbody>
+        <tbody id="alias-body"></tbody>
       </table>
     </div>
     <div class="gw-msg" id="routes-msg" role="status" aria-live="polite" hidden></div>
