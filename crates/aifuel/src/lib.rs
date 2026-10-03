@@ -1,11 +1,13 @@
 pub mod auth_cli;
 pub mod connect;
+pub mod gateway;
 pub mod instance_cli;
 pub mod launcher;
 pub mod mcp_catalog;
 mod model_catalog;
 pub mod model_cli;
 pub mod profile;
+mod route_planner;
 pub mod run_cli;
 mod run_selection;
 pub mod selection_cli;
