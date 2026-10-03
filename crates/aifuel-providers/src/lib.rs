@@ -28,6 +28,7 @@ mod deepseek;
 mod devin;
 mod devin_oauth;
 mod discovery;
+mod embeddings;
 mod gemini;
 mod integrations;
 mod local_adapter;
@@ -58,6 +59,7 @@ pub use credentials::{
     env_override, is_pool_member, valid_env_var_name,
 };
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
+pub use embeddings::{EmbeddingsOutcome, embeddings};
 pub use integrations::{
     ConfigError, EvidenceContext, EvidenceSource, InstanceDescriptor, InstanceEnvSource,
     IntegrationDescriptor, IntegrationOrigin, IntegrationRegistry, PROVIDERS_FILE_NAME,
