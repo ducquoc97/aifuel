@@ -8,7 +8,7 @@
 //! fetches, not OpenAI SDK clients.
 
 use super::{Gateway, cors_headers, respond};
-use aifuel_core::{AgentCapability, CapabilityState};
+use aifuel_core::{DiscoveryState, ExecutionConfig, WireApi};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -38,6 +38,9 @@ pub(crate) fn handle(request: Request, gateway: &Gateway) {
         (&Method::Get, "/api/gateway/logs") => list_logs(request),
         (&Method::Get, "/api/gateway/providers") => {
             respond_json(request, 200, &json!({"providers": providers(gateway)}))
+        }
+        (&Method::Get, "/api/gateway/models") => {
+            respond_json(request, 200, &super::models::list(gateway))
         }
         _ => respond_admin_error(request, 404, "unknown gateway admin endpoint"),
     }
@@ -132,31 +135,70 @@ fn log_limit(url: &str) -> Result<usize, String> {
     Ok(super::logs::MAX_ENTRIES)
 }
 
-/// `GET /api/gateway/providers` rows: one per executable integration,
-/// with the `streaming` and `read_only` flags read straight off declared
-/// capability evidence - `Supported` declares the capability, anything
-/// less makes no claim.
+/// Provider rows for the dashboard, per registered adapter with registry
+/// enrichment when it resolves: `kind` classifies the integration id
+/// suffix (`:oauth`, `:api-key`, `:local`, `:web`, else `cli`), `ready`
+/// reports whether the integration's discovery evidence is present
+/// locally, and `embeddings` marks the `Http` + OpenAI-chat descriptors
+/// the embeddings surface can serve. Enrichment degrades to `null`s on
+/// registry failure rather than failing the listing.
 fn providers(gateway: &Gateway) -> Vec<Value> {
+    let registry = crate::integration_registry().ok();
+    let discovery = aifuel_providers::DiscoveryContext::from_environment().ok();
+    let credentials = crate::aifuel_config_dir()
+        .ok()
+        .map(aifuel_providers::CredentialStore::new);
+    let evidence = match (&registry, &discovery, &credentials) {
+        (Some(registry), Some(discovery), Some(credentials)) => {
+            Some(registry.evidence_context(discovery, credentials))
+        }
+        _ => None,
+    };
     let mut seen = BTreeSet::new();
     gateway
         .adapters()
         .iter()
         .filter(|adapter| seen.insert(adapter.integration().as_str().to_owned()))
         .map(|adapter| {
-            let capabilities = adapter.declared_agent_capabilities();
-            let declared = |capability| {
-                capabilities
-                    .get(&capability)
-                    .is_some_and(|evidence| evidence.state == CapabilityState::Supported)
-            };
+            let integration = adapter.integration();
+            let descriptor = registry.as_ref().and_then(|registry| {
+                registry
+                    .list()
+                    .find(|descriptor| *descriptor.id() == integration)
+            });
+            let embeddings = descriptor.is_some_and(|descriptor| {
+                matches!(
+                    &descriptor.integration.execution,
+                    ExecutionConfig::Http { protocol, .. }
+                        if *protocol == WireApi::OpenAiChat
+                )
+            });
+            let ready = descriptor
+                .zip(evidence.as_ref())
+                .and_then(|(descriptor, context)| descriptor.discover(context).ok())
+                .map(|state| state == DiscoveryState::Present);
             json!({
-                "integration": adapter.integration().as_str(),
+                "integration": integration.as_str(),
                 "provider": adapter.provider().as_str(),
-                "streaming": declared(AgentCapability::Streaming),
-                "read_only": declared(AgentCapability::ReadOnly),
+                "kind": integration_kind(integration.as_str()),
+                "ready": ready,
+                "embeddings": embeddings,
             })
         })
         .collect()
+}
+
+/// The integration-family classifier the dashboard groups cards by: the
+/// distinguishing id suffix, falling back to `cli` for bare ids and any
+/// suffix it does not recognize.
+fn integration_kind(integration: &str) -> &'static str {
+    match integration.rsplit_once(':').map(|(_, suffix)| suffix) {
+        Some("oauth") => "oauth",
+        Some("api-key") => "api-key",
+        Some("local") => "local",
+        Some("web") => "web",
+        _ => "cli",
+    }
 }
 
 /// One JSON answer in the dashboard's envelope; `/v1` CORS headers ride
@@ -221,8 +263,8 @@ fn read_json_body<T: serde::de::DeserializeOwned>(request: &mut Request) -> Resu
 mod tests {
     use super::*;
     use aifuel_core::{
-        AgentCapabilityEvidence, AgentExecutionAdapter, AgentRunError, IntegrationId, ProviderId,
-        RunCancellationToken, RunRequest, RunResult,
+        AgentCapability, AgentCapabilityEvidence, AgentExecutionAdapter, AgentRunError,
+        CapabilityState, IntegrationId, ProviderId, RunCancellationToken, RunRequest, RunResult,
     };
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -276,10 +318,9 @@ mod tests {
     }
 
     #[test]
-    fn providers_report_declared_capabilities_not_presence() {
-        // The flags describe what each adapter declares, so the dashboard
-        // does not promise streaming or read-only enforcement an
-        // integration never claimed.
+    fn providers_classify_kind_and_degrade_enrichment_honestly() {
+        // Unknown test ids are not registry descriptors, so enrichment
+        // answers null instead of guessing at readiness or embeddings.
         let gateway = Gateway {
             adapters: vec![
                 Arc::new(TestAdapter {
@@ -288,7 +329,7 @@ mod tests {
                     read_only: CapabilityState::Supported,
                 }),
                 Arc::new(TestAdapter {
-                    id: "b:cli",
+                    id: "b:oauth",
                     streaming: CapabilityState::Unknown,
                     read_only: CapabilityState::Unsupported,
                 }),
@@ -301,19 +342,21 @@ mod tests {
             json!({
                 "integration": "a:cli",
                 "provider": "test",
-                "streaming": true,
-                "read_only": true,
+                "kind": "cli",
+                "ready": null,
+                "embeddings": false,
             })
         );
         assert_eq!(
             rows[1],
             json!({
-                "integration": "b:cli",
+                "integration": "b:oauth",
                 "provider": "test",
-                "streaming": false,
-                "read_only": false,
+                "kind": "oauth",
+                "ready": null,
+                "embeddings": false,
             }),
-            "unknown or unsupported evidence must not claim the flag"
+            "the id suffix classifies the family independent of capability evidence"
         );
     }
 
