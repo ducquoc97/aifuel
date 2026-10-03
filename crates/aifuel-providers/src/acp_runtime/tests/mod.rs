@@ -250,6 +250,7 @@ pub(super) fn options_at(cwd: PathBuf, access: AccessMode) -> StartOptions {
         resume_cursor: None,
         external_tools: Vec::new(),
         env: Default::default(),
+        optimize: Default::default(),
     }
 }
 

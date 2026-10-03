@@ -563,3 +563,113 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
         serde_json::from_str(&unknown_output).expect("JSON output should parse");
     assert_eq!(unknown_value["model_evidence"], "explicit_override_unknown");
 }
+
+#[test]
+fn chain_selection_parses_into_the_routing_alias_marker() {
+    // `--chain NAME` must reach the run loop as the `chain:<name>` marker:
+    // it is a routing alias like `auto`, never a literal integration id, so
+    // downstream selection stays uniform.
+    let config = GlobalSelectionConfig::default();
+    let args = ["--chain", "primary", "--prompt", "hello"].map(str::to_owned);
+    let parsed = parse_run_args_with_context(
+        &args,
+        &config,
+        Some(Vec::new()),
+        &mut io::Cursor::new(Vec::new()),
+        &mut Vec::new(),
+        false,
+        false,
+    )
+    .expect("--chain should parse");
+
+    assert_eq!(parsed.chain.as_deref(), Some("primary"));
+    assert_eq!(parsed.request.integration.as_str(), "chain:primary");
+}
+
+#[test]
+fn chain_and_provider_selection_conflict() {
+    // A chain is itself the provider selection: letting `--provider`
+    // coexist would silently pick one ordering over the other.
+    let config = GlobalSelectionConfig::default();
+    let args = [
+        "--chain",
+        "primary",
+        "--provider",
+        "codex",
+        "--prompt",
+        "hello",
+    ]
+    .map(str::to_owned);
+    let error = parse_run_args_with_context(
+        &args,
+        &config,
+        Some(Vec::new()),
+        &mut io::Cursor::new(Vec::new()),
+        &mut Vec::new(),
+        false,
+        false,
+    )
+    .map(|_| ())
+    .expect_err("--chain with --provider must fail");
+    assert!(error.contains("--chain") && error.contains("--provider"));
+}
+
+#[test]
+fn optimize_overrides_collect_and_no_optimize_conflicts() {
+    let config = GlobalSelectionConfig::default();
+    let args = [
+        "--provider",
+        "codex",
+        "--model",
+        "test-model",
+        "--prompt",
+        "hello",
+        "--optimize",
+        "rtk:ultra",
+        "--optimize",
+        "caveman:lite",
+    ]
+    .map(str::to_owned);
+    let parsed = parse_run_args_with_context(
+        &args,
+        &config,
+        Some(Vec::new()),
+        &mut io::Cursor::new(Vec::new()),
+        &mut Vec::new(),
+        false,
+        false,
+    )
+    .expect("--optimize repeats");
+    assert_eq!(
+        parsed.optimize_overrides,
+        vec!["rtk:ultra".to_owned(), "caveman:lite".to_owned()]
+    );
+    assert!(!parsed.no_optimize);
+
+    // `--no-optimize` plus `--optimize` is contradictory input; it fails
+    // loudly rather than guessing which flag wins.
+    let args = [
+        "--provider",
+        "codex",
+        "--model",
+        "test-model",
+        "--prompt",
+        "hello",
+        "--optimize",
+        "rtk:ultra",
+        "--no-optimize",
+    ]
+    .map(str::to_owned);
+    let error = parse_run_args_with_context(
+        &args,
+        &config,
+        Some(Vec::new()),
+        &mut io::Cursor::new(Vec::new()),
+        &mut Vec::new(),
+        false,
+        false,
+    )
+    .map(|_| ())
+    .expect_err("--no-optimize conflicts with --optimize");
+    assert!(error.contains("--no-optimize"));
+}

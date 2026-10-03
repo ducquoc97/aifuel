@@ -55,10 +55,11 @@ pub use credentials::{
 };
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
 pub use integrations::{
-    ConfigError, EvidenceContext, EvidenceSource, InstanceDescriptor, InstanceEnvSource,
-    IntegrationDescriptor, IntegrationOrigin, IntegrationRegistry, PROVIDERS_FILE_NAME,
-    PROVIDERS_SCHEMA_VERSION, ProvidersConfig, ProvidersConfigParts, RegistryError, ResolveError,
-    builtin_integrations, edit_instances, inspect_any,
+    ChainDescriptor, ChainStep, ChainStrategy, ConfigError, EvidenceContext, EvidenceSource,
+    InstanceDescriptor, InstanceEnvSource, IntegrationDescriptor, IntegrationOrigin,
+    IntegrationRegistry, PROVIDERS_FILE_NAME, PROVIDERS_SCHEMA_VERSION, ProvidersConfig,
+    ProvidersConfigParts, RegistryError, ResolveError, builtin_integrations, edit_instances,
+    inspect_any,
 };
 pub use model_catalog::{ProviderCatalogDiscovery, ProviderCatalogModel, discover_model_catalog};
 pub use monitoring::{CollectionConfig, ProviderMonitoring};

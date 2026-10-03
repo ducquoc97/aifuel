@@ -140,6 +140,11 @@ pub struct RunRequest {
     /// reports variable names only. A request built by hand leaves this
     /// empty; only the runtime's instance resolution fills it.
     pub env: BTreeMap<String, String>,
+    /// The token-optimization plan applied to this run's payloads
+    /// (prompt, tool output, wire instruction). The default plan has both
+    /// engines off: a request that never configured one is byte-identical
+    /// to before the plan existed.
+    pub optimize: crate::optimize::OptimizePlan,
     /// Optional owner callback for provider-native questions and approvals.
     pub interaction_handler: Option<Arc<dyn AgentInteractionHandler>>,
 }
@@ -231,6 +236,7 @@ impl fmt::Debug for RunRequest {
             .field("resume", &self.resume)
             .field("timeout", &self.timeout)
             .field("env", &self.env.keys().collect::<Vec<_>>())
+            .field("optimize", &self.optimize.describe())
             .finish_non_exhaustive()
     }
 }

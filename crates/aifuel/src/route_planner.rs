@@ -20,6 +20,9 @@ pub(crate) enum RouteBasis {
     FreeTier,
     /// A keyed API-key integration with no documented free tier.
     ApiKey,
+    /// Declared by a `providers.json` chain step - position comes from the
+    /// file, not evidence.
+    Chain,
 }
 
 impl RouteBasis {
@@ -28,6 +31,7 @@ impl RouteBasis {
             Self::Quota => "quota",
             Self::FreeTier => "free_tier",
             Self::ApiKey => "api_key",
+            Self::Chain => "chain",
         }
     }
 }
@@ -42,6 +46,8 @@ pub(crate) struct RouteCandidate {
     /// ranked on; `None` for unmeasured quota providers and for
     /// credential-ranked candidates.
     pub(crate) remaining_percent: Option<f64>,
+    /// A chain step's model override; `None` keeps the run's `--model`.
+    pub(crate) model: Option<String>,
 }
 
 /// The routing chain for `auto`, ordered by the evidence each candidate
@@ -129,6 +135,7 @@ fn bind_provider(
             integration: descriptor.id().clone(),
             basis: RouteBasis::Quota,
             remaining_percent,
+            model: None,
         })
 }
 
@@ -168,6 +175,7 @@ fn keyed_api_key(
         integration: descriptor.integration.id.clone(),
         basis,
         remaining_percent: None,
+        model: None,
     })
 }
 

@@ -5,7 +5,7 @@
 use super::{ConnectionState, MAX_FRAME_BYTES, respond};
 use aifuel_app::RunManager;
 use aifuel_app::selection::GlobalSelectionConfig;
-use aifuel_core::ProviderKey;
+use aifuel_core::{OptimizePlan, ProviderKey};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +17,7 @@ pub fn serve<M, F>(
     selection: GlobalSelectionConfig,
     catalog: Vec<Value>,
     refresh_catalog: F,
+    optimize: OptimizePlan,
     host: &str,
     port: u16,
 ) -> Result<(), String>
@@ -27,6 +28,7 @@ where
     let selection = Arc::new(selection);
     let catalog = Arc::new(catalog);
     let refresh_catalog = Arc::new(refresh_catalog);
+    let optimize = Arc::new(optimize);
     crate::http::serve(
         "aifuel mcp execution",
         host,
@@ -41,6 +43,7 @@ where
                 }),
                 selection: Arc::clone(&selection),
                 refresh_catalog: Arc::clone(&refresh_catalog),
+                optimize: Arc::clone(&optimize),
             })
         },
     )
@@ -51,6 +54,7 @@ struct ExecutionHttpSession<F> {
     connection: Mutex<ConnectionState>,
     selection: Arc<GlobalSelectionConfig>,
     refresh_catalog: Arc<F>,
+    optimize: Arc<OptimizePlan>,
 }
 
 impl<F> crate::http::HttpSession for ExecutionHttpSession<F>
@@ -64,6 +68,7 @@ where
             &self.selection,
             &mut connection,
             &*self.refresh_catalog,
+            &self.optimize,
             message,
         )
     }

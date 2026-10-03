@@ -378,6 +378,7 @@ impl WireExecutionAdapter {
                 &attempts[index].auth,
                 model,
                 &request.prompt,
+                request.optimize.caveman_instruction(),
             ) {
                 Ok(prepared) => prepared,
                 Err(AgentRunError::InvalidRequest(reason)) => {
@@ -582,18 +583,19 @@ impl PreparedRequest {
         auth: &ResolvedAuth,
         model: &str,
         prompt: &str,
+        system: Option<&str>,
     ) -> Result<Self, AgentRunError> {
         Ok(match protocol {
             WireApi::OpenAiChat => Self {
                 url: openai_chat::completions_url(&endpoint.base_url),
                 headers: openai_chat::request_headers(endpoint, auth)?,
-                body: openai_chat::request_body(model, prompt),
+                body: openai_chat::request_body(model, prompt, system),
                 classify: openai_chat::classify_event,
             },
             WireApi::AnthropicMessages => Self {
                 url: anthropic_messages::messages_url(&endpoint.base_url),
                 headers: anthropic_messages::request_headers(endpoint, auth)?,
-                body: anthropic_messages::request_body(model, prompt),
+                body: anthropic_messages::request_body(model, prompt, system),
                 classify: anthropic_messages::classify_event,
             },
             // Construction (`serves`) guarantees a served protocol.

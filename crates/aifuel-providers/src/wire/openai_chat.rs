@@ -20,11 +20,18 @@ pub(crate) fn completions_url(base_url: &str) -> String {
 
 /// The streaming chat-completions body for one run. A wire integration
 /// serves prompt completion only: a single user message, no provider-side
-/// tools, and an explicit stream request.
-pub(crate) fn request_body(model: &str, prompt: &str) -> Value {
+/// tools, and an explicit stream request. `system` - present only when
+/// the run's optimizer configures a caveman level - precedes the user
+/// message as the terse-response directive.
+pub(crate) fn request_body(model: &str, prompt: &str, system: Option<&str>) -> Value {
+    let mut messages = Vec::new();
+    if let Some(system) = system {
+        messages.push(json!({"role": "system", "content": system}));
+    }
+    messages.push(json!({"role": "user", "content": prompt}));
     json!({
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "stream": true,
         // Ask for the usage chunk so token accounting lands on RunResult;
         // compatible endpoints that ignore it simply send no usage chunk.

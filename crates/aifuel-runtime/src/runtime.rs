@@ -132,14 +132,21 @@ impl AgentRuntime {
         let aifuel_providers::ProvidersConfigParts {
             integrations: config_entries,
             instances: config_instances,
+            chains: config_chains,
+            optimizer,
         } = config.into_parts();
-        let registry =
-            IntegrationRegistry::build(builtin_integrations(), config_entries, config_instances)
-                .map_err(|error| {
-                    AgentRuntimeError::provider_error(format!(
-                        "the integration registry could not be built: {error}"
-                    ))
-                })?;
+        let registry = IntegrationRegistry::build(
+            builtin_integrations(),
+            config_entries,
+            config_instances,
+            config_chains,
+            optimizer,
+        )
+        .map_err(|error| {
+            AgentRuntimeError::provider_error(format!(
+                "the integration registry could not be built: {error}"
+            ))
+        })?;
         let discovery_context = AdapterDiscovery {
             discovery,
             credentials,
@@ -163,7 +170,14 @@ impl AgentRuntime {
         .collect();
         let descriptors = registry.list().cloned().collect();
         let instances = registry.instances().cloned().collect();
-        Self::assemble(store, adapters, descriptors, instances, discovery_context)
+        Self::assemble(
+            store,
+            adapters,
+            descriptors,
+            instances,
+            discovery_context,
+            registry.optimizer().clone(),
+        )
     }
 
     /// Open the runtime over an existing store and an explicit adapter set,
@@ -179,7 +193,17 @@ impl AgentRuntime {
         instances: Vec<InstanceDescriptor>,
         discovery: AdapterDiscovery,
     ) -> Result<Self, AgentRuntimeError> {
-        Self::assemble(store, adapters, descriptors, instances, discovery)
+        // An embedder-built runtime has no `providers.json` in view, so it
+        // carries the inert plan: sessions optimize only when the file
+        // declared it.
+        Self::assemble(
+            store,
+            adapters,
+            descriptors,
+            instances,
+            discovery,
+            aifuel_core::OptimizePlan::default(),
+        )
     }
 
     fn assemble(
@@ -188,6 +212,7 @@ impl AgentRuntime {
         descriptors: Vec<IntegrationDescriptor>,
         instances: Vec<InstanceDescriptor>,
         discovery: AdapterDiscovery,
+        optimize: aifuel_core::OptimizePlan,
     ) -> Result<Self, AgentRuntimeError> {
         // The owner id the store stamps on `agent_sessions` rows registers
         // live for this runtime's lifetime, so same-process opens see this
@@ -195,7 +220,7 @@ impl AgentRuntime {
         let owner = store.register_owner();
         let runtime = Self {
             store,
-            registry: Registry::new(adapters, descriptors, discovery, instances),
+            registry: Registry::new(adapters, descriptors, discovery, instances, optimize),
             inner: Arc::new(Mutex::new(Inner {
                 live: HashMap::new(),
                 consumers: HashMap::new(),
@@ -309,6 +334,7 @@ impl AgentRuntime {
                     // provider's full tool surface.
                     external_tools: session.external_tools.clone(),
                     env,
+                    optimize: self.registry.optimizer().clone(),
                 },
             ) {
                 Ok(handle) => handle,

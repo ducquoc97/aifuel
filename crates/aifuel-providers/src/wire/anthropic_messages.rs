@@ -35,15 +35,21 @@ pub(crate) fn messages_url(base_url: &str) -> String {
 
 /// The streaming messages body for one run. A wire integration serves
 /// prompt completion only: a single user message, no provider-side tools,
-/// and an explicit stream request. `system` is absent because a run
-/// carries no system prompt, matching the OpenAI body which sets none.
-pub(crate) fn request_body(model: &str, prompt: &str) -> Value {
-    json!({
+/// and an explicit stream request. `system` is present only when the
+/// run's optimizer configures a caveman level - the terse-response
+/// directive - and is absent otherwise, matching the OpenAI body which
+/// sets none then either.
+pub(crate) fn request_body(model: &str, prompt: &str, system: Option<&str>) -> Value {
+    let mut body = json!({
         "model": model,
         "max_tokens": MAX_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
         "stream": true,
-    })
+    });
+    if let Some(system) = system {
+        body["system"] = json!(system);
+    }
+    body
 }
 
 /// The request headers for one run: transport defaults and the declared

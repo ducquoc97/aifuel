@@ -13,8 +13,8 @@ use aifuel_app::selection::{
     StoredSession,
 };
 use aifuel_core::{
-    AccessMode, IntegrationId, OutputFormat, ProviderId, ProviderKey, RunManagementError,
-    RunRequest, StoredSessionSelection,
+    AccessMode, IntegrationId, OptimizePlan, OutputFormat, ProviderId, ProviderKey,
+    RunManagementError, RunRequest, StoredSessionSelection,
 };
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Read, Write};
@@ -32,16 +32,19 @@ pub fn serve_with_catalog(manager: RunManager, catalog: Vec<Value>) -> Result<()
         GlobalSelectionConfig::default(),
         catalog,
         |_| Err("model catalog refresh is unavailable".to_owned()),
+        OptimizePlan::default(),
     )
 }
 
 /// Serve the execution endpoint with application-owned selection and catalog
 /// discovery. The MCP layer only filters and reports provider-owned evidence.
+/// `optimize` is the file-level plan every built `RunRequest` carries.
 pub fn serve_with_selection_and_catalog_refresh<F>(
     manager: RunManager,
     selection: GlobalSelectionConfig,
     catalog: Vec<Value>,
     refresh_catalog: F,
+    optimize: OptimizePlan,
 ) -> Result<(), String>
 where
     F: Fn(Option<ProviderKey>) -> Result<Vec<Value>, String>,
@@ -50,7 +53,13 @@ where
         initialized: false,
         catalog,
     };
-    let result = serve_connection(&manager, &selection, &mut connection, &refresh_catalog);
+    let result = serve_connection(
+        &manager,
+        &selection,
+        &mut connection,
+        &refresh_catalog,
+        &optimize,
+    );
     manager.shutdown();
     result
 }
@@ -67,6 +76,7 @@ fn serve_connection<F>(
     selection: &GlobalSelectionConfig,
     connection: &mut ConnectionState,
     refresh_catalog: &F,
+    optimize: &OptimizePlan,
 ) -> Result<(), String>
 where
     F: Fn(Option<ProviderKey>) -> Result<Vec<Value>, String>,
@@ -97,7 +107,14 @@ where
                 continue;
             }
         };
-        if let Some(response) = respond(manager, selection, connection, refresh_catalog, &request) {
+        if let Some(response) = respond(
+            manager,
+            selection,
+            connection,
+            refresh_catalog,
+            optimize,
+            &request,
+        ) {
             write_response(&mut output, &response)?;
         }
     }
@@ -111,6 +128,7 @@ pub(crate) fn respond<F>(
     selection: &GlobalSelectionConfig,
     connection: &mut ConnectionState,
     refresh_catalog: &F,
+    optimize: &OptimizePlan,
     request: &Value,
 ) -> Option<Value>
 where
@@ -150,6 +168,7 @@ where
                 &request["params"],
                 &mut connection.catalog,
                 refresh_catalog,
+                optimize,
             );
             let (value, is_error) = match result {
                 Ok(value) => (value, false),
@@ -191,6 +210,7 @@ fn call<F>(
     params: &Value,
     catalog: &mut Vec<Value>,
     refresh_catalog: &F,
+    optimize: &OptimizePlan,
 ) -> Result<Value, RunManagementError>
 where
     F: Fn(Option<ProviderKey>) -> Result<Vec<Value>, String>,
@@ -212,11 +232,12 @@ where
         }
         "list_models" => list_models(args, catalog, refresh_catalog),
         "start_run" => {
-            let (request, _) = resolve_request(args, selection, false, None, manager)?;
+            let (request, _) = resolve_request(args, selection, false, None, manager, optimize)?;
             encoded(manager.start_run(request)?)
         }
         "resolve_run" => {
-            let (request, sources) = resolve_request(args, selection, false, None, manager)?;
+            let (request, sources) =
+                resolve_request(args, selection, false, None, manager, optimize)?;
             let mut resolved = encoded(manager.resolve_run(&request)?)?;
             resolved["selection_sources"] = encoded(sources)?;
             Ok(resolved)
@@ -251,6 +272,7 @@ where
                 true,
                 Some(&stored_session),
                 manager,
+                optimize,
             )?;
             encoded(manager.resume_session(session_id, request)?)
         }
@@ -364,6 +386,7 @@ fn resolve_request(
     resume: bool,
     stored_session: Option<&StoredSessionSelection>,
     manager: &RunManager,
+    optimize: &OptimizePlan,
 ) -> Result<(RunRequest, SelectionSources), RunManagementError> {
     only_fields(
         args,
@@ -515,6 +538,7 @@ fn resolve_request(
             resume: None,
             timeout: policy_resolved.overall_deadline,
             env: Default::default(),
+            optimize: optimize.clone(),
             interaction_handler: None,
         },
         sources,

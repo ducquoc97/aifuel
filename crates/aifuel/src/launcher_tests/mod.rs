@@ -146,6 +146,7 @@ pub(super) fn request() -> RunRequest {
         resume: None,
         timeout: Some(Duration::from_secs(2)),
         env: Default::default(),
+        optimize: Default::default(),
         interaction_handler: None,
     }
 }

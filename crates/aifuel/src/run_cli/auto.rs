@@ -57,13 +57,14 @@ pub(super) struct RouteAttempt {
     detail: Option<String>,
 }
 
-/// The routing decision a `run --provider auto` invocation made, emitted
-/// as `routing` on structured output. `selected` names the Provider whose
-/// attempt produced the reported outcome; `candidates` is the ranked list
-/// the chain was allowed to try, each with the basis that placed it.
+/// The routing decision a `run --provider auto` or `run --chain NAME`
+/// invocation made, emitted as `routing` on structured output. `selected`
+/// names the Provider whose attempt produced the reported outcome;
+/// `candidates` is the ordered list the chain was allowed to try, each
+/// with the basis that placed it.
 #[derive(Debug, Default, serde::Serialize)]
 pub(super) struct RouteReport {
-    pub requested: &'static str,
+    pub requested: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -74,9 +75,9 @@ pub(super) struct RouteReport {
 }
 
 impl RouteReport {
-    fn new() -> Self {
+    fn new(requested: String) -> Self {
         Self {
-            requested: aifuel_core::AUTO_PROVIDER,
+            requested,
             ..Self::default()
         }
     }
@@ -92,32 +93,10 @@ enum Verdict {
 
 pub(super) fn run(selected: &ParsedRunRequest) -> Result<u8, String> {
     let request = &selected.request;
-    let mut routing = RouteReport::new();
+    let mut routing = RouteReport::new(aifuel_core::AUTO_PROVIDER.to_owned());
 
-    if let Some(session_id) = request.resume.as_deref() {
-        // A session is Provider-scoped: `auto --resume` resolves the
-        // stored owner and runs there - one attempt, never a fallback.
-        let manager = crate::execution_run_manager()?;
-        let stored = manager
-            .session_selection(session_id)
-            .map_err(|error| error.to_string())?;
-        let mut request = request.clone();
-        request.integration = stored.integration.clone();
-        routing.resumed = true;
-        routing.selected = Some(stored.provider.as_str().to_owned());
-        routing.candidates = vec![RouteCandidateReport {
-            provider: stored.provider.as_str().to_owned(),
-            integration: stored.integration.as_str().to_owned(),
-            basis: "session",
-            remaining_percent: None,
-        }];
-        eprintln!("aifuel: auto resolved the session to {}", stored.provider);
-        return finish(
-            launcher::execute(&request),
-            &request,
-            selected,
-            &mut routing,
-        );
+    if request.resume.is_some() {
+        return resume_pin(request, selected, routing);
     }
 
     let facade = crate::monitoring_facade()?;
@@ -152,24 +131,131 @@ pub(super) fn run(selected: &ParsedRunRequest) -> Result<u8, String> {
             }
         });
     }
+    walk(request, selected, routing, &candidates)
+}
 
+/// `aifuel run --chain NAME`: walk the named `providers.json` chain's
+/// steps in declared order. The candidates are the file's own ordering -
+/// no evidence ranks them - and each step may pin a model. The shared
+/// verdicts apply: a failure before provider execution (unsupported
+/// integration, launch error, reported quota exhaustion) tries the next
+/// step; a run that reached its provider ends the chain.
+pub(super) fn run_chain(selected: &ParsedRunRequest, chain_name: &str) -> Result<u8, String> {
+    let request = &selected.request;
+    let mut routing = RouteReport::new(format!(
+        "{}{chain_name}",
+        aifuel_core::CHAIN_PROVIDER_PREFIX
+    ));
+
+    if request.resume.is_some() {
+        return resume_pin(request, selected, routing);
+    }
+
+    let registry = crate::integration_registry()?;
+    let Some(chain) = registry.chain(chain_name) else {
+        let known = registry
+            .chains()
+            .map(|chain| chain.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(if known.is_empty() {
+            format!("chain '{chain_name}' is not defined in providers.json")
+        } else {
+            format!("chain '{chain_name}' is not defined in providers.json; known chains: {known}")
+        });
+    };
+    let candidates: Vec<RouteCandidate> = chain
+        .steps
+        .iter()
+        .map(|step| {
+            // `check_chain` validated the reference at load; `serving`
+            // reports the step's provider for the routing surface - an
+            // instance step reports its base integration's provider.
+            let provider = registry
+                .serving(&step.integration)
+                .map(|(descriptor, _)| descriptor.provider().clone())
+                .unwrap_or_else(|| aifuel_core::ProviderId::new(step.integration.as_str()));
+            RouteCandidate {
+                provider,
+                integration: step.integration.clone(),
+                basis: crate::route_planner::RouteBasis::Chain,
+                remaining_percent: None,
+                model: step.model.clone(),
+            }
+        })
+        .collect();
+    routing.candidates = candidates.iter().map(RouteCandidateReport::from).collect();
+    walk(request, selected, routing, &candidates)
+}
+
+/// A resumed session is Provider-scoped: `--provider auto --resume` and
+/// `--chain NAME --resume` resolve the stored owner and run there - one
+/// attempt, never a fallback.
+fn resume_pin(
+    request: &launcher::RunRequest,
+    selected: &ParsedRunRequest,
+    mut routing: RouteReport,
+) -> Result<u8, String> {
+    let session_id = request.resume.as_deref().expect("resume is set");
+    let manager = crate::execution_run_manager()?;
+    let stored = manager
+        .session_selection(session_id)
+        .map_err(|error| error.to_string())?;
+    let mut request = request.clone();
+    request.integration = stored.integration.clone();
+    routing.resumed = true;
+    routing.selected = Some(stored.provider.as_str().to_owned());
+    routing.candidates = vec![RouteCandidateReport {
+        provider: stored.provider.as_str().to_owned(),
+        integration: stored.integration.as_str().to_owned(),
+        basis: "session",
+        remaining_percent: None,
+    }];
+    eprintln!(
+        "aifuel: {} resolved the session to {}",
+        routing.requested, stored.provider
+    );
+    finish(
+        launcher::execute(&request),
+        &request,
+        selected,
+        &mut routing,
+    )
+}
+
+/// The ordered attempt loop `auto` and named chains share. Each
+/// candidate's integration - and for chain steps, its model override -
+/// fills the request; the verdicts decide stop versus next candidate.
+fn walk(
+    request: &launcher::RunRequest,
+    selected: &ParsedRunRequest,
+    mut routing: RouteReport,
+    candidates: &[RouteCandidate],
+) -> Result<u8, String> {
     // The chain's last attempt is kept so an exhausted chain still reports
     // its final outcome the way a single-provider run would.
     let mut last_result: Option<ManagedRunResult> = None;
     let mut last_error: Option<(u8, String)> = None;
-    for candidate in &candidates {
+    for candidate in candidates {
         if let Some(previous) = routing.attempts.last() {
             eprintln!(
-                "aifuel: {} could not run ({}); auto trying {}",
+                "aifuel: {} could not run ({}); {} trying {}",
                 previous.provider,
                 previous.detail.as_deref().unwrap_or(previous.outcome),
+                routing.requested,
                 candidate.provider
             );
         } else {
-            eprintln!("aifuel: auto selected {}", candidate.provider);
+            eprintln!(
+                "aifuel: {} selected {}",
+                routing.requested, candidate.provider
+            );
         }
         let mut request = request.clone();
         request.integration = candidate.integration.clone();
+        if let Some(model) = &candidate.model {
+            request.model = Some(model.clone());
+        }
         match launcher::execute(&request) {
             Ok(result) => {
                 let verdict = attempt_verdict(&result);
@@ -291,19 +377,33 @@ fn finish(
     }
 }
 
-/// Classify a completed attempt: only provider-reported quota exhaustion
-/// is retriable after a run was accepted; timeouts and ordinary failures
-/// reached execution and stop the chain.
+/// Classify a completed attempt: provider-reported quota exhaustion
+/// retries on the next candidate, and so do adapter rejections recorded
+/// as failed runs (`invalid_request`, `agent_unavailable`) - nothing
+/// reached the provider, so the chain can still answer. A run that
+/// reached execution and failed on its own merits stops the chain.
 fn attempt_verdict(result: &ManagedRunResult) -> Verdict {
     if result.state == RunState::TimedOut || result.status == Some(RunStatus::Timeout) {
         Verdict::Stop(5)
     } else if result.status == Some(RunStatus::Succeeded) {
         Verdict::Stop(0)
-    } else if result.status == Some(RunStatus::Failed) && reported_quota_exhaustion(result) {
+    } else if result.status == Some(RunStatus::Failed) && never_executed(result) {
         Verdict::Retry
     } else {
         Verdict::Stop(4)
     }
+}
+
+/// Whether a failed run record is an adapter rejection rather than a
+/// provider outcome: quota exhaustion the provider itself reported, or a
+/// launch-stage failure - validation, credential resolution, transport
+/// setup - where execution never began.
+fn never_executed(result: &ManagedRunResult) -> bool {
+    reported_quota_exhaustion(result)
+        || matches!(
+            result.closed_reason.as_deref(),
+            Some("invalid_request" | "agent_unavailable")
+        )
 }
 
 /// Classify a failed attempt: a missing Agent Integration and
@@ -336,6 +436,13 @@ fn attempt_outcome(result: &ManagedRunResult) -> &'static str {
         "succeeded"
     } else if result.status == Some(RunStatus::Failed) && reported_quota_exhaustion(result) {
         "quota_exhausted"
+    } else if result.status == Some(RunStatus::Failed)
+        && matches!(
+            result.closed_reason.as_deref(),
+            Some("invalid_request" | "agent_unavailable")
+        )
+    {
+        "launch_error"
     } else if result.status == Some(RunStatus::Cancelled) {
         "cancelled"
     } else {
@@ -453,6 +560,29 @@ mod tests {
 
         let succeeded = result(RunStatus::Succeeded, None, None);
         assert!(matches!(attempt_verdict(&succeeded), Verdict::Stop(0)));
+    }
+
+    #[test]
+    fn adapter_rejections_recorded_as_failures_are_retriable() {
+        // A run the adapter rejected before execution - credential
+        // resolution, request validation, transport setup - is recorded
+        // as Failed with a launch-stage closed_reason; the chain retries
+        // because nothing reached the provider.
+        let credential = result(
+            RunStatus::Failed,
+            Some("invalid_request"),
+            Some("environment variable 'MISSING' is unset or empty"),
+        );
+        assert!(matches!(attempt_verdict(&credential), Verdict::Retry));
+        assert_eq!(attempt_outcome(&credential), "launch_error");
+
+        let unavailable = result(
+            RunStatus::Failed,
+            Some("agent_unavailable"),
+            Some("connection refused"),
+        );
+        assert!(matches!(attempt_verdict(&unavailable), Verdict::Retry));
+        assert_eq!(attempt_outcome(&unavailable), "launch_error");
     }
 
     #[test]

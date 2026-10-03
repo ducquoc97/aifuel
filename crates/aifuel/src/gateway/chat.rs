@@ -100,7 +100,15 @@ pub(crate) fn completions<C: StatusCollector>(
         );
         return;
     }
-    let prompt = flatten_messages(&chat.messages);
+    // The config file's optimizer plan applies to this request: `rtk`
+    // compresses tool-role content at flatten, and the plan rides the
+    // RunRequest so wire integrations receive the caveman instruction. A
+    // registry that cannot load reads as the inert plan - the gateway
+    // keeps answering rather than failing on config it did not write.
+    let optimize = crate::integration_registry()
+        .map(|registry| registry.optimizer().clone())
+        .unwrap_or_default();
+    let prompt = flatten_messages(&chat.messages, &optimize);
     if prompt.trim().is_empty() {
         respond_error(
             request,
@@ -117,7 +125,7 @@ pub(crate) fn completions<C: StatusCollector>(
             return;
         }
     };
-    run_chain(request, gateway, &chat, model, &prompt, attempts);
+    run_chain(request, gateway, &chat, model, &prompt, attempts, &optimize);
 }
 
 /// Resolve the inbound `model` string to the attempt chain - see the
@@ -132,6 +140,9 @@ fn attempts(
     }
     if let Some(filter) = model.strip_prefix("auto/") {
         return plan(model, Some(filter.to_owned()), status);
+    }
+    if let Some(name) = model.strip_prefix(aifuel_core::CHAIN_PROVIDER_PREFIX) {
+        return plan_chain(model, name);
     }
     if let Some((selector, pinned)) = model.split_once('/') {
         return match gateway.resolve(selector) {
@@ -205,6 +216,35 @@ fn plan(
         .collect())
 }
 
+/// Plan a named `providers.json` chain: the file's declared step order
+/// becomes the attempt chain, each step's model override pinned.
+fn plan_chain(requested: &str, name: &str) -> Result<Vec<Attempt>, (u16, String)> {
+    let registry = crate::integration_registry().map_err(|error| (500, error.clone()))?;
+    let Some(chain) = registry.chain(name) else {
+        let known = registry
+            .chains()
+            .map(|chain| chain.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err((
+            404,
+            if known.is_empty() {
+                format!("{requested:?} names no chain in providers.json")
+            } else {
+                format!("{requested:?} names no chain in providers.json; known chains: {known}")
+            },
+        ));
+    };
+    Ok(chain
+        .steps
+        .iter()
+        .map(|step| Attempt {
+            integration: step.integration.clone(),
+            model: step.model.clone(),
+        })
+        .collect())
+}
+
 /// Walk the attempt chain, streaming or buffering per `chat.stream`.
 fn run_chain(
     request: tiny_http::Request,
@@ -213,6 +253,7 @@ fn run_chain(
     model_echo: &str,
     prompt: &str,
     attempts: Vec<Attempt>,
+    optimize: &aifuel_core::OptimizePlan,
 ) {
     let completion_id = format!(
         "chatcmpl-{:x}",
@@ -247,6 +288,7 @@ fn run_chain(
             resume: None,
             timeout: None,
             env: Default::default(),
+            optimize: optimize.clone(),
             interaction_handler: None,
         };
         if let Err(error) = adapter.validate(&run_request) {

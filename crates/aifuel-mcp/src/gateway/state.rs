@@ -42,6 +42,9 @@ pub(super) struct GatewayState {
     next_snapshot_id: AtomicU64,
     next_resource_snapshot_id: AtomicU64,
     next_prompt_snapshot_id: AtomicU64,
+    /// The token-optimization plan `providers.json` declared; tool result
+    /// text compresses through it before answering the host.
+    optimize: aifuel_core::OptimizePlan,
 }
 
 struct GatewayServerState {
@@ -65,6 +68,7 @@ impl GatewayState {
         facade: McpGatewayFacade,
         overflow: CancellationToken,
         allowed_tools: Option<Vec<String>>,
+        optimize: aifuel_core::OptimizePlan,
     ) -> Self {
         let limits = facade.gateway_limits().clone();
         let servers = facade
@@ -114,7 +118,13 @@ impl GatewayState {
             next_snapshot_id: AtomicU64::new(1),
             next_resource_snapshot_id: AtomicU64::new(1),
             next_prompt_snapshot_id: AtomicU64::new(1),
+            optimize,
         }
+    }
+
+    /// The file-level token-optimization plan tool results compress through.
+    pub(super) fn optimize(&self) -> &aifuel_core::OptimizePlan {
+        &self.optimize
     }
 
     pub(super) fn max_message_bytes(&self) -> usize {
@@ -354,7 +364,12 @@ mod tests {
         }"#;
         let facade = McpGatewayFacade::from_json(catalog, "codex", PathBuf::from("/home/test"))
             .expect("the test catalog should be valid");
-        let state = Arc::new(GatewayState::new(facade, CancellationToken::new(), None));
+        let state = Arc::new(GatewayState::new(
+            facade,
+            CancellationToken::new(),
+            None,
+            aifuel_core::OptimizePlan::default(),
+        ));
         let _snapshot_guard = state.snapshot.lock().await;
         let deadline = Instant::now() + Duration::from_millis(20);
 

@@ -524,7 +524,8 @@ impl ServerHandler for GatewayServerHandler {
 
         match result {
             Ok(ServerResult::CallToolResult(result)) => {
-                let result = rewrite_tool_result(result, &route.server_id)?;
+                let mut result = rewrite_tool_result(result, &route.server_id)?;
+                optimize_tool_result(&mut result, self.state.optimize());
                 if tool_result_bytes(&result, &context.id)? > self.state.max_message_bytes() {
                     return Ok(tool_error(
                         "external MCP tool result exceeds the host message byte limit",
@@ -603,6 +604,21 @@ fn rewrite_read_contents(contents: &mut ResourceContents, server_id: &str) -> Re
     };
     *uri = resource_uri(server_id, uri).map_err(|error| McpError::internal_error(error, None))?;
     Ok(())
+}
+
+/// Compress a tool result's text content through the configured plan.
+/// `plan.apply` is a never-worse transform, so an inert plan or an
+/// incompressible payload returns the same bytes; resource content and
+/// annotations stay untouched.
+fn optimize_tool_result(result: &mut CallToolResult, plan: &aifuel_core::OptimizePlan) {
+    if !plan.is_active() {
+        return;
+    }
+    for content in &mut result.content {
+        if let rmcp::model::RawContent::Text(text) = &mut content.raw {
+            text.text = plan.apply(&text.text);
+        }
+    }
 }
 
 fn rewrite_tool_result(

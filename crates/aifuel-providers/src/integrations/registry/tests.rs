@@ -51,6 +51,8 @@ fn duplicate_builtin_ids_are_rejected() {
         ],
         Vec::new(),
         Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(
         result,
@@ -66,6 +68,8 @@ fn config_cannot_shadow_a_builtin_id() {
         vec![cli_descriptor("claude:cli", "claude")],
         vec![configured_http("claude:cli", "claude", AuthBinding::None)],
         Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(
         result,
@@ -82,6 +86,8 @@ fn duplicate_config_ids_are_rejected() {
             configured_http("mine", "openai", AuthBinding::None),
         ],
         Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(
         result,
@@ -99,6 +105,8 @@ fn a_config_entry_error_fails_the_build() {
             reason: "auth kind 'bogus' is unknown".to_owned(),
         })],
         Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(result, Err(RegistryError::Config(_))));
 }
@@ -138,7 +146,13 @@ fn config_cannot_reference_a_builtin_held_credential() {
         },
     );
 
-    let result = IntegrationRegistry::build(vec![builtin], vec![smuggled], Vec::new());
+    let result = IntegrationRegistry::build(
+        vec![builtin],
+        vec![smuggled],
+        Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
+    );
 
     assert!(matches!(
         result,
@@ -160,6 +174,8 @@ fn resolve_prefers_an_exact_integration_id() {
         ],
         Vec::new(),
         Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     )
     .expect("build should succeed");
 
@@ -186,6 +202,8 @@ fn a_bare_provider_resolves_only_when_unambiguous() {
             },
         )],
         Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     )
     .expect("build should succeed");
 
@@ -237,6 +255,8 @@ fn list_preserves_builtin_catalog_order_then_config_file_order() {
             configured_http("beta", "beta", AuthBinding::None),
         ],
         Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     )
     .expect("build should succeed");
 
@@ -253,8 +273,14 @@ fn list_preserves_builtin_catalog_order_then_config_file_order() {
 
 #[test]
 fn the_real_builtins_build_and_resolve() {
-    let registry = IntegrationRegistry::build(builtin_integrations(), Vec::new(), Vec::new())
-        .expect("builtins never collide");
+    let registry = IntegrationRegistry::build(
+        builtin_integrations(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
+    )
+    .expect("builtins never collide");
 
     // CLI integration ids equal the catalog provider ids, so stored
     // legacy selections resolve by exact match.
@@ -287,6 +313,8 @@ fn instances_join_the_registry_and_serve_their_base() {
         vec![cli_descriptor("claude", "claude")],
         Vec::new(),
         vec![Ok(instance("claude.work", "claude"))],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     )
     .expect("build succeeds");
 
@@ -330,6 +358,8 @@ fn instance_ids_cannot_collide_with_claimed_identities() {
         vec![cli_descriptor("claude", "claude")],
         Vec::new(),
         vec![Ok(instance("claude", "claude"))],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(
         result,
@@ -344,6 +374,8 @@ fn instance_ids_cannot_collide_with_claimed_identities() {
             Ok(instance("claude.work", "claude")),
             Ok(instance("claude.work", "claude")),
         ],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(
         result,
@@ -357,6 +389,8 @@ fn an_instance_must_name_a_registered_base() {
         vec![cli_descriptor("claude", "claude")],
         Vec::new(),
         vec![Ok(instance("ghost.work", "ghost"))],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(
         result,
@@ -391,7 +425,13 @@ fn an_instance_cannot_reference_a_builtin_credential() {
             "builtin-held",
         )),
     );
-    let result = IntegrationRegistry::build(vec![builtin], Vec::new(), vec![Ok(smuggler)]);
+    let result = IntegrationRegistry::build(
+        vec![builtin],
+        Vec::new(),
+        vec![Ok(smuggler)],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
+    );
     assert!(matches!(
         result,
         Err(RegistryError::ReservedCredential { .. })
@@ -409,6 +449,8 @@ fn an_instance_credential_needs_a_slot_to_fill() {
         Vec::new(),
         vec![configured_http("open", "open", AuthBinding::None)],
         vec![Ok(bound.clone())],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(
         result,
@@ -429,6 +471,8 @@ fn an_instance_credential_needs_a_slot_to_fill() {
             },
         )],
         vec![Ok(bound)],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(result.is_ok(), "{result:?}");
 }
@@ -445,6 +489,8 @@ fn an_instance_id_must_not_shadow_an_unrelated_selector() {
         ],
         Vec::new(),
         vec![Ok(instance("claude", "codex:cli"))],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     );
     assert!(matches!(
         result,
@@ -457,6 +503,8 @@ fn an_instance_id_must_not_shadow_an_unrelated_selector() {
         vec![cli_descriptor("claude:cli", "claude")],
         Vec::new(),
         vec![Ok(instance("claude", "claude:cli"))],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     )
     .expect("a provider-name instance over that provider's integration is consistent");
     let (base, overlay) = registry
@@ -474,6 +522,8 @@ fn check_instance_guards_adds_after_build() {
         vec![cli_descriptor("claude", "claude")],
         Vec::new(),
         vec![Ok(instance("claude.work", "claude"))],
+        Vec::new(),
+        aifuel_core::OptimizePlan::default(),
     )
     .expect("build succeeds");
     assert!(
@@ -489,4 +539,78 @@ fn check_instance_guards_adds_after_build() {
         registry.check_instance(&instance("ghost.inst", "ghost")),
         Err(RegistryError::InvalidInstance { .. })
     ));
+}
+
+fn chain(name: &str, steps: &[(&str, Option<&str>)]) -> ChainDescriptor {
+    ChainDescriptor {
+        name: name.to_owned(),
+        strategy: crate::integrations::ChainStrategy::Priority,
+        steps: steps
+            .iter()
+            .map(|(integration, model)| crate::integrations::ChainStep {
+                integration: IntegrationId::new(*integration),
+                model: model.map(str::to_owned),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn chains_join_the_registry_and_steps_resolve_through_serving() {
+    // A chain step may name a base integration or an instance selector;
+    // the instance step reports its base descriptor for routing.
+    let registry = IntegrationRegistry::build(
+        vec![cli_descriptor("claude", "claude")],
+        Vec::new(),
+        vec![Ok(instance("claude.work", "claude"))],
+        vec![Ok(chain(
+            "main",
+            &[("claude", None), ("claude.work", Some("opus"))],
+        ))],
+        aifuel_core::OptimizePlan::default(),
+    )
+    .expect("a chain over registered identities builds");
+
+    let chain = registry.chain("main").expect("the chain registers");
+    assert_eq!(chain.steps.len(), 2);
+    assert_eq!(chain.steps[1].model.as_deref(), Some("opus"));
+    assert!(registry.chain("ghost").is_none());
+    assert_eq!(registry.chains().count(), 1);
+    let (base, overlay) = registry
+        .serving(&chain.steps[1].integration)
+        .expect("the instance step serves");
+    assert_eq!(base.id().as_str(), "claude");
+    assert!(overlay.is_some());
+}
+
+#[test]
+fn a_chain_step_must_name_a_registered_identity() {
+    // A step pointing nowhere is a load-time error, not a runtime skip:
+    // a typo in the file must surface when the config is read.
+    let result = IntegrationRegistry::build(
+        vec![cli_descriptor("claude", "claude")],
+        Vec::new(),
+        Vec::new(),
+        vec![Ok(chain("main", &[("ghost", None)]))],
+        aifuel_core::OptimizePlan::default(),
+    );
+    assert!(matches!(
+        result,
+        Err(RegistryError::InvalidChain { ref name, .. }) if name == "main"
+    ));
+}
+
+#[test]
+fn the_registry_reports_the_file_optimizer_plan() {
+    let mut plan = aifuel_core::OptimizePlan::default();
+    plan.rtk = aifuel_core::RtkLevel::Ultra;
+    let registry = IntegrationRegistry::build(
+        vec![cli_descriptor("claude", "claude")],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        plan,
+    )
+    .expect("build succeeds");
+    assert_eq!(registry.optimizer().rtk, aifuel_core::RtkLevel::Ultra);
 }

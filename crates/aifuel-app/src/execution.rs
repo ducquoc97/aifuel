@@ -156,6 +156,7 @@ mod tests {
             resume: None,
             timeout: Some(Duration::from_secs(1)),
             env: Default::default(),
+            optimize: Default::default(),
             interaction_handler: None,
         }
     }

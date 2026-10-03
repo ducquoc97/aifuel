@@ -199,11 +199,26 @@ fn completions_url_tolerates_trailing_slashes() {
 
 #[test]
 fn request_body_is_a_streaming_single_message() {
-    let body = request_body("llama3", "say hi");
+    let body = request_body("llama3", "say hi", None);
     assert_eq!(body["model"], "llama3");
     assert_eq!(body["stream"], true);
     assert_eq!(
         body["messages"],
         serde_json::json!([{"role": "user", "content": "say hi"}])
+    );
+}
+
+#[test]
+fn request_body_prepends_system_when_the_plan_instructs() {
+    // The caveman terse-response directive rides as the system message:
+    // a configured optimizer changes the wire payload, an inert one never
+    // does.
+    let body = request_body("llama3", "say hi", Some("Be terse."));
+    assert_eq!(
+        body["messages"],
+        serde_json::json!([
+            {"role": "system", "content": "Be terse."},
+            {"role": "user", "content": "say hi"}
+        ])
     );
 }

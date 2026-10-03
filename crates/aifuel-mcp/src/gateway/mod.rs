@@ -30,20 +30,27 @@ use tokio_util::sync::CancellationToken;
 /// Serve the selected external MCP servers to an MCP Host over standard input
 /// and output. This process is separate from AI Fuel's read-only monitoring MCP.
 pub async fn serve(facade: McpGatewayFacade) -> Result<(), String> {
-    serve_with_tool_allowlist(facade, None).await
+    serve_with_tool_allowlist(facade, None, aifuel_core::OptimizePlan::default()).await
 }
 
 /// Serve the selected external MCP servers, optionally exposing only the
 /// exact gateway tool names in `allowed_tools` for this connection.
+/// `optimize` is the file-level plan tool result text compresses through.
 pub async fn serve_with_tool_allowlist(
     facade: McpGatewayFacade,
     allowed_tools: Option<Vec<String>>,
+    optimize: aifuel_core::OptimizePlan,
 ) -> Result<(), String> {
     let allowed_tools = validate_tool_allowlist(allowed_tools)?;
     let limits = facade.gateway_limits().clone();
     let output_budget = Arc::new(Semaphore::new(limits.max_output_buffer_bytes));
     let overflow = CancellationToken::new();
-    let state = Arc::new(GatewayState::new(facade, overflow.clone(), allowed_tools));
+    let state = Arc::new(GatewayState::new(
+        facade,
+        overflow.clone(),
+        allowed_tools,
+        optimize,
+    ));
     let cancellation = CancellationToken::new();
     let transport = host_transport::HostTransport::new(
         limits.max_message_bytes,
@@ -65,7 +72,14 @@ pub async fn serve_with_tool_allowlist(
 /// `GatewayState`, so upstream connections stay per-connection exactly as
 /// they do over stdio.
 pub async fn serve_http(facade: McpGatewayFacade, host: &str, port: u16) -> Result<(), String> {
-    serve_http_with_tool_allowlist(facade, None, host, port).await
+    serve_http_with_tool_allowlist(
+        facade,
+        None,
+        aifuel_core::OptimizePlan::default(),
+        host,
+        port,
+    )
+    .await
 }
 
 /// Serve the selected external MCP servers over streamable HTTP, optionally
@@ -73,6 +87,7 @@ pub async fn serve_http(facade: McpGatewayFacade, host: &str, port: u16) -> Resu
 pub async fn serve_http_with_tool_allowlist(
     facade: McpGatewayFacade,
     allowed_tools: Option<Vec<String>>,
+    optimize: aifuel_core::OptimizePlan,
     host: &str,
     port: u16,
 ) -> Result<(), String> {
@@ -90,6 +105,7 @@ pub async fn serve_http_with_tool_allowlist(
                 http::GatewayHttpSession::start(
                     facade.clone(),
                     allowed_tools.clone(),
+                    optimize.clone(),
                     runtime.clone(),
                 )
             },

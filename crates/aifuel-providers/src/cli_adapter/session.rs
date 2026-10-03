@@ -36,6 +36,10 @@ pub(super) struct CliSession {
     emit: mpsc::Sender<AgentEventKind>,
     /// Handed to `events()` once; later calls see an already-consumed stream.
     events: Mutex<Option<mpsc::Receiver<AgentEventKind>>>,
+    /// The token-optimization plan the session was opened with, applied to
+    /// every input's text before the run dispatch and carried on the
+    /// request so wire integrations also receive the instruction.
+    optimize: aifuel_core::OptimizePlan,
     pub state: Mutex<SessionState>,
     next_id: AtomicU64,
 }
@@ -73,6 +77,7 @@ impl CliSession {
         resume_cursor: Option<String>,
         external_tools: Vec<String>,
         env: std::collections::BTreeMap<String, String>,
+        optimize: aifuel_core::OptimizePlan,
     ) -> Arc<Self> {
         let (emit, events) = mpsc::channel();
         Arc::new(Self {
@@ -80,6 +85,7 @@ impl CliSession {
             cwd,
             access,
             env,
+            optimize,
             emit,
             events: Mutex::new(Some(events)),
             state: Mutex::new(SessionState {
@@ -175,7 +181,10 @@ impl CliSession {
             effort: selection.effort.map(|effort| effort.as_str().to_owned()),
             external_tools: (!external_tools.is_empty()).then_some(external_tools),
             account: None,
-            prompt: input.text,
+            // The session's plan compresses the input text here - the
+            // wrapped execution adapter dispatches the request directly,
+            // so this is the prompt seam for session runs.
+            prompt: self.optimize.apply(&input.text),
             // Structured output is requested only where declared: it is the
             // format the provider-native session id parses back out of.
             output: if supports_jsonl {
@@ -194,6 +203,7 @@ impl CliSession {
             // The session's instance overlay: the wrapped execution
             // adapter applies it to the provider process it spawns.
             env: self.env.clone(),
+            optimize: self.optimize.clone(),
             interaction_handler,
         };
         execution

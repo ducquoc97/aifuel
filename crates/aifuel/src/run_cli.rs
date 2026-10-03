@@ -25,7 +25,12 @@ pub fn run(args: &[String]) -> Result<u8, String> {
         print_run_help();
         return Ok(0);
     }
-    let selected = parse_run_args(args)?;
+    let mut selected = parse_run_args(args)?;
+    // The run's optimization plan resolves config first, flags last:
+    // `providers.json`'s `optimizer` section, then each `--optimize
+    // engine:level`, while `--no-optimize` drops the plan entirely.
+    selected.request.optimize =
+        resolve_optimize_plan(&selected.optimize_overrides, selected.no_optimize)?;
     if let (Some(evidence), Some(model)) =
         (selected.model_evidence, selected.request.model.as_deref())
     {
@@ -38,6 +43,9 @@ pub fn run(args: &[String]) -> Result<u8, String> {
             ),
         };
         eprintln!("{message}");
+    }
+    if let Some(chain) = selected.chain.as_deref() {
+        return auto::run_chain(&selected, chain);
     }
     if selected.request.integration.as_str() == aifuel_core::AUTO_PROVIDER {
         return auto::run(&selected);
@@ -183,6 +191,35 @@ struct ParsedRunRequest {
     request: launcher::RunRequest,
     model_evidence: Option<aifuel::selection_cli::PickerModelEvidence>,
     selection_sources: SelectionSources,
+    /// The `--chain NAME` selection: a named fallback chain from
+    /// `providers.json`, mutually exclusive with `--provider`.
+    chain: Option<String>,
+    /// Every `--optimize engine:level` override, applied over the config
+    /// file's optimizer section.
+    optimize_overrides: Vec<String>,
+    /// `--no-optimize`: the run carries the inert plan regardless of the
+    /// config section.
+    no_optimize: bool,
+}
+
+/// Resolve the run's [`aifuel_core::OptimizePlan`]: the `providers.json`
+/// `optimizer` section under any `--optimize` overrides. An unreadable
+/// registry falls back to the inert plan - single-provider runs never
+/// loaded it before this feature, so a missing config must not break them.
+fn resolve_optimize_plan(
+    overrides: &[String],
+    no_optimize: bool,
+) -> Result<aifuel_core::OptimizePlan, String> {
+    if no_optimize {
+        return Ok(aifuel_core::OptimizePlan::default());
+    }
+    let mut plan = crate::integration_registry()
+        .map(|registry| registry.optimizer().clone())
+        .unwrap_or_default();
+    for spec in overrides {
+        plan = plan.with_override(spec)?;
+    }
+    Ok(plan)
 }
 
 fn parse_run_args(args: &[String]) -> Result<ParsedRunRequest, String> {
@@ -215,6 +252,9 @@ fn parse_run_args_with_context(
     stdin_is_terminal: bool,
 ) -> Result<ParsedRunRequest, String> {
     let mut integration = None;
+    let mut chain = None;
+    let mut optimize_overrides = Vec::new();
+    let mut no_optimize = false;
     let mut model = None;
     let mut effort = None;
     let mut external_tools = Vec::new();
@@ -243,6 +283,9 @@ fn parse_run_args_with_context(
             "--integration" | "--provider" => {
                 integration = Some(next_value(args, &mut index, argument)?);
             }
+            "--chain" => chain = Some(next_value(args, &mut index, argument)?),
+            "--optimize" => optimize_overrides.push(next_value(args, &mut index, argument)?),
+            "--no-optimize" => no_optimize = true,
             "--model" => model = Some(next_value(args, &mut index, argument)?),
             "--effort" => effort = Some(next_value(args, &mut index, argument)?),
             "--external-tool" => external_tools.push(next_value(args, &mut index, argument)?),
@@ -289,7 +332,25 @@ fn parse_run_args_with_context(
     }
     let external_tools = (!external_tools.is_empty()).then_some(external_tools);
 
-    let integration = integration.map(aifuel_core::IntegrationId::new);
+    if chain.is_some() && integration.is_some() {
+        return Err(
+            "use exactly one of --chain or --provider: a chain is itself the provider selection"
+                .to_owned(),
+        );
+    }
+    if no_optimize && !optimize_overrides.is_empty() {
+        return Err("--no-optimize cannot combine with --optimize".to_owned());
+    }
+    // A `--chain NAME` run carries the `chain:<name>` marker as its
+    // integration selection: like `auto`, it is a routing alias the chain
+    // runner resolves per step, so the rest of selection resolves
+    // uniformly.
+    let integration = chain
+        .as_ref()
+        .map(|name| {
+            aifuel_core::IntegrationId::new(format!("{}{name}", aifuel_core::CHAIN_PROVIDER_PREFIX))
+        })
+        .or_else(|| integration.map(aifuel_core::IntegrationId::new));
     if prompt_count > 1 || prompt_file_count > 1 {
         return Err("provide exactly one value for the selected prompt option".to_owned());
     }
@@ -355,6 +416,7 @@ fn parse_run_args_with_context(
         resume,
         timeout: None,
         env: Default::default(),
+        optimize: Default::default(),
         interaction_handler: None,
     };
     let resolved = config
@@ -389,6 +451,9 @@ fn parse_run_args_with_context(
         request,
         model_evidence,
         selection_sources,
+        chain,
+        optimize_overrides,
+        no_optimize,
     })
 }
 
@@ -423,6 +488,20 @@ fn print_run_help() {
         "                                        then keyed API-key integrations (free tier first),"
     );
     println!("                                        and fall back on failures before execution");
+    println!(
+        "  --chain NAME                          run a named fallback chain from providers.json:"
+    );
+    println!(
+        "                                        its declared step order replaces the `auto` ranking"
+    );
+    println!(
+        "  --optimize ENGINE:LEVEL               override the providers.json optimizer plan per run;"
+    );
+    println!(
+        "                                        ENGINE is rtk (off|standard|ultra) or caveman"
+    );
+    println!("                                        (off|lite|full|ultra); repeatable");
+    println!("  --no-optimize                         disable the optimizer plan for this run");
     println!("  --prompt TEXT                         prompt text");
     println!("  --prompt-file PATH                    read prompt from a file");
     println!("  --model MODEL_ID                      explicit model");

@@ -14,6 +14,7 @@
 //! - Ordering is deterministic: built-ins in pinned catalog order, then
 //!   config entries in file order.
 
+use super::chains::ChainDescriptor;
 use super::config::ConfigError;
 use super::evidence::{EvidenceContext, EvidenceSource, inspect_any};
 use super::instances::InstanceDescriptor;
@@ -102,12 +103,16 @@ impl IntegrationDescriptor {
 /// entries in file order); `configured` names the ids `providers.json`
 /// defined, which is itself one of the discovery evidence kinds.
 /// `instances` holds the instance overlays keyed by their selector id.
+/// `chains` holds the named fallback chains `--chain` selects, keyed by
+/// chain name; `optimizer` is the file-level token-optimization plan.
 #[derive(Debug)]
 pub struct IntegrationRegistry {
     entries: BTreeMap<IntegrationId, IntegrationDescriptor>,
     order: Vec<IntegrationId>,
     configured: BTreeSet<IntegrationId>,
     instances: BTreeMap<IntegrationId, InstanceDescriptor>,
+    chains: BTreeMap<String, ChainDescriptor>,
+    optimizer: aifuel_core::OptimizePlan,
     /// The Credential References built-ins hold, kept for
     /// [`Self::check_instance`], which applies the same reservation to
     /// instances added after build.
@@ -125,6 +130,8 @@ impl IntegrationRegistry {
         builtins: impl IntoIterator<Item = IntegrationDescriptor>,
         config_entries: impl IntoIterator<Item = Result<IntegrationDescriptor, ConfigError>>,
         config_instances: impl IntoIterator<Item = Result<InstanceDescriptor, ConfigError>>,
+        config_chains: impl IntoIterator<Item = Result<ChainDescriptor, ConfigError>>,
+        optimizer: aifuel_core::OptimizePlan,
     ) -> Result<Self, RegistryError> {
         let mut entries = BTreeMap::new();
         let mut order = Vec::new();
@@ -176,11 +183,22 @@ impl IntegrationRegistry {
             instances.insert(instance.id.clone(), instance);
         }
 
+        let mut chains = BTreeMap::new();
+        for entry in config_chains {
+            let chain = entry.map_err(RegistryError::Config)?;
+            check_chain(&entries, &instances, &chain)?;
+            if chains.insert(chain.name.clone(), chain).is_some() {
+                unreachable!("chain names are BTreeMap keys and cannot repeat");
+            }
+        }
+
         Ok(Self {
             entries,
             order,
             configured,
             instances,
+            chains,
+            optimizer,
             builtin_credentials,
         })
     }
@@ -231,6 +249,22 @@ impl IntegrationRegistry {
     /// Iterate the registered instances in id order.
     pub fn instances(&self) -> impl Iterator<Item = &InstanceDescriptor> {
         self.instances.values()
+    }
+
+    /// Look up one fallback chain by exact name.
+    pub fn chain(&self, name: &str) -> Option<&ChainDescriptor> {
+        self.chains.get(name)
+    }
+
+    /// Iterate the registered fallback chains in name order.
+    pub fn chains(&self) -> impl Iterator<Item = &ChainDescriptor> {
+        self.chains.values()
+    }
+
+    /// The file-level token-optimization plan `providers.json` declared;
+    /// the inert default when it declared none.
+    pub fn optimizer(&self) -> &aifuel_core::OptimizePlan {
+        &self.optimizer
     }
 
     /// Resolve one Integration Identity to the integration that serves it
@@ -381,6 +415,30 @@ fn check_instance(
     Ok(())
 }
 
+/// The registry-level check every chain must pass: each step's
+/// `integration` names a registered Integration Identity - a base
+/// integration or an instance selector id. An unknown reference is an
+/// explicit error: a chain that names a typo must not silently skip it
+/// at run time.
+fn check_chain(
+    entries: &BTreeMap<IntegrationId, IntegrationDescriptor>,
+    instances: &BTreeMap<IntegrationId, InstanceDescriptor>,
+    chain: &ChainDescriptor,
+) -> Result<(), RegistryError> {
+    for (index, step) in chain.steps.iter().enumerate() {
+        if !entries.contains_key(&step.integration) && !instances.contains_key(&step.integration) {
+            return Err(RegistryError::InvalidChain {
+                name: chain.name.clone(),
+                reason: format!(
+                    "steps[{index}].integration '{}' is not a registered integration or instance",
+                    step.integration
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// The Credential References an integration binds, from its execution auth
 /// and its monitoring credential. Used to reserve built-in-held references
 /// against config smuggling.
@@ -424,6 +482,9 @@ pub enum RegistryError {
     /// registry: unknown base integration, a `credential` binding with no
     /// slot to fill, or an id that shadows an existing selector.
     InvalidInstance { id: IntegrationId, reason: String },
+    /// A `chains` entry is structurally valid but names an integration
+    /// the registry does not know.
+    InvalidChain { name: String, reason: String },
 }
 
 impl fmt::Display for RegistryError {
@@ -450,6 +511,9 @@ impl fmt::Display for RegistryError {
             ),
             Self::InvalidInstance { id, reason } => {
                 write!(f, "instance '{id}': {reason}")
+            }
+            Self::InvalidChain { name, reason } => {
+                write!(f, "chain '{name}': {reason}")
             }
         }
     }
