@@ -120,6 +120,23 @@ where
         );
         return;
     }
+    if path.starts_with("/api/gateway") {
+        // The gateway admin surface mutates local state (downstream keys)
+        // and reads request logs, so it keeps the dashboard's strict
+        // same-origin guard rather than the relaxed `/v1` policy.
+        if !is_local_request(&request) {
+            drain_body(&mut request);
+            respond(
+                request,
+                403,
+                "forbidden: cross-origin request rejected",
+                "text/plain",
+            );
+            return;
+        }
+        aifuel::gateway::handle_admin(request, shared.gateway.as_ref());
+        return;
+    }
     if !is_local_request(&request) {
         drain_body(&mut request);
         respond(

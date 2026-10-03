@@ -24,9 +24,17 @@
 //! do not round-trip yet; see the module docs on `flatten` for the
 //! convention.
 
+mod admin;
 mod chat;
+mod completions;
+mod execute;
 mod flatten;
+mod keys;
+mod logs;
+mod messages;
 mod models;
+mod responses;
+mod routes;
 mod types;
 
 use aifuel_app::MonitoringFacade;
@@ -122,6 +130,10 @@ pub fn handle<C: StatusCollector>(
         );
         return;
     };
+    if let Err(reason) = keys::authorize(&request) {
+        respond_error(request, 401, &reason, "authentication_error");
+        return;
+    }
     match (request.method(), path) {
         (&tiny_http::Method::Get, "/v1/models") => {
             respond(
@@ -135,11 +147,37 @@ pub fn handle<C: StatusCollector>(
         (&tiny_http::Method::Post, "/v1/chat/completions") => {
             chat::completions(request, gateway, facade, runtime);
         }
+        (&tiny_http::Method::Post, "/v1/completions") => {
+            completions::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/messages")
+        | (&tiny_http::Method::Post, "/v1/messages/count_tokens") => {
+            messages::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/responses")
+        | (&tiny_http::Method::Post, "/v1/responses/compact") => {
+            responses::handle(request, gateway, facade, runtime);
+        }
         _ => respond_error(
             request,
             404,
             "unknown /v1 endpoint",
             "invalid_request_error",
+        ),
+    }
+}
+
+/// Dispatch one `/api/gateway/*` request - the admin surface runs under
+/// the dashboard's strict same-origin guard. A `None` gateway answers 503
+/// like the `/v1` routes.
+pub fn handle_admin(request: tiny_http::Request, gateway: Option<&Gateway>) {
+    match gateway {
+        Some(gateway) => admin::handle(request, gateway),
+        None => respond_error(
+            request,
+            503,
+            "the execution surface is unavailable; check `aifuel run` works on this host",
+            "server_error",
         ),
     }
 }
