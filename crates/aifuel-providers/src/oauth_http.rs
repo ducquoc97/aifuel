@@ -161,6 +161,17 @@ pub(crate) fn reject_unsupported(
             "{integration} cannot provide verified JSONL output"
         )));
     }
+    Ok(())
+}
+
+/// The model requirement for direct endpoints that carry no provider-side
+/// default. Adapters with a compiled default (`codex:oauth` serves
+/// `DEFAULT_MODEL`) do not call this; endpoints without one (`copilot:oauth`)
+/// do, so a bare selector fails before the credential file is read.
+pub(crate) fn require_model(
+    integration: &IntegrationId,
+    request: &RunRequest,
+) -> Result<(), AgentRunError> {
     if request
         .model
         .as_deref()

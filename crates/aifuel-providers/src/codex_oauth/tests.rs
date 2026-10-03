@@ -358,6 +358,31 @@ fn a_streamed_run_succeeds_with_output_usage_and_headers() {
 }
 
 #[test]
+fn a_bare_selector_runs_the_compiled_default_model() {
+    let home = TestHome::new();
+    write_auth(
+        home.path(),
+        &jwt(oauth_http::unix_now() + 3600),
+        Some("acc"),
+    );
+    let sse = concat!(
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-6-luna\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+    );
+    let stub = StubResponses::start(200, "text/event-stream", sse);
+    let mut bare = request();
+    bare.model = None;
+    let result = adapter(home.path(), stub.base_url.clone())
+        .execute(&bare, &RunCancellationToken::new())
+        .expect("a bare codex:oauth selector runs");
+    assert_eq!(result.status, aifuel_core::RunStatus::Succeeded);
+
+    let recorded = stub.recorded.lock().expect("recorded mutex");
+    let body: Value = serde_json::from_str(&recorded[0].body).expect("request JSON");
+    assert_eq!(body["model"], DEFAULT_MODEL);
+}
+
+#[test]
 fn agent_info_reports_a_compiled_in_process_adapter() {
     let info = adapter(Path::new("/nonexistent"), String::new()).agent_info();
     assert_eq!(info.native_presence.state, AgentPresenceState::Present);

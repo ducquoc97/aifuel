@@ -36,6 +36,10 @@ const RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 /// one is sent rather than none, matching what subscription gateways send.
 const INSTRUCTIONS: &str = "You are a ChatGPT agent.";
 
+/// The codex-family model the subscription backend currently serves: a
+/// bare `codex:oauth` selector runs it, `codex:oauth/<model>` overrides.
+const DEFAULT_MODEL: &str = "gpt-6-luna";
+
 /// The relogin hint attached to every credential rejection: the file the
 /// adapter reads is the one `codex login` writes.
 const RELOGIN_HINT: &str = "the stored Codex OAuth credential was rejected or is missing; run `codex login` to re-authenticate";
@@ -190,7 +194,12 @@ impl CodexOAuthAdapter {
                     .to_owned(),
             ));
         }
-        let model = request.model.as_deref().expect("validate requires a model");
+        let model = request
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .unwrap_or(DEFAULT_MODEL);
         let body = request_body(model, &request.prompt);
         let headers = Self::request_headers(&credentials)?;
         let secrets = [
