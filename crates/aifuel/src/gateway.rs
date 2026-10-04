@@ -183,6 +183,14 @@ pub fn handle<C: StatusCollector>(
     }
 }
 
+/// Whether the key store holds at least one non-revoked downstream key.
+/// Remote binds use it to fail `/v1` closed while none exists - without
+/// a usable key every request rejects anyway, so the anonymous posture
+/// must never reach a public socket.
+pub fn has_active_keys() -> bool {
+    keys::any_active()
+}
+
 /// Dispatch one `/api/gateway/*` request - the admin surface runs under
 /// the dashboard's strict same-origin guard. A `None` gateway answers 503
 /// like the `/v1` routes.
@@ -200,7 +208,7 @@ pub fn handle_admin(request: tiny_http::Request, gateway: Option<&Gateway>) {
 
 /// The OpenAI error envelope every `/v1` failure shares, so SDK clients
 /// parse it instead of a bare status line.
-pub(crate) fn respond_error(request: tiny_http::Request, status: u16, message: &str, kind: &str) {
+pub fn respond_error(request: tiny_http::Request, status: u16, message: &str, kind: &str) {
     let body = serde_json::json!({
         "error": {"message": message, "type": kind, "param": null, "code": null}
     });

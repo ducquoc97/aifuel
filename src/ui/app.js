@@ -88,6 +88,27 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ---- Admin session: reveal Sign out only when one is held ----
+
+fetch("/api/auth/session")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((state) => {
+    if (state && state.authenticated) {
+      document.getElementById("signout-btn").hidden = false;
+    }
+  })
+  .catch(() => { /* no session endpoint - leave the button hidden */ });
+
+document.getElementById("signout-btn").addEventListener("click", async () => {
+  try {
+    await fetch("/api/logout", { method: "POST" });
+  } finally {
+    // Reload either way: with the session gone the server answers the
+    // sign-in page for this same URL.
+    window.location.reload();
+  }
+});
+
 // ---- Quit: stop the dashboard server ----
 
 document.getElementById("quit-btn").addEventListener("click", async () => {

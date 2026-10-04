@@ -46,6 +46,7 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | `aifuel profile list\|save\|remove` | Named defaults for `run` (provider, model, effort, access, timeout) |
 | `aifuel model list\|refresh` | Cached provider model catalog, refreshed on demand |
 | `aifuel auth list\|set-key\|set-session\|remove` | Stored API keys for API-key integrations and browser-session credentials for `*:web` integrations (also via the dashboard's Connect section); repeated `set-key` builds a key pool that rotates past rate limits |
+| `aifuel auth set-admin\|remove-admin` | The dashboard admin password - required before `--host` binds a non-loopback address, and once set it gates every dashboard page and `/api/*` route behind a sign-in |
 | `aifuel approve --run ID --input ID --decision accept\|decline\|cancel` | Answer a pending permission request for a local run |
 | `aifuel mcp [--http [--host H] [--port P]]` | Read-only MCP status server over stdio, or streamable HTTP |
 | `aifuel mcp execution [--http [--host H] [--port P]]` | MCP server that manages Agent Runs over stdio, or streamable HTTP |
@@ -55,6 +56,10 @@ Override the target dir with `BIN_DIR=/usr/local/bin` (or `-BinDir` on Windows).
 | `aifuel runtime` | JSON-RPC stdio bridge for embedding agent runs in a host process |
 
 `--json` is a stable structured feed - it drops cleanly into a tmux / polybar / Sketchybar / starship status line.
+
+## Run it on a server
+
+The same listener already fronts an OpenAI/Anthropic-compatible endpoint (`/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/embeddings`, `/v1/models`) with per-key model allowlists - deploy it on a VPS and apps consume your configured integrations through `aifuel-gw-*` keys. A non-loopback `--host` switches to remote mode: an admin password (`aifuel auth set-admin` or `AIFUEL_ADMIN_PASSWORD`) is required, the dashboard and `/api/*` sit behind a sign-in, and `/v1` refuses to answer until at least one gateway key exists. Put Caddy or nginx in front for TLS, or use the Docker image - see `docs/deploy-vps.md`.
 
 ## What it tracks
 
