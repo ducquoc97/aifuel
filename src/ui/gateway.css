@@ -234,6 +234,7 @@ th.gw-num { text-align: right }
 }
 .gw-dot {
   width: 8px; height: 8px; border-radius: 50%; flex: none;
+  margin-left: auto;
 }
 .gw-p-name {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -247,6 +248,82 @@ th.gw-num { text-align: right }
   font-size: 12px; letter-spacing: 0;
 }
 .gw-p-card .badges { margin-top: 10px }
+
+/* ---- Combo cards: a visual failover chain ---- */
+#combo-list { display: flex; flex-direction: column; gap: 10px }
+.gw-combo-card {
+  background: var(--canvas);
+  border: .5px solid var(--line);
+  border-radius: var(--r-surface);
+  box-shadow: var(--shadow-card);
+  padding: 12px 16px 14px;
+}
+.gw-combo-head { display: flex; align-items: center; gap: 8px }
+.gw-combo-name {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px; font-weight: 600; letter-spacing: 0;
+  color: var(--ink);
+}
+.gw-combo-head .btn { margin-left: auto }
+.gw-flow {
+  margin-top: 12px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.gw-flow-req {
+  padding: 5px 10px;
+  background: var(--fill-3);
+  border-radius: var(--r-pill, 999px);
+  color: var(--ink-48);
+  font-size: 11.5px;
+}
+.gw-flow-arrow {
+  color: var(--ink-ter);
+  font-size: 15px;
+  flex: none;
+}
+.gw-flow-step {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 9px;
+  background: var(--pearl);
+  border: .5px solid var(--line);
+  border-radius: var(--r-ctl);
+  cursor: grab;
+  transition: border-color .12s, box-shadow .12s, opacity .12s;
+}
+.gw-flow-step:active { cursor: grabbing }
+.gw-flow-step.gw-drag { opacity: .4 }
+.gw-flow-step.gw-drop {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.gw-flow-order {
+  width: 16px; height: 16px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--fill-2);
+  color: var(--ink-48);
+  font-size: 10px; font-weight: 600;
+}
+.gw-flow-sel { font-size: 12px; color: var(--ink) }
+.gw-flow-x {
+  appearance: none; border: 0; padding: 1px 5px;
+  background: transparent; color: var(--ink-ter);
+  font-size: 14px; line-height: 1;
+  border-radius: 4px; cursor: pointer;
+}
+.gw-flow-x:hover { color: var(--err); background: var(--fill-3) }
+.gw-flow-add { display: inline-flex; align-items: center; gap: 6px; margin: 0 }
+.gw-flow-input {
+  appearance: none; font: inherit;
+  font-size: 12px; letter-spacing: 0;
+  color: var(--ink);
+  background: var(--pearl);
+  border: .5px dashed var(--line);
+  border-radius: var(--r-ctl);
+  padding: 6px 10px; width: 130px;
+}
+.gw-flow-input:focus { border-style: solid }
+.gw-alias-flow { display: inline-flex; align-items: center; gap: 8px }
 
 /* ---- Forms ---- */
 .gw-form {

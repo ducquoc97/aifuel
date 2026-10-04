@@ -31,8 +31,9 @@ function providerCard(p) {
   if (p.embeddings) badges.push('<span class="badge gw-embed">embeddings</span>');
   card.innerHTML = `
     <div class="gw-p-head">
-      <span class="gw-dot" style="background:${color}" title="${dotTitle}"></span>
+      ${providerMonogram(p.provider)}
       <span class="gw-p-name" title="${esc(p.integration)}">${esc(p.integration)}</span>
+      <span class="gw-dot" style="background:${color}" title="${dotTitle}"></span>
     </div>
     <div class="gw-p-provider">provider: <span class="gw-mono">${esc(p.provider)}</span></div>
     <div class="badges">${badges.join("")}</div>`;
