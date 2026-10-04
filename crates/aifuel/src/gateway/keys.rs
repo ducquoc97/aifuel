@@ -340,6 +340,16 @@ pub(crate) fn update(id: &str, models: Option<Vec<String>>) -> Result<(), String
     default_store()?.update(id, models)
 }
 
+/// Whether the store holds at least one non-revoked key. A store that
+/// fails to read answers false - the closed failure direction, matching
+/// `authorize`.
+pub(crate) fn any_active() -> bool {
+    match default_store().and_then(|store| store.read()) {
+        Ok(file) => file.keys.iter().any(|key| !key.revoked),
+        Err(_) => false,
+    }
+}
+
 /// Whether the caller resolved to `identity` may use `model`, honoring the
 /// stored `models` allowlist.
 pub(crate) fn permits(identity: &str, model: &str) -> bool {

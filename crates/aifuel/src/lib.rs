@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod auth_cli;
 pub mod connect;
 pub mod gateway;

@@ -1,0 +1,6 @@
+.git
+.bare
+target
+docs
+tests
+__pycache__

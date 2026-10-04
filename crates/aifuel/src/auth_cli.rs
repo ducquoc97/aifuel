@@ -36,6 +36,8 @@ pub fn run(args: &[String]) -> Result<u8, String> {
         Some("list") => list::run(&args[1..]),
         Some("set-key") => set_key(&args[1..]),
         Some("set-session") => set_session::run(&args[1..]),
+        Some("set-admin") => set_admin(&args[1..]),
+        Some("remove-admin") => remove_admin(&args[1..]),
         Some("remove") => remove(&args[1..]),
         Some(unknown) => Err(format!(
             "unknown auth command {unknown:?}; use aifuel auth --help"
@@ -289,6 +291,75 @@ pub(crate) fn resolve_credential_ref(
     }
 }
 
+/// `aifuel auth set-admin (--key PASSWORD | --stdin)`: store the
+/// dashboard Admin Credential. Once configured it gates every management
+/// page and `/api/*` route, and the dashboard refuses a non-loopback
+/// `--host` without it.
+fn set_admin(args: &[String]) -> Result<u8, String> {
+    let mut key = None;
+    let mut stdin = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--help" | "-h" => {
+                println!("Usage: aifuel auth set-admin (--key PASSWORD | --stdin)");
+                println!("Stores the dashboard admin password as a PBKDF2 verifier in");
+                println!("admin.json - the password itself is never written. Once set,");
+                println!("management pages and /api/* require signing in, and a");
+                println!("non-loopback --host refuses to start without it.");
+                return Ok(0);
+            }
+            "--key" => key = Some(next(args, &mut index, "--key")?),
+            "--stdin" => stdin = true,
+            flag => return Err(format!("unknown argument {flag:?} for auth set-admin")),
+        }
+        index += 1;
+    }
+    if key.is_some() == stdin {
+        return Err("choose exactly one of --key or --stdin".to_owned());
+    }
+    let password = if let Some(value) = key {
+        eprintln!("aifuel: note - --key leaves the value in shell history; prefer --stdin");
+        value
+    } else {
+        use std::io::Read;
+        let mut buffer = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buffer)
+            .map_err(|error| format!("could not read the password from stdin: {error}"))?;
+        buffer.trim().to_owned()
+    };
+    crate::admin::set_password(&password)?;
+    println!("Stored the dashboard admin password.");
+    println!("Management pages and /api/* now require signing in; /v1 keeps its own gateway keys.");
+    Ok(0)
+}
+
+/// `aifuel auth remove-admin`: delete the stored Admin Credential. The
+/// `AIFUEL_ADMIN_PASSWORD` bootstrap, when set, becomes the effective
+/// credential again.
+fn remove_admin(args: &[String]) -> Result<u8, String> {
+    for arg in args {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                println!("Usage: aifuel auth remove-admin");
+                println!("Deletes the stored dashboard admin password.");
+                return Ok(0);
+            }
+            flag => return Err(format!("unknown argument {flag:?} for auth remove-admin")),
+        }
+    }
+    crate::admin::remove()?;
+    println!("Removed the dashboard admin password.");
+    if aifuel_providers::env_override(crate::admin::ADMIN_PASSWORD_ENV).is_some() {
+        println!(
+            "Note: {} is still set and remains the effective credential.",
+            crate::admin::ADMIN_PASSWORD_ENV
+        );
+    }
+    Ok(0)
+}
+
 fn remove(args: &[String]) -> Result<u8, String> {
     let mut target = None;
     for arg in args {
@@ -493,6 +564,8 @@ fn print_help() {
     println!("Usage: aifuel auth list [--json]");
     println!("       aifuel auth set-key TARGET (--key KEY | --env-var NAME | --stdin)");
     println!("       aifuel auth set-session TARGET (--key SESSION | --stdin)");
+    println!("       aifuel auth set-admin (--key PASSWORD | --stdin)");
+    println!("       aifuel auth remove-admin");
     println!("       aifuel auth remove CREDENTIAL_REF");
     println!();
     println!("Inspects and manages AI Fuel Managed Credentials. Secret values are");

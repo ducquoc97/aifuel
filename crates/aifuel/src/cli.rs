@@ -274,7 +274,7 @@ fn print_help() {
     println!();
     println!("Usage: aifuel [--text | --json]");
     println!("       aifuel run --integration INTEGRATION_ID [OPTIONS]");
-    println!("       aifuel auth list|set-key|remove");
+    println!("       aifuel auth list|set-key|set-session|set-admin|remove-admin|remove");
     println!("       aifuel instance list|show|add|remove");
     println!("       aifuel profile list|save|remove");
     println!("       aifuel model list|refresh [--provider PROVIDER_ID] [--json]");

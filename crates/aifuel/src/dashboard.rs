@@ -5,8 +5,9 @@ use std::io::{Read, Write};
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
-use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+use tiny_http::{Header, ListenAddr, Method, Request, Response, Server, StatusCode};
 
+mod auth;
 mod ui;
 
 /// Mutation request bodies are small by contract (an integration id plus a
@@ -25,6 +26,21 @@ where
     let server = Server::http(format!("{host}:{port}"))
         .map_err(|error| format!("could not start dashboard server: {error}"))?;
     let address = server.server_addr().to_string();
+    // A non-loopback bind is remote mode: the dashboard, credential
+    // mutations, and the /v1 gateway become reachable off-host, so an
+    // Admin Credential must be in force before the socket answers.
+    let remote = match server.server_addr() {
+        ListenAddr::IP(address) => !address.ip().is_loopback(),
+        #[allow(unreachable_patterns)]
+        _ => true,
+    };
+    if remote && !aifuel::admin::configured() {
+        return Err(format!(
+            "refusing to bind {address}: exposing the dashboard without a sign-in; \
+             set an admin password first (`aifuel auth set-admin` or {})",
+            aifuel::admin::ADMIN_PASSWORD_ENV
+        ));
+    }
     let url = format!("http://{address}");
     if open_browser {
         let browser_url = url.clone();
@@ -59,6 +75,8 @@ where
         facade,
         runtime,
         gateway,
+        sessions: auth::Sessions::new(),
+        remote,
     });
     for request in server.incoming_requests() {
         let shared = Arc::clone(&shared);
@@ -74,32 +92,44 @@ struct Shared<C: StatusCollector> {
     facade: MonitoringFacade<C>,
     runtime: tokio::runtime::Runtime,
     gateway: Option<aifuel::gateway::Gateway>,
+    /// Live Dashboard Admin Sessions; empty while none have signed in.
+    sessions: auth::Sessions,
+    /// Whether the bound address is reachable off-host. Remote mode swaps
+    /// the loopback guards for the Admin Session and the closed `/v1`
+    /// posture.
+    remote: bool,
 }
 
 fn dispatch<C>(shared: &Shared<C>, mut request: Request)
 where
     C: StatusCollector,
 {
-    // The Host check is the DNS-rebinding boundary every route shares.
-    if !is_loopback_host(&request) {
-        drain_body(&mut request);
-        respond(
-            request,
-            403,
-            "forbidden: cross-origin request rejected",
-            "text/plain",
-        );
-        return;
-    }
-    let path = request.url().split('?').next().unwrap_or(request.url());
+    let path = request
+        .url()
+        .split('?')
+        .next()
+        .unwrap_or(request.url())
+        .to_owned();
+
+    // The `/v1` tier speaks bearer Gateway Keys on every bind, never
+    // Admin Sessions. Loopback keeps the DNS-rebinding and loopback-Origin
+    // guards for local browser apps; remote mode drops them - non-browser
+    // clients and proxied traffic are the intended callers - but fails
+    // closed while no usable key exists, so the anonymous posture never
+    // reaches a public socket.
     if path.starts_with("/v1") {
-        // `/v1` is an API surface for local apps: browser clients on other
-        // loopback ports send a loopback Origin, so the dashboard's
-        // same-origin rule would reject the intended traffic. Loopback
-        // origins pass; remote origins are still rejected. Bearer shape is
-        // enforced by the gateway itself, never ambient cookies, so there
-        // is no dashboard credential to forge here.
-        if !has_loopback_origin(&request) {
+        if shared.remote {
+            if !aifuel::gateway::has_active_keys() {
+                drain_body(&mut request);
+                aifuel::gateway::respond_error(
+                    request,
+                    503,
+                    "no gateway keys are issued yet; sign in to the dashboard and create one under API Keys",
+                    "server_error",
+                );
+                return;
+            }
+        } else if !(is_loopback_host(&request) && has_loopback_origin(&request)) {
             drain_body(&mut request);
             respond(
                 request,
@@ -117,24 +147,45 @@ where
         );
         return;
     }
-    if path.starts_with("/api/gateway") {
-        // The gateway admin surface mutates local state (downstream keys)
-        // and reads request logs, so it keeps the dashboard's strict
-        // same-origin guard rather than the relaxed `/v1` policy.
-        if !is_local_request(&request) {
-            drain_body(&mut request);
-            respond(
-                request,
-                403,
-                "forbidden: cross-origin request rejected",
-                "text/plain",
-            );
-            return;
-        }
-        aifuel::gateway::handle_admin(request, shared.gateway.as_ref());
+
+    // Public tier: the Admin Session endpoints answer before any
+    // credential check - they are how a session is earned.
+    if auth::claims(request.method(), &path) {
+        auth::handle(request, &shared.sessions);
         return;
     }
-    if !is_local_request(&request) {
+    if request.method() == &Method::Get && path == "/healthz" {
+        respond(
+            request,
+            200,
+            "{\"ok\":true}",
+            "application/json; charset=utf-8",
+        );
+        return;
+    }
+    // Compiled static assets carry no secrets and the sign-in page needs
+    // them before a session exists, so /ui/ stays public on every bind.
+    if request.method() == &Method::Get && path.starts_with("/ui/") {
+        match ui::asset(&path) {
+            Some(asset) => respond_bytes(request, 200, asset.body, asset.content_type),
+            None => {
+                drain_body(&mut request);
+                respond(request, 404, "not found", "text/plain");
+            }
+        }
+        return;
+    }
+
+    // Management tier: pages, /api/*, everything else. Loopback keeps the
+    // strict local-request guard; remote mode drops the loopback-Host
+    // rule but still rejects cross-site browser traffic, and the Admin
+    // Session is the real boundary on a public bind.
+    let permitted = if shared.remote {
+        same_site_request(&request)
+    } else {
+        is_local_request(&request)
+    };
+    if !permitted {
         drain_body(&mut request);
         respond(
             request,
@@ -142,6 +193,27 @@ where
             "forbidden: cross-origin request rejected",
             "text/plain",
         );
+        return;
+    }
+    if aifuel::admin::configured() && !auth::authenticated(&request, &shared.sessions) {
+        if request.method() == &Method::Get && ui::page(&path).is_some() {
+            respond(request, 200, ui::login_page(), "text/html; charset=utf-8");
+        } else {
+            let mut request = request;
+            drain_body(&mut request);
+            respond_json(
+                request,
+                401,
+                &serde_json::json!({"error": "admin sign-in required"}),
+            );
+        }
+        return;
+    }
+    if path.starts_with("/api/gateway") {
+        // The gateway admin surface mutates local state (downstream
+        // keys, routes) and reads request logs, so it lives in the
+        // management tier rather than the relaxed `/v1` policy.
+        aifuel::gateway::handle_admin(request, shared.gateway.as_ref());
         return;
     }
     handle_request(request, &shared.facade, &shared.runtime);
@@ -365,24 +437,25 @@ fn respond_bytes(request: Request, status: u16, body: &[u8], content_type: &str)
 }
 
 fn is_local_request(request: &Request) -> bool {
+    is_loopback_host(request) && same_site_request(request)
+}
+
+/// Whether a browser-marked request is same-site relative to its target:
+/// an absent, `null`, or host-matching Origin, and no cross-site or
+/// same-site `Sec-Fetch-Site` marker. Host-agnostic - the caller picks
+/// whether the Host itself must also be loopback.
+fn same_site_request(request: &Request) -> bool {
     let host = request_host(request);
-    if !is_loopback_host(&request) {
-        return false;
-    }
     if let Some(origin) = origin_host(request) {
         if origin != "null" && origin != host {
             return false;
         }
     }
-    if request
+    !request
         .headers()
         .iter()
         .find(|header| header.field.equiv("Sec-Fetch-Site"))
         .is_some_and(|header| matches!(header.value.as_str(), "cross-site" | "same-site"))
-    {
-        return false;
-    }
-    true
 }
 
 /// Whether the request targets the loopback listener: the Host header is a

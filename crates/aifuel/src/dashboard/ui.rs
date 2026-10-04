@@ -14,6 +14,7 @@ const CREDENTIALS_CSS: &str = include_str!("../../../../src/ui/credentials.css")
 const CREDENTIALS_JS: &str = include_str!("../../../../src/ui/credentials.js");
 const GATEWAY_HTML: &str = include_str!("../../../../src/ui/gateway.html");
 const GATEWAY_CSS: &str = include_str!("../../../../src/ui/gateway.css");
+const LOGIN_HTML: &str = include_str!("../../../../src/ui/login.html");
 
 /// The gateway page's scripts, loaded in order under /ui/gateway/.
 /// Shared helpers first, section modules next, the entry point last.
@@ -82,6 +83,14 @@ pub struct Asset {
 /// The shell is constant; each route fills its {{PLACEHOLDER}} slots.
 pub fn page(path: &str) -> Option<String> {
     page_for(path).map(|page| render_page(&page))
+}
+
+/// The standalone sign-in page served for management GETs while an Admin
+/// Credential is configured and the caller holds no session. It is not a
+/// shell page - no sidebar, no nav - and reloading after login serves
+/// the real page for the same URL.
+pub fn login_page() -> String {
+    LOGIN_HTML.replace("{{VERSION}}", env!("CARGO_PKG_VERSION"))
 }
 
 /// The embedded body for a /ui/ asset path, or None (404).

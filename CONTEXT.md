@@ -147,3 +147,11 @@ _Avoid_: Free provider, offline provider
 **Monitoring Collection Contract**:
 The optional per-integration contract that produces quota and usage observations with metric, unit, scope, and provenance. It is distinct from the execution contract, and an inference protocol does not imply it.
 _Avoid_: Usage API, quota endpoint assumed from inference protocol
+
+**Dashboard Admin Credential**:
+The operator password that gates management pages and `/api/*` routes once configured, stored as a PBKDF2 verifier in `admin.json` or supplied through `AIFUEL_ADMIN_PASSWORD` as a bootstrap. Binding the dashboard to a non-loopback address requires one.
+_Avoid_: User account, API key, gateway key
+
+**Dashboard Admin Session**:
+The `aifuel_session` HttpOnly cookie issued after a successful admin sign-in, authorizing dashboard pages and `/api/*` routes with a sliding expiry tracked in process memory. It never authorizes `/v1` client traffic, which authenticates with `aifuel-gw-*` Gateway Keys instead.
+_Avoid_: Bearer token, gateway key, MCP session
