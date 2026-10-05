@@ -24,8 +24,10 @@ function pickerModels(integration) {
   return MODEL_ENTRIES.filter(e => e.id && e.id.startsWith(prefix));
 }
 
-// selectorPicker({stack, rawPlaceholder}) -> { el, value, setValue, focus }
-// `stack` renders fields vertically for the narrow graph nodes.
+// selectorPicker({stack, rawPlaceholder, onchange}) -> { el, value, setValue, focus }
+// `stack` renders fields vertically for the narrow graph nodes;
+// `onchange` fires whenever any field changes (used to promote a
+// ghost step row into a real one).
 function selectorPicker(opts = {}) {
   const dlId = `gw-pick-dl-${++pickerSeq}`;
   const root = document.createElement("div");
@@ -53,15 +55,28 @@ function selectorPicker(opts = {}) {
   raw.setAttribute("aria-label", "Raw selector");
   raw.hidden = true;
 
+  // The planner is the only "agent" that is not a real integration -
+  // explain it inline since a select option cannot carry detail.
+  const autoNote = document.createElement("div");
+  autoNote.className = "gw-picker-note";
+  autoNote.hidden = true;
+  autoNote.textContent = "auto - the gateway plans a provider per request, so the target can change; the Logs tab shows what actually ran.";
+
   const dl = document.createElement("datalist");
   dl.id = dlId;
-  root.append(agent, model, effort, raw, dl);
+  root.append(agent, model, effort, raw, autoNote, dl);
+
+  if (opts.onchange) {
+    root.addEventListener("input", opts.onchange);
+    root.addEventListener("change", opts.onchange);
+  }
 
   // Custom mode swaps the model/effort pair for one free-text input.
   function syncMode() {
     const isRaw = agent.value === PICKER_RAW;
     model.hidden = effort.hidden = isRaw;
     raw.hidden = !isRaw;
+    autoNote.hidden = agent.value !== "auto";
   }
 
   // The model datalist and effort select both follow the agent.
@@ -95,7 +110,7 @@ function selectorPicker(opts = {}) {
   function refresh() {
     const cur = agent.value;
     agent.innerHTML = pickerIntegrations()
-      .map(id => `<option value="${esc(id)}">${esc(id)}</option>`).join("")
+      .map(id => `<option value="${esc(id)}">${id === "auto" ? "auto (gateway picks)" : esc(id)}</option>`).join("")
       + `<option value="${PICKER_RAW}">custom selector…</option>`;
     if (cur && [...agent.options].some(o => o.value === cur)) agent.value = cur;
     syncMode();

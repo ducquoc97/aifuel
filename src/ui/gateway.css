@@ -603,9 +603,27 @@ th.gw-num { text-align: right }
   width: 100%; max-width: none; min-width: 0; box-sizing: border-box;
   font-size: 11.5px; padding: 5px 8px;
 }
+.gw-picker-note {
+  flex-basis: 100%;
+  font-size: 11px; line-height: 1.4; letter-spacing: 0;
+  color: var(--ink-ter);
+}
 
-/* Pending combo steps in the create form, as ordered chips. */
-.gw-picker-steps { display: flex; flex-wrap: wrap; gap: 6px }
+/* Combo create steps: one picker per row; the trailing ghost row is
+   dimmed until a field is touched and promotes it into a real step. */
+.gw-picker-steps {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 10px;
+}
+.gw-step-row { display: flex; align-items: center; gap: 8px }
+.gw-step-ghost .gw-picker { opacity: .5 }
+.gw-step-ghost:hover .gw-picker,
+.gw-step-ghost:focus-within .gw-picker { opacity: 1 }
+.gw-step-ghostlabel {
+  flex: none; width: 38px;
+  font-size: 11px; color: var(--accent);
+}
+.gw-step-row .gw-step-i { flex: none; width: 18px; height: 18px; font-size: 10px }
 .gw-step-i {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 50%;

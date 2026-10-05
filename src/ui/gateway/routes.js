@@ -57,15 +57,16 @@ function setRouteTab(tab) {
 function routeFormSpec() {
   return routeTab === "combos"
     ? { kind: "combo", addLabel: "Add combo", namePh: "Route name - e.g. heavy",
-        hint: "Pick an integration, model, and effort, then Add step. Steps run in order - the chain falls through on failure." }
+        hint: "Each row is one failover step - pick integration, model, effort. The chain runs top to bottom and falls through on failure." }
     : { kind: "alias", addLabel: "Add alias", namePh: "Alias name - e.g. cheap",
         hint: "Pick the selector this alias rewrites to, or choose \"custom selector…\" to type one by hand." };
 }
 
-// The picker is mounted once and reused across opens; createSteps
-// holds a pending combo's ordered selectors as chips.
+// The alias picker is mounted once and reused across opens; combo
+// steps are picker rows in #route-create-steps, where a trailing dimmed
+// ghost row turns into a real step as soon as any field is touched.
 let createPicker = null;
-let createSteps = [];
+let createStepRows = [];  // [{ row, pk, ghost }]
 
 function toggleRouteCreate(show) {
   const form = document.getElementById("route-create-form");
@@ -79,32 +80,72 @@ function toggleRouteCreate(show) {
       document.getElementById("route-create-picker").appendChild(createPicker.el);
     }
     createPicker.setValue("");
-    createSteps = [];
-    renderCreateSteps();
+    createStepRows = [];
+    const wrap = document.getElementById("route-create-steps");
+    wrap.innerHTML = "";
+    wrap.hidden = spec.kind !== "combo";
+    document.getElementById("route-create-picker").hidden = spec.kind === "combo";
+    if (spec.kind === "combo") addCreateStepRow(true);
     document.getElementById("route-create-name").placeholder = spec.namePh;
     document.getElementById("route-create-hint").textContent = spec.hint;
     document.getElementById("route-create-submit").textContent = spec.addLabel;
-    document.getElementById("route-create-add").hidden = spec.kind !== "combo";
     form.elements.name.focus();
   }
 }
 
-// Combos add steps one at a time: the assembled selector becomes a
-// numbered chip, removable before the form commits.
-function pushRouteStep() {
-  const v = createPicker.value();
-  if (!v) return;
-  createSteps.push(v);
+// A ghost row invites the next step; touching any field promotes it and
+// spawns a fresh ghost. Real rows get an order index and a remove ×.
+function addCreateStepRow(ghost) {
+  const entry = { ghost };
+  const row = document.createElement("div");
+  row.className = "gw-step-row";
+  if (ghost) {
+    row.classList.add("gw-step-ghost");
+    const label = document.createElement("span");
+    label.className = "gw-step-ghostlabel gw-mono";
+    label.textContent = "+ step";
+    row.appendChild(label);
+  }
+  const pk = selectorPicker({ onchange: () => promoteStepRow(entry) });
+  row.appendChild(pk.el);
+  entry.row = row;
+  entry.pk = pk;
+  document.getElementById("route-create-steps").appendChild(row);
+  createStepRows.push(entry);
+}
+
+function promoteStepRow(entry) {
+  if (!entry.ghost) return;
+  entry.ghost = false;
+  entry.row.classList.remove("gw-step-ghost");
+  const label = entry.row.querySelector(".gw-step-ghostlabel");
+  if (label) label.remove();
+  const idx = document.createElement("span");
+  idx.className = "gw-step-i";
+  const x = document.createElement("button");
+  x.type = "button";
+  x.className = "gw-node-x gw-step-x";
+  x.setAttribute("aria-label", "Remove step");
+  x.innerHTML = '<span class="ms ms-close" aria-hidden="true"></span>';
+  x.addEventListener("click", () => removeStepRow(entry));
+  entry.row.prepend(idx);
+  entry.row.appendChild(x);
+  addCreateStepRow(true);
   renderCreateSteps();
 }
 
+function removeStepRow(entry) {
+  entry.row.remove();
+  createStepRows = createStepRows.filter(r => r !== entry);
+  renderCreateSteps();
+}
+
+// Renumber the real step rows after promotes and removes.
 function renderCreateSteps() {
-  const wrap = document.getElementById("route-create-steps");
-  wrap.hidden = routeTab !== "combos" || !createSteps.length;
-  wrap.innerHTML = createSteps.map((s, i) => `
-    <span class="gw-tag"><span class="gw-step-i">${i + 1}</span>${esc(s)}<button type="button"
-        aria-label="Remove step ${i + 1}"
-        onclick="createSteps.splice(${i},1);renderCreateSteps()">×</button></span>`).join("");
+  let n = 0;
+  for (const e of createStepRows) {
+    if (!e.ghost) e.row.querySelector(".gw-step-i").textContent = ++n;
+  }
 }
 
 async function addRoute(event) {
@@ -112,10 +153,12 @@ async function addRoute(event) {
   const form = event.target;
   const name = form.elements.name.value.trim();
   const combo = routeTab === "combos";
-  const selectors = combo ? [...createSteps] : [createPicker.value()].filter(Boolean);
+  const selectors = combo
+    ? createStepRows.filter(r => !r.ghost).map(r => r.pk.value()).filter(Boolean)
+    : [createPicker.value()].filter(Boolean);
   if (!name || !selectors.length) {
     setMsg("routes-msg", combo
-      ? '<span class="err">Name and at least one step are required - build one with the picker, then Add step.</span>'
+      ? '<span class="err">Name and at least one step are required - fill a picker row to add one.</span>'
       : '<span class="err">Name and a target selector are required.</span>');
     return false;
   }
