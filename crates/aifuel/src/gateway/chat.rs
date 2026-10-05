@@ -86,14 +86,18 @@ pub(crate) fn completions<C: StatusCollector>(
     } else {
         transcript
     };
-    let attempts =
-        match execute::resolve_attempts(gateway, model, &|| Gateway::status(facade, runtime)) {
-            Ok(attempts) => attempts,
-            Err((status, message)) => {
-                respond_error(request, status, &message, "invalid_request_error");
-                return;
-            }
-        };
+    let attempts = match execute::resolve_attempts(
+        gateway,
+        model,
+        chat.reasoning_effort.as_deref(),
+        &|| Gateway::status(facade, runtime),
+    ) {
+        Ok(attempts) => attempts,
+        Err((status, message)) => {
+            respond_error(request, status, &message, "invalid_request_error");
+            return;
+        }
+    };
     serve(
         request,
         gateway,

@@ -23,11 +23,13 @@ use std::time::Duration;
 /// without waiting for the next token.
 const KEEPALIVE: Duration = Duration::from_secs(15);
 
-/// One ranked execution target: the integration to attempt and the model
-/// override the inbound selector pinned, if any.
+/// One ranked execution target: the integration to attempt, the model
+/// override the inbound selector pinned, and the requested effort - the
+/// selector's `@effort` suffix or the request-level `reasoning_effort`.
 pub(crate) struct Attempt {
     pub(crate) integration: IntegrationId,
     pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
 }
 
 /// What the run feeds the sink: an answer delta, or a keepalive tick the
@@ -85,21 +87,33 @@ impl AgentRunOutputHandler for DeltaSink {
 const MAX_ROUTE_DEPTH: usize = 8;
 
 /// Resolve the inbound `model` string to the attempt chain - see the
-/// `crate::gateway` module docs for the addressing convention.
+/// `crate::gateway` module docs for the addressing convention. `effort`
+/// is the request-level `reasoning_effort`; a selector's `@effort` suffix
+/// wins over it where both exist.
 pub(crate) fn resolve_attempts(
     gateway: &Gateway,
     model: &str,
+    effort: Option<&str>,
     status: &dyn Fn() -> StatusReport,
 ) -> Result<Vec<Attempt>, (u16, String)> {
-    resolve_attempts_at(gateway, model, status, 0)
+    // Catalog evidence validates a requested effort against the advertised
+    // model; a missing cache fails open - unknown evidence never rejects.
+    let models = crate::run_selection::load_picker_models().unwrap_or_default();
+    resolve_attempts_at(gateway, model, effort, &models, status, 0)
 }
 
 fn resolve_attempts_at(
     gateway: &Gateway,
-    model: &str,
+    selector: &str,
+    inherited_effort: Option<&str>,
+    models: &[crate::selection_cli::PickerModel],
     status: &dyn Fn() -> StatusReport,
     depth: usize,
 ) -> Result<Vec<Attempt>, (u16, String)> {
+    // `<selector>@<effort>` pins the effort beside the model it belongs to;
+    // a pin wins over an inherited value because it is narrower.
+    let (model, pinned_effort) = super::effort::split(selector);
+    let effort = pinned_effort.or(inherited_effort);
     if let Some(resolution) = super::routes::resolve(model).map_err(|error| (500, error))? {
         if depth >= MAX_ROUTE_DEPTH {
             return Err((
@@ -109,12 +123,19 @@ fn resolve_attempts_at(
         }
         return match resolution {
             super::routes::Resolution::Alias(substituted) => {
-                resolve_attempts_at(gateway, &substituted, status, depth + 1)
+                resolve_attempts_at(gateway, &substituted, effort, models, status, depth + 1)
             }
             super::routes::Resolution::Combo(selectors) => {
                 let mut attempts = Vec::new();
                 for selector in &selectors {
-                    attempts.extend(resolve_attempts_at(gateway, selector, status, depth + 1)?);
+                    attempts.extend(resolve_attempts_at(
+                        gateway,
+                        selector,
+                        effort,
+                        models,
+                        status,
+                        depth + 1,
+                    )?);
                 }
                 if attempts.is_empty() {
                     Err((404, format!("combo {model:?} resolved no candidates")))
@@ -125,20 +146,30 @@ fn resolve_attempts_at(
         };
     }
     if model == aifuel_core::AUTO_PROVIDER {
-        return plan(model, None, status);
+        return plan(gateway, model, None, effort, models, status);
     }
     if let Some(filter) = model.strip_prefix("auto/") {
-        return plan(model, Some(filter.to_owned()), status);
+        return plan(
+            gateway,
+            model,
+            Some(filter.to_owned()),
+            effort,
+            models,
+            status,
+        );
     }
     if let Some(name) = model.strip_prefix(aifuel_core::CHAIN_PROVIDER_PREFIX) {
-        return plan_chain(model, name);
+        return plan_chain(gateway, model, name, effort, models);
     }
     if let Some((selector, pinned)) = model.split_once('/') {
         return match gateway.resolve(selector) {
-            Ok(integration) => Ok(vec![Attempt {
+            Ok(integration) => Ok(vec![attempt(
+                gateway,
+                models,
                 integration,
-                model: Some(pinned.to_owned()),
-            }]),
+                Some(pinned.to_owned()),
+                effort,
+            )?]),
             Err(AgentRunError::AmbiguousIntegration { provider, .. }) => Err((
                 400,
                 format!(
@@ -152,24 +183,83 @@ fn resolve_attempts_at(
         };
     }
     match gateway.resolve(model) {
-        Ok(integration) => Ok(vec![Attempt {
-            integration,
-            model: None,
-        }]),
+        Ok(integration) => Ok(vec![attempt(gateway, models, integration, None, effort)?]),
         Err(AgentRunError::AmbiguousIntegration { provider, .. }) => Err((
             400,
             format!("{provider} maps to multiple integrations; name an integration id explicitly"),
         )),
         // Not a selector at all: treat the string as a catalog model id and
         // let the planner pick the ranked provider advertising it.
-        Err(_) => plan(model, Some(model.to_owned()), status),
+        Err(_) => plan(
+            gateway,
+            model,
+            Some(model.to_owned()),
+            effort,
+            models,
+            status,
+        ),
     }
+}
+
+/// Build one attempt after checking the requested effort against the
+/// catalog evidence for the pinned model. The adapter may be absent -
+/// `run` reports that at execution - so a missing adapter skips the check
+/// rather than guessing a provider.
+fn attempt(
+    gateway: &Gateway,
+    models: &[crate::selection_cli::PickerModel],
+    integration: IntegrationId,
+    model: Option<String>,
+    effort: Option<&str>,
+) -> Result<Attempt, (u16, String)> {
+    if let Some(effort) = effort {
+        let provider = gateway
+            .adapter(&integration)
+            .and_then(|adapter| adapter.provider().as_str().parse::<aifuel_core::ProviderKey>().ok());
+        if let Some(provider) = provider {
+            super::effort::check(models, provider, model.as_deref(), effort)?;
+            if provider == aifuel_core::ProviderKey::Devin {
+                // Devin has no separate effort flag: the advertised effort
+                // values are the variant uids `--model` accepts, so a
+                // requested effort becomes the run's model argument. With
+                // no model pinned the effort must itself be an advertised
+                // uid once catalog evidence exists.
+                let advertised: Vec<&str> = models
+                    .iter()
+                    .filter(|entry| entry.provider == provider)
+                    .map(|entry| entry.model_id.as_str())
+                    .collect();
+                if model.is_none() && !advertised.is_empty() && !advertised.contains(&effort) {
+                    return Err((
+                        400,
+                        format!(
+                            "effort {effort:?} is not an advertised Devin model; supported: {}",
+                            advertised.join(", ")
+                        ),
+                    ));
+                }
+                return Ok(Attempt {
+                    integration,
+                    model: Some(effort.to_owned()),
+                    effort: None,
+                });
+            }
+        }
+    }
+    Ok(Attempt {
+        integration,
+        model,
+        effort: effort.map(str::to_owned),
+    })
 }
 
 /// Plan the `auto` chain over a fresh cached status snapshot.
 fn plan(
+    gateway: &Gateway,
     requested: &str,
     model: Option<String>,
+    effort: Option<&str>,
+    models: &[crate::selection_cli::PickerModel],
     status: &dyn Fn() -> StatusReport,
 ) -> Result<Vec<Attempt>, (u16, String)> {
     let report = status();
@@ -196,18 +286,49 @@ fn plan(
             },
         ));
     }
-    Ok(candidates
+    // A candidate the effort check rejects cannot serve the request
+    // faithfully, so it drops out of the ranked chain instead of being
+    // attempted - `auto` keeps serving the callers that can honor it.
+    let attempts = candidates
         .into_iter()
-        .map(|candidate| Attempt {
-            integration: candidate.integration,
-            model: model.clone(),
+        .filter_map(|candidate| {
+            attempt(
+                gateway,
+                models,
+                candidate.integration,
+                model.clone(),
+                effort,
+            )
+            .ok()
         })
-        .collect())
+        .collect::<Vec<_>>();
+    if attempts.is_empty() {
+        return Err((
+            404,
+            match effort {
+                Some(effort) => format!(
+                    "{requested:?} has no candidate able to serve effort {effort:?}"
+                ),
+                // `attempt` only fails on the effort check, so this arm is
+                // unreachable today; the message stays honest if that
+                // changes.
+                None => format!("{requested:?} resolved no servable candidates"),
+            },
+        ));
+    }
+    Ok(attempts)
 }
 
 /// Plan a named `providers.json` chain: the file's declared step order
-/// becomes the attempt chain, each step's model override pinned.
-fn plan_chain(requested: &str, name: &str) -> Result<Vec<Attempt>, (u16, String)> {
+/// becomes the attempt chain, each step's model override pinned. A step's
+/// own `@effort` suffix wins over the request-level effort.
+fn plan_chain(
+    gateway: &Gateway,
+    requested: &str,
+    name: &str,
+    effort: Option<&str>,
+    models: &[crate::selection_cli::PickerModel],
+) -> Result<Vec<Attempt>, (u16, String)> {
     let registry = crate::integration_registry().map_err(|error| (500, error.clone()))?;
     let Some(chain) = registry.chain(name) else {
         let known = registry
@@ -224,14 +345,24 @@ fn plan_chain(requested: &str, name: &str) -> Result<Vec<Attempt>, (u16, String)
             },
         ));
     };
-    Ok(chain
+    chain
         .steps
         .iter()
-        .map(|step| Attempt {
-            integration: step.integration.clone(),
-            model: step.model.clone(),
+        .map(|step| {
+            let (model, pinned) = step
+                .model
+                .as_deref()
+                .map(super::effort::split)
+                .unwrap_or(("", None));
+            attempt(
+                gateway,
+                models,
+                step.integration.clone(),
+                (!model.is_empty()).then(|| model.to_owned()),
+                pinned.or(effort),
+            )
         })
-        .collect())
+        .collect()
 }
 
 /// Walk the attempt chain, feeding deltas to `feed`. The caller owns all
@@ -257,7 +388,7 @@ pub(crate) fn run(
         let run_request = RunRequest {
             integration: attempt.integration.clone(),
             model: attempt.model.clone(),
-            effort: None,
+            effort: attempt.effort.clone(),
             external_tools: None,
             account: None,
             prompt: prompt.to_owned(),

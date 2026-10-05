@@ -55,6 +55,11 @@ struct MessagesRequest {
     messages: Vec<AnthropicMessage>,
     #[serde(default)]
     stream: bool,
+    /// Requested model-specific effort - not an Anthropic field, kept for
+    /// parity with the other `/v1` surfaces so a routed app can pass the
+    /// same `reasoning_effort` spelling to every endpoint.
+    #[serde(default)]
+    reasoning_effort: Option<String>,
     #[serde(default)]
     #[allow(dead_code)]
     max_tokens: Option<Value>,
@@ -147,9 +152,12 @@ pub(crate) fn handle<C: StatusCollector>(
             "messages contain no usable text; media-only content is not supported",
         );
     }
-    let attempts = match execute::resolve_attempts(gateway, &model, &|| {
-        Gateway::status(facade, runtime)
-    }) {
+    let attempts = match execute::resolve_attempts(
+        gateway,
+        &model,
+        parsed.reasoning_effort.as_deref(),
+        &|| Gateway::status(facade, runtime),
+    ) {
         Ok(attempts) => attempts,
         Err((status, message)) => return fail(request, &model, parsed.stream, status, &message),
     };

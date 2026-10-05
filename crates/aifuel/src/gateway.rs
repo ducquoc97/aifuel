@@ -12,6 +12,12 @@
 //! - `<integration>/<model>` pins one integration and passes the remainder
 //!   as the provider-native model id (split on the first `/`, so model ids
 //!   containing slashes like `openai/gpt-5` still work).
+//! - A `@<effort>` suffix on any selector pins a model-specific effort
+//!   (`codex/gpt-5.6-terra@high`, `devin/swe-2@swe-2-max`); the
+//!   request-level `reasoning_effort` field applies when no selector pins
+//!   one. Effort values are the provider's own spellings - Codex takes its
+//!   reasoning levels, Devin takes the variant uid from `devin models
+//!   list`.
 //! - A bare `<integration>` or unique `<provider>` runs that target with
 //!   the provider's default model.
 //! - Any other bare string is treated as a catalog model id and routes to
@@ -27,6 +33,7 @@
 mod admin;
 mod chat;
 mod completions;
+mod effort;
 mod embeddings;
 mod execute;
 mod flatten;

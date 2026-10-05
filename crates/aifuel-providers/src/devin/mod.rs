@@ -6,6 +6,7 @@ use toml_edit::Document;
 
 mod agent_run;
 pub(crate) use agent_run::ADAPTER as AGENT_RUN_ADAPTER;
+pub(crate) mod model_catalog;
 mod registration;
 pub(crate) use registration::ADAPTER as MCP_REGISTRATION_ADAPTER;
 

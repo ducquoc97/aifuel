@@ -31,7 +31,9 @@ pub(crate) fn list(gateway: &super::Gateway) -> Value {
     // Catalog-advertised models pin under every executable integration of
     // their provider. Advertisement is provider-scoped evidence; the
     // composite id keeps it honest (never a bare model id that `auto`
-    // would have to guess at).
+    // would have to guess at). Reported effort evidence rides the entry
+    // as `reasoning`/`default_reasoning` so a client picker can offer
+    // model and effort independently.
     if let Ok(models) = crate::run_selection::load_picker_models() {
         for model in models
             .iter()
@@ -48,7 +50,16 @@ pub(crate) fn list(gateway: &super::Gateway) -> Value {
                 }
                 let id = format!("{}/{}", adapter.integration().as_str(), model.model_id);
                 if seen.insert(id.clone()) {
-                    data.push(entry(id, adapter.provider().as_str()));
+                    let mut entry = entry(id, adapter.provider().as_str());
+                    if model.effort_state == aifuel_core::CapabilityState::Supported
+                        && !model.effort_values.is_empty()
+                    {
+                        entry["reasoning"] = json!(model.effort_values);
+                        if let Some(default) = &model.default_effort {
+                            entry["default_reasoning"] = json!(default);
+                        }
+                    }
+                    data.push(entry);
                 }
             }
         }
