@@ -64,44 +64,32 @@
 
   <!-- Routes: aliases + combos from gateway.json -->
   <section class="gw-section" id="gw-routes" aria-label="Routes" hidden>
-    <p class="gw-sub">Named routes stored in <code>gateway.json</code>. An alias rewrites a model name to another selector; a combo is an ordered failover list. When a name exists as both, the alias wins. Changes apply to new requests immediately.</p>
+    <p class="gw-sub">Named routes stored in <code>gateway.json</code>. A <b>dynamic</b> route is an ordered failover chain; an <b>alias</b> rewrites a model name to one fixed selector. When a name exists as both, the alias wins. Expand a route to edit its graph. Changes apply to new requests immediately.</p>
 
-    <form class="gw-form" id="add-alias-form" onsubmit="return addAlias(event)">
-      <input class="gw-input" type="text" name="name" maxlength="80" required
-             placeholder="Alias name - e.g. cheap" aria-label="Alias name">
-      <input class="gw-input gw-input-wide" type="text" name="target" required
-             list="gw-model-list" autocomplete="off"
-             placeholder="Model selector - e.g. groq:api-key/llama-3.3-70b"
-             aria-label="Alias target model">
-      <button class="btn" type="submit">Add alias</button>
-    </form>
-
-    <form class="gw-form" id="add-combo-form" onsubmit="return addCombo(event)">
-      <input class="gw-input" type="text" name="name" maxlength="80" required
-             placeholder="Combo name - e.g. heavy" aria-label="Combo name">
-      <input class="gw-input gw-input-wide" type="text" name="selectors" required
-             list="gw-model-list" autocomplete="off"
-             placeholder="Selectors, comma-separated - e.g. codex, copilot, devin"
-             aria-label="Combo selectors">
-      <button class="btn" type="submit">Add combo</button>
-    </form>
-
-    <h3 class="gw-h3">Route graph</h3>
-    <div class="gw-board">
-      <i class="gw-tick tl" aria-hidden="true"></i>
-      <i class="gw-tick tr" aria-hidden="true"></i>
-      <i class="gw-tick bl" aria-hidden="true"></i>
-      <i class="gw-tick br" aria-hidden="true"></i>
-      <div class="gw-plane" id="route-plane">
-        <svg class="gw-edges" id="route-edges" aria-hidden="true"></svg>
-        <div class="gw-node gw-node-app gw-node-src" id="route-app">
-          <div class="gw-node-kicker"><span class="badge gw-kind">client</span></div>
-          <div class="gw-node-title">Your app</div>
-          <div class="gw-node-sub gw-mono">openai / anthropic</div>
-        </div>
-        <div class="gw-lanes" id="route-lanes"></div>
+    <div class="gw-tabbar">
+      <div class="gw-tabs" role="tablist" aria-label="Route kinds">
+        <button class="gw-tab" id="route-tab-combos" role="tab" type="button"
+                aria-selected="true" onclick="setRouteTab('combos')">Dynamic</button>
+        <button class="gw-tab" id="route-tab-aliases" role="tab" type="button"
+                aria-selected="false" onclick="setRouteTab('aliases')">Aliases</button>
       </div>
+      <button class="btn" id="route-add-btn" type="button" onclick="toggleRouteCreate()">
+        <span class="ms ms-add" aria-hidden="true"></span><span id="route-add-label">Add route</span>
+      </button>
     </div>
+
+    <form class="gw-form" id="route-create-form" hidden onsubmit="return addRoute(event)">
+      <input class="gw-input" type="text" name="name" maxlength="80" required
+             id="route-create-name" aria-label="Route name">
+      <input class="gw-input gw-input-wide" type="text" name="value" required
+             list="gw-model-list" autocomplete="off"
+             id="route-create-value" aria-label="Route target">
+      <button class="btn" type="submit" id="route-create-submit">Create</button>
+      <button class="btn" type="button" onclick="toggleRouteCreate(false)">Cancel</button>
+      <p class="gw-hint" id="route-create-hint"></p>
+    </form>
+
+    <div class="gw-route-list" id="route-list" role="list"></div>
     <div class="gw-msg" id="routes-msg" role="status" aria-live="polite" hidden></div>
   </section>
 

@@ -79,8 +79,6 @@ th.gw-num { text-align: right }
   white-space: nowrap;
 }
 .gw-dim { color: var(--ink-ter) }
-/* Route targets can be long selector lists - wrap instead of scrolling. */
-.gw-route-target { white-space: normal; word-break: break-word }
 .gw-err-cell {
   max-width: 260px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -249,8 +247,79 @@ th.gw-num { text-align: right }
 }
 .gw-p-card .badges { margin-top: 10px }
 
+/* ---- Route list: tabbed master list ----
+   "Dynamic" lists failover combos, "Aliases" lists rewrites. Each
+   row expands in place to reveal that route's graph board. */
+.gw-tabbar {
+  margin-top: 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.gw-tabs {
+  display: inline-flex; gap: 2px;
+  background: var(--fill-4);
+  border-radius: var(--r-pill);
+  padding: 3px;
+}
+.gw-tab {
+  appearance: none; border: 0; font: inherit; cursor: pointer;
+  font-size: 12.5px; font-weight: 500; letter-spacing: -0.004em;
+  color: var(--ink-48);
+  background: transparent;
+  border-radius: var(--r-pill);
+  padding: 4px 14px;
+}
+.gw-tab[aria-selected="true"] {
+  background: var(--canvas);
+  color: var(--ink); font-weight: 600;
+  box-shadow: 0 1px 3px rgba(29,29,31,.10), 0 0 0 .5px rgba(29,29,31,.04);
+}
+.gw-route-list {
+  margin-top: 12px;
+  background: var(--canvas);
+  border: .5px solid var(--line);
+  border-radius: var(--r-surface);
+  box-shadow: var(--shadow-card);
+  padding: 0 14px;
+}
+.gw-route-item + .gw-route-item { border-top: .5px solid var(--hairline) }
+.gw-route-main {
+  appearance: none; border: 0; font: inherit; cursor: pointer;
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  background: transparent;
+  padding: 11px 4px;
+}
+@media (hover:hover) {
+  .gw-route-main:hover .gw-route-name { color: var(--accent) }
+}
+.gw-route-name {
+  font-size: 12.5px; font-weight: 600; letter-spacing: 0;
+  color: var(--ink);
+}
+.gw-route-preview {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px;
+  color: var(--ink-ter);
+}
+.gw-route-caret {
+  font-size: 18px; color: var(--ink-ter);
+  transition: transform .15s;
+}
+.gw-route-main[aria-expanded="true"] .gw-route-caret { transform: rotate(180deg) }
+.gw-route-expand { padding: 0 0 14px }
+.gw-route-expand .gw-board { margin-top: 4px }
+.gw-route-empty {
+  display: flex; align-items: center; justify-content: center;
+  gap: 12px; flex-wrap: wrap;
+  padding: 24px 12px;
+  color: var(--ink-ter);
+  font-size: 12.5px; letter-spacing: -0.004em;
+}
+
 /* ---- Route board: node-graph canvas ----
-   One shared canvas renders every named route as a lane of nodes
+   Each expanded route renders its graph as a lane of nodes
    connected by bezier edges, in the style of Cloudflare's AI Gateway
    dynamic-routing diagram: dot-grid plane, square connection handles,
    labeled edges, corner registration ticks. */
@@ -312,11 +381,20 @@ th.gw-num { text-align: right }
   display: flex; align-items: center; gap: 72px;
   width: max-content; min-width: 100%;
 }
-.gw-board-empty {
-  color: var(--ink-ter);
-  font-size: 12.5px; letter-spacing: -0.004em;
-  padding: 30px 0;
+/* Alias target nodes are click-to-edit: the label swaps for an
+   inline input committing through the routes PUT. */
+.gw-node-edit { cursor: pointer }
+.gw-node-edit-input {
+  appearance: none; font: inherit;
+  font-size: 12px; letter-spacing: 0;
+  color: var(--ink);
+  background: var(--pearl);
+  border: .5px solid var(--accent);
+  border-radius: var(--r-ctl);
+  padding: 4px 8px;
+  min-width: 190px;
 }
+
 
 /* ---- Graph nodes ---- */
 .gw-node {
