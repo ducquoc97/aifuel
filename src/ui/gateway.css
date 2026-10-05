@@ -249,54 +249,128 @@ th.gw-num { text-align: right }
 }
 .gw-p-card .badges { margin-top: 10px }
 
-/* ---- Combo cards: a visual failover chain ---- */
-#combo-list { display: flex; flex-direction: column; gap: 10px }
-.gw-combo-card {
+/* ---- Route board: node-graph canvas ----
+   One shared canvas renders every named route as a lane of nodes
+   connected by bezier edges, in the style of Cloudflare's AI Gateway
+   dynamic-routing diagram: dot-grid plane, square connection handles,
+   labeled edges, corner registration ticks. */
+.gw-board {
+  margin-top: 14px;
+  position: relative;
   background: var(--canvas);
   border: .5px solid var(--line);
   border-radius: var(--r-surface);
   box-shadow: var(--shadow-card);
-  padding: 12px 16px 14px;
 }
-.gw-combo-head { display: flex; align-items: center; gap: 8px }
-.gw-combo-name {
+/* Corner registration ticks sit half outside the border line. */
+.gw-tick {
+  position: absolute; width: 7px; height: 7px; z-index: 3;
+  background: var(--canvas); border: 1px solid var(--line);
+}
+.gw-tick.tl { top: -4px; left: -4px }
+.gw-tick.tr { top: -4px; right: -4px }
+.gw-tick.bl { bottom: -4px; left: -4px }
+.gw-tick.br { bottom: -4px; right: -4px }
+
+.gw-plane {
+  position: relative;
+  overflow: auto;
+  max-height: 72vh;
+  padding: 30px 30px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 110px;
+  align-items: center;
+  border-radius: inherit;
+  background-image: radial-gradient(circle, rgba(29,29,31,.14) .9px, transparent 1.1px);
+  background-size: 15px 15px;
+  background-attachment: local;
+}
+.gw-edges {
+  position: absolute; top: 0; left: 0; z-index: 0;
+  pointer-events: none;
+  display: block;
+}
+.gw-edge { fill: none; stroke: var(--ink-ter); stroke-width: 1.3 }
+.gw-edge-app { stroke: var(--ink-qua) }
+.gw-edge-primary { stroke: var(--accent); stroke-width: 1.5 }
+.gw-edge-alt { stroke-dasharray: 5 4 }
+.gw-edge-ghost { stroke: var(--ink-qua); stroke-dasharray: 3 4 }
+.gw-edge-label {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 13px; font-weight: 600; letter-spacing: 0;
-  color: var(--ink);
+  font-size: 10px; letter-spacing: 0;
+  fill: var(--ink-48);
+  paint-order: stroke; stroke: var(--canvas); stroke-width: 3.5px;
 }
-.gw-combo-head .btn { margin-left: auto }
-.gw-flow {
-  margin-top: 12px;
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+
+.gw-lanes {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; gap: 22px;
+  min-width: 0;
 }
-.gw-flow-req {
-  padding: 5px 10px;
-  background: var(--fill-3);
-  border-radius: var(--r-pill, 999px);
-  color: var(--ink-48);
-  font-size: 11.5px;
+.gw-lane {
+  display: flex; align-items: center; gap: 72px;
+  width: max-content; min-width: 100%;
 }
-.gw-flow-arrow {
+.gw-board-empty {
   color: var(--ink-ter);
-  font-size: 15px;
-  flex: none;
+  font-size: 12.5px; letter-spacing: -0.004em;
+  padding: 30px 0;
 }
-.gw-flow-step {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 6px 9px;
-  background: var(--pearl);
+
+/* ---- Graph nodes ---- */
+.gw-node {
+  position: relative; flex: none;
+  background: var(--canvas);
   border: .5px solid var(--line);
-  border-radius: var(--r-ctl);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(29,29,31,.05);
+  padding: 10px 14px;
+}
+/* Square handles where edges attach: left = target, right = source. */
+.gw-node::before, .gw-node::after {
+  content: ""; position: absolute; top: 50%;
+  width: 7px; height: 7px; margin-top: -4.5px;
+  background: var(--canvas);
+  border: 1px solid var(--ink-qua);
+  border-radius: 1.5px;
+  display: none;
+}
+.gw-node-dst::before { display: block; left: -4.5px }
+.gw-node-src::after { display: block; right: -4.5px }
+
+.gw-node-app { align-self: center; position: sticky; left: 0; z-index: 2; min-width: 150px }
+.gw-node-route { min-width: 168px }
+.gw-node-kicker {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 7px;
+}
+.gw-node-kicker .gw-node-x { margin-left: auto }
+.gw-node-title {
+  font-size: 12.5px; font-weight: 600; letter-spacing: -0.004em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.gw-node-sub {
+  margin-top: 2px;
+  font-size: 10.5px; color: var(--ink-ter);
+  white-space: nowrap;
+}
+
+.gw-node-step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 13px;
   cursor: grab;
   transition: border-color .12s, box-shadow .12s, opacity .12s;
 }
-.gw-flow-step:active { cursor: grabbing }
-.gw-flow-step.gw-drag { opacity: .4 }
-.gw-flow-step.gw-drop {
+.gw-node-step:active { cursor: grabbing }
+.gw-node-step.gw-drag { opacity: .4 }
+.gw-node-step.gw-drop {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
-.gw-flow-order {
+.gw-node-first { border-color: var(--accent) }
+.gw-node-order {
   width: 16px; height: 16px; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 50%;
@@ -304,26 +378,55 @@ th.gw-num { text-align: right }
   color: var(--ink-48);
   font-size: 10px; font-weight: 600;
 }
-.gw-flow-sel { font-size: 12px; color: var(--ink) }
-.gw-flow-x {
-  appearance: none; border: 0; padding: 1px 5px;
-  background: transparent; color: var(--ink-ter);
-  font-size: 14px; line-height: 1;
-  border-radius: 4px; cursor: pointer;
-}
-.gw-flow-x:hover { color: var(--err); background: var(--fill-3) }
-.gw-flow-add { display: inline-flex; align-items: center; gap: 6px; margin: 0 }
-.gw-flow-input {
-  appearance: none; font: inherit;
-  font-size: 12px; letter-spacing: 0;
+.gw-node .provider-icon { width: 26px; height: 26px; border-radius: 7px; font-size: 12px }
+.gw-node-meta { display: flex; flex-direction: column; min-width: 0 }
+.gw-node-name {
+  font-size: 12.5px; font-weight: 600; letter-spacing: -0.004em;
   color: var(--ink);
-  background: var(--pearl);
-  border: .5px dashed var(--line);
-  border-radius: var(--r-ctl);
-  padding: 6px 10px; width: 130px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 210px;
 }
-.gw-flow-input:focus { border-style: solid }
-.gw-alias-flow { display: inline-flex; align-items: center; gap: 8px }
+.gw-node-sub.gw-mono { letter-spacing: 0 }
+
+.gw-node-target {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 13px;
+}
+
+.gw-node-x {
+  appearance: none; border: 0; padding: 0; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; flex: none;
+  background: transparent; color: var(--ink-ter);
+  border-radius: 5px;
+}
+.gw-node-x .ms { font-size: 14px }
+@media (hover:hover) {
+  .gw-node-x:hover { color: var(--err); background: var(--err-tint) }
+}
+/* Step remove buttons reveal on hover to keep the chain readable. */
+.gw-node-step .gw-node-x { opacity: 0; transition: opacity .12s }
+.gw-node-step:hover .gw-node-x, .gw-node-step:focus-within .gw-node-x { opacity: 1 }
+
+/* Dashed ghost node ending a combo lane holds the add-step form. */
+.gw-node-add {
+  border-style: dashed; border-color: var(--line);
+  background: transparent; box-shadow: none;
+  padding: 8px 10px;
+}
+.gw-node-addform { display: flex; align-items: center; gap: 6px; margin: 0 }
+.gw-node-input {
+  appearance: none; font: inherit;
+  font-size: 11.5px; letter-spacing: 0;
+  color: var(--ink);
+  background: transparent; border: none; outline: none;
+  padding: 3px 2px; width: 128px;
+}
+.gw-node-input::placeholder { color: var(--ink-ter) }
+.gw-node-add .gw-node-x { color: var(--accent) }
+@media (hover:hover) {
+  .gw-node-add .gw-node-x:hover { background: var(--accent-tint); color: var(--accent) }
+}
 
 /* ---- Forms ---- */
 .gw-form {

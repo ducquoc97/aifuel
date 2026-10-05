@@ -86,17 +86,21 @@
       <button class="btn" type="submit">Add combo</button>
     </form>
 
-    <h3 class="gw-h3">Combos - ordered failover chains</h3>
-    <div id="combo-list"></div>
-
-    <h3 class="gw-h3">Aliases - name rewrites</h3>
-    <div class="gw-card">
-      <table class="gw-table" id="routes-table">
-        <thead>
-          <tr><th>Name</th><th>Rewrites to</th><th aria-label="Actions"></th></tr>
-        </thead>
-        <tbody id="alias-body"></tbody>
-      </table>
+    <h3 class="gw-h3">Route graph</h3>
+    <div class="gw-board">
+      <i class="gw-tick tl" aria-hidden="true"></i>
+      <i class="gw-tick tr" aria-hidden="true"></i>
+      <i class="gw-tick bl" aria-hidden="true"></i>
+      <i class="gw-tick br" aria-hidden="true"></i>
+      <div class="gw-plane" id="route-plane">
+        <svg class="gw-edges" id="route-edges" aria-hidden="true"></svg>
+        <div class="gw-node gw-node-app gw-node-src" id="route-app">
+          <div class="gw-node-kicker"><span class="badge gw-kind">client</span></div>
+          <div class="gw-node-title">Your app</div>
+          <div class="gw-node-sub gw-mono">openai / anthropic</div>
+        </div>
+        <div class="gw-lanes" id="route-lanes"></div>
+      </div>
     </div>
     <div class="gw-msg" id="routes-msg" role="status" aria-live="polite" hidden></div>
   </section>
