@@ -381,19 +381,18 @@ th.gw-num { text-align: right }
   display: flex; align-items: center; gap: 72px;
   width: max-content; min-width: 100%;
 }
-/* Alias target nodes are click-to-edit: the label swaps for an
-   inline input committing through the routes PUT. */
+/* Alias target nodes are click-to-edit: the label swaps for the
+   stacked selector picker committing through the routes PUT. */
 .gw-node-edit { cursor: pointer }
-.gw-node-edit-input {
-  appearance: none; font: inherit;
-  font-size: 12px; letter-spacing: 0;
-  color: var(--ink);
-  background: var(--pearl);
-  border: .5px solid var(--accent);
-  border-radius: var(--r-ctl);
-  padding: 4px 8px;
-  min-width: 190px;
+.gw-node-edit.gw-node-editing { cursor: default }
+.gw-node-editrow {
+  display: flex; justify-content: flex-end; gap: 6px;
+  margin-top: 7px;
 }
+@media (hover:hover) {
+  .gw-node-editrow .gw-node-x:hover { color: var(--accent); background: var(--accent-tint) }
+}
+.gw-node-effort { color: var(--accent) }
 
 
 /* ---- Graph nodes ---- */
@@ -486,22 +485,17 @@ th.gw-num { text-align: right }
 .gw-node-step .gw-node-x { opacity: 0; transition: opacity .12s }
 .gw-node-step:hover .gw-node-x, .gw-node-step:focus-within .gw-node-x { opacity: 1 }
 
-/* Dashed ghost node ending a combo lane holds the add-step form. */
+/* Dashed ghost node ending a combo lane holds the add-step form: the
+   selector picker stacked under a "+ fallback" label. */
 .gw-node-add {
   border-style: dashed; border-color: var(--line);
   background: transparent; box-shadow: none;
   padding: 8px 10px;
+  min-width: 210px;
 }
-.gw-node-addform { display: flex; align-items: center; gap: 6px; margin: 0 }
-.gw-node-input {
-  appearance: none; font: inherit;
-  font-size: 11.5px; letter-spacing: 0;
-  color: var(--ink);
-  background: transparent; border: none; outline: none;
-  padding: 3px 2px; width: 128px;
-}
-.gw-node-input::placeholder { color: var(--ink-ter) }
-.gw-node-add .gw-node-x { color: var(--accent) }
+.gw-node-addform { display: flex; flex-direction: column; align-items: stretch; gap: 7px; margin: 0 }
+.gw-node-addlabel { font-size: 11px; color: var(--ink-ter) }
+.gw-node-add .gw-node-x { color: var(--accent); align-self: flex-end }
 @media (hover:hover) {
   .gw-node-add .gw-node-x:hover { background: var(--accent-tint); color: var(--accent) }
 }
@@ -580,6 +574,44 @@ th.gw-num { text-align: right }
 }
 .gw-tag-input:focus { outline: none }
 .gw-tag-input::placeholder { color: var(--ink-ter) }
+
+/* "When to use which" note under the routes tab bar. */
+.gw-route-note {
+  margin: 10px 0 0;
+  font-size: 12px; line-height: 1.45; letter-spacing: -0.004em;
+  color: var(--ink-ter);
+}
+.gw-route-note b { color: var(--ink-48); font-weight: 600 }
+
+/* ---- Selector picker: agent -> model -> effort ----
+   One cascade reused by the create form (inline row) and by graph
+   nodes (stacked). The effort select disables when the chosen model
+   advertises no reasoning list. */
+.gw-picker {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  min-width: 0;
+}
+.gw-picker .gw-select { margin: 0 }
+.gw-picker .gw-input { width: auto; flex: none }
+.gw-picker-agent { min-width: 130px; max-width: 180px }
+.gw-picker-model { width: 190px; font-size: 12px }
+.gw-picker-effort { min-width: 110px; max-width: 180px }
+.gw-picker-effort[disabled] { opacity: .55 }
+.gw-picker-raw { flex: 1; min-width: 240px; font-size: 12px }
+.gw-picker-stack { flex-direction: column; align-items: stretch; gap: 5px }
+.gw-picker-stack .gw-select, .gw-picker-stack .gw-input {
+  width: 100%; max-width: none; min-width: 0; box-sizing: border-box;
+  font-size: 11.5px; padding: 5px 8px;
+}
+
+/* Pending combo steps in the create form, as ordered chips. */
+.gw-picker-steps { display: flex; flex-wrap: wrap; gap: 6px }
+.gw-step-i {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--fill-4); color: var(--ink-48);
+  font-size: 9px; font-weight: 600; margin-right: 2px;
+}
 
 /* ---- New-key callout: the raw key is returned exactly once ---- */
 .gw-callout {

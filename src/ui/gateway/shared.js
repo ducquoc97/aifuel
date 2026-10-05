@@ -188,12 +188,16 @@ function attachTagInput(wrap) {
 // degrade quietly if it fails.
 
 let MODEL_IDS = null;
+// Full /api/gateway/models entries - the selector picker reads each
+// entry's `reasoning` list to fill the per-model effort select.
+let MODEL_ENTRIES = [];
 
 async function ensureModelIds(force) {
   if (MODEL_IDS && !force) return MODEL_IDS;
   try {
     const data = await apiGet("/api/gateway/models");
-    MODEL_IDS = (data.data || []).map(m => m.id).filter(Boolean);
+    MODEL_ENTRIES = data.data || [];
+    MODEL_IDS = MODEL_ENTRIES.map(m => m.id).filter(Boolean);
   } catch (_) {
     MODEL_IDS = MODEL_IDS || [];
   }

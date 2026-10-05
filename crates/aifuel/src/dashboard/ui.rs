@@ -22,6 +22,7 @@ const GATEWAY_SCRIPTS: &[(&str, &str)] = &[
     ("shared.js", include_str!("../../../../src/ui/gateway/shared.js")),
     ("connect.js", include_str!("../../../../src/ui/gateway/connect.js")),
     ("providers.js", include_str!("../../../../src/ui/gateway/providers.js")),
+    ("picker.js", include_str!("../../../../src/ui/gateway/picker.js")),
     ("routes.js", include_str!("../../../../src/ui/gateway/routes.js")),
     ("keys.js", include_str!("../../../../src/ui/gateway/keys.js")),
     ("logs.js", include_str!("../../../../src/ui/gateway/logs.js")),
@@ -31,6 +32,7 @@ const GATEWAY_SCRIPTS: &[(&str, &str)] = &[
 const GATEWAY_PAGE_SCRIPTS: &str = r#"<script src="/ui/gateway/shared.js" defer></script>
 <script src="/ui/gateway/connect.js" defer></script>
 <script src="/ui/gateway/providers.js" defer></script>
+<script src="/ui/gateway/picker.js" defer></script>
 <script src="/ui/gateway/routes.js" defer></script>
 <script src="/ui/gateway/keys.js" defer></script>
 <script src="/ui/gateway/logs.js" defer></script>

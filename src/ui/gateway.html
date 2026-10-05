@@ -77,15 +77,20 @@
         <span class="ms ms-add" aria-hidden="true"></span><span id="route-add-label">Add route</span>
       </button>
     </div>
+    <p class="gw-route-note"><b>Dynamic</b> when one name should survive a provider outage or quota limit - steps are tried in order. <b>Alias</b> for a stable short name that rewrites to one fixed selector.</p>
 
-    <form class="gw-form" id="route-create-form" hidden onsubmit="return addRoute(event)">
-      <input class="gw-input" type="text" name="name" maxlength="80" required
-             id="route-create-name" aria-label="Route name">
-      <input class="gw-input gw-input-wide" type="text" name="value" required
-             list="gw-model-list" autocomplete="off"
-             id="route-create-value" aria-label="Route target">
-      <button class="btn" type="submit" id="route-create-submit">Create</button>
-      <button class="btn" type="button" onclick="toggleRouteCreate(false)">Cancel</button>
+    <form class="gw-form gw-form-col" id="route-create-form" hidden onsubmit="return addRoute(event)">
+      <div class="gw-form-row">
+        <input class="gw-input" type="text" name="name" maxlength="80" required
+               id="route-create-name" aria-label="Route name">
+        <div id="route-create-picker"></div>
+        <button class="btn" type="button" id="route-create-add" onclick="pushRouteStep()" hidden>
+          <span class="ms ms-add" aria-hidden="true"></span>Step
+        </button>
+        <button class="btn" type="submit" id="route-create-submit">Create</button>
+        <button class="btn" type="button" onclick="toggleRouteCreate(false)">Cancel</button>
+      </div>
+      <div class="gw-picker-steps" id="route-create-steps" hidden></div>
       <p class="gw-hint" id="route-create-hint"></p>
     </form>
 

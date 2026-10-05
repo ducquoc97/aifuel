@@ -4,8 +4,9 @@
 // route's graph in the style of Cloudflare's AI Gateway "Dynamic
 // Routing" diagram: a client node feeds the route node, combo lanes
 // chain provider steps in attempt order ("primary" then dashed
-// "fallback" edges) ending in a dashed add-step node, alias lanes hop
-// once to a click-to-edit target on a "rewrite" edge. Edges are
+// "fallback" edges) ending in a dashed add-step node carrying the
+// selector picker, alias lanes hop once to a click-to-edit target on a
+// "rewrite" edge. Edges are
 // bezier connectors drawn in an SVG overlay after layout; the add
 // affordance per tab opens an inline create form. Every edit commits
 // through the same whole-table PUT.
@@ -51,16 +52,20 @@ function setRouteTab(tab) {
 }
 
 // The create form's labels and parsing switch on the active tab:
-// combos take comma-separated selectors, aliases take one target.
+// combos take an ordered step list built with the picker, aliases take
+// the one target selector the picker assembles.
 function routeFormSpec() {
   return routeTab === "combos"
     ? { kind: "combo", addLabel: "Add combo", namePh: "Route name - e.g. heavy",
-        valuePh: "Selectors, comma-separated - e.g. codex, copilot, devin",
-        hint: "Steps are tried in order; the chain falls through while a failure happens before provider execution." }
+        hint: "Pick an integration, model, and effort, then Add step. Steps run in order - the chain falls through on failure." }
     : { kind: "alias", addLabel: "Add alias", namePh: "Alias name - e.g. cheap",
-        valuePh: "Model selector - e.g. groq:api-key/llama-3.3-70b",
-        hint: "Requests naming this alias are rewritten to the target selector before routing." };
+        hint: "Pick the selector this alias rewrites to, or choose \"custom selector…\" to type one by hand." };
 }
+
+// The picker is mounted once and reused across opens; createSteps
+// holds a pending combo's ordered selectors as chips.
+let createPicker = null;
+let createSteps = [];
 
 function toggleRouteCreate(show) {
   const form = document.getElementById("route-create-form");
@@ -69,27 +74,49 @@ function toggleRouteCreate(show) {
   form.hidden = !open;
   document.getElementById("route-add-label").textContent = spec.addLabel;
   if (open) {
+    if (!createPicker) {
+      createPicker = selectorPicker({});
+      document.getElementById("route-create-picker").appendChild(createPicker.el);
+    }
+    createPicker.setValue("");
+    createSteps = [];
+    renderCreateSteps();
     document.getElementById("route-create-name").placeholder = spec.namePh;
-    document.getElementById("route-create-value").placeholder = spec.valuePh;
     document.getElementById("route-create-hint").textContent = spec.hint;
     document.getElementById("route-create-submit").textContent = spec.addLabel;
+    document.getElementById("route-create-add").hidden = spec.kind !== "combo";
     form.elements.name.focus();
   }
+}
+
+// Combos add steps one at a time: the assembled selector becomes a
+// numbered chip, removable before the form commits.
+function pushRouteStep() {
+  const v = createPicker.value();
+  if (!v) return;
+  createSteps.push(v);
+  renderCreateSteps();
+}
+
+function renderCreateSteps() {
+  const wrap = document.getElementById("route-create-steps");
+  wrap.hidden = routeTab !== "combos" || !createSteps.length;
+  wrap.innerHTML = createSteps.map((s, i) => `
+    <span class="gw-tag"><span class="gw-step-i">${i + 1}</span>${esc(s)}<button type="button"
+        aria-label="Remove step ${i + 1}"
+        onclick="createSteps.splice(${i},1);renderCreateSteps()">×</button></span>`).join("");
 }
 
 async function addRoute(event) {
   event.preventDefault();
   const form = event.target;
   const name = form.elements.name.value.trim();
-  const value = form.elements.value.value.trim();
   const combo = routeTab === "combos";
-  const selectors = value.split(",").map(s => s.trim()).filter(Boolean);
+  const selectors = combo ? [...createSteps] : [createPicker.value()].filter(Boolean);
   if (!name || !selectors.length) {
-    setMsg("routes-msg", '<span class="err">Name and at least one selector are required.</span>');
-    return false;
-  }
-  if (!combo && selectors.length !== 1) {
-    setMsg("routes-msg", '<span class="err">An alias rewrites to exactly one selector.</span>');
+    setMsg("routes-msg", combo
+      ? '<span class="err">Name and at least one step are required - build one with the picker, then Add step.</span>'
+      : '<span class="err">Name and a target selector are required.</span>');
     return false;
   }
   const btn = form.querySelector('button[type="submit"]');
@@ -253,15 +280,20 @@ function routeNode(name, kind, shadowed) {
 }
 
 // A selector renders like a Cloudflare provider node: monogram tile,
-// integration part in bold, the model remainder in mono below.
+// integration part in bold, the model remainder in mono below, and a
+// pinned @effort as a third accent line when the selector carries one.
 function selectorMeta(sel) {
-  const slash = sel.indexOf("/");
-  const head = slash === -1 ? sel : sel.slice(0, slash);
-  const sub = slash === -1 ? "" : sel.slice(slash + 1);
-  return `${providerMonogram(sel)}
+  const at = sel.lastIndexOf("@");
+  const eff = at > 0 && at < sel.length - 1 ? sel.slice(at + 1) : "";
+  const base = at > 0 ? sel.slice(0, at) : sel;
+  const slash = base.indexOf("/");
+  const head = slash === -1 ? base : base.slice(0, slash);
+  const sub = slash === -1 ? "" : base.slice(slash + 1);
+  return `${providerMonogram(base)}
     <span class="gw-node-meta">
       <span class="gw-node-name">${esc(head)}</span>
       ${sub ? `<span class="gw-node-sub gw-mono">${esc(sub)}</span>` : ""}
+      ${eff ? `<span class="gw-node-sub gw-mono gw-node-effort">@${esc(eff)}</span>` : ""}
     </span>`;
 }
 
@@ -285,12 +317,17 @@ function comboLane(name, steps, shadowed) {
       </div>`).join("")}
     <div class="gw-node gw-node-add gw-node-dst">
       <form class="gw-node-addform" data-name="${esc(name)}" onsubmit="return addComboStep(event)">
-        <input class="gw-node-input gw-mono" type="text" list="gw-model-list"
-               autocomplete="off" placeholder="+ fallback" aria-label="Add a fallback step">
+        <span class="gw-node-addlabel gw-mono">+ fallback</span>
         <button class="gw-node-x" type="submit" aria-label="Add step"
                 title="Add step"><span class="ms ms-add" aria-hidden="true"></span></button>
       </form>
     </div>`;
+  // The add-step node carries the same cascade the create form does,
+  // stacked to fit the lane.
+  const form = lane.querySelector(".gw-node-addform");
+  const pk = selectorPicker({ stack: true, rawPlaceholder: "selector" });
+  form._picker = pk;
+  form.insertBefore(pk.el, form.lastElementChild);
   return lane;
 }
 
@@ -311,28 +348,32 @@ function aliasLane(name, target) {
   return lane;
 }
 
-// Clicking an alias target swaps its label for an inline input;
-// Enter or blur commits through the table PUT, Escape reverts.
+// Clicking an alias target swaps its label for the stacked selector
+// picker prefilled with the current target; Enter or the check button
+// commits through the table PUT, Escape or the close button reverts.
 function editAliasTarget(node) {
-  if (node.querySelector(".gw-node-edit-input")) return;
+  if (node.dataset.editing) return;
+  node.dataset.editing = "1";
+  node.classList.add("gw-node-editing");
   const name = node.dataset.name;
-  const meta = node.querySelector(".gw-node-meta");
-  meta.hidden = true;
-  const input = document.createElement("input");
-  input.className = "gw-node-edit-input gw-mono";
-  input.value = routeTable.aliases[name] || "";
-  input.setAttribute("list", "gw-model-list");
-  input.setAttribute("aria-label", `Rewrite target for ${name}`);
-  meta.parentElement.appendChild(input);
-  input.focus();
-  input.select();
-  // Enter and blur both resolve the edit; settle once so the DOM
-  // teardown on re-render cannot commit a second time.
+  node.innerHTML = "";
+  const pk = selectorPicker({ stack: true, rawPlaceholder: "selector" });
+  pk.setValue(routeTable.aliases[name] || "");
+  const row = document.createElement("div");
+  row.className = "gw-node-editrow";
+  row.innerHTML = `
+    <button class="gw-node-x" type="button" title="Save target"
+            aria-label="Save target"><span class="ms ms-check" aria-hidden="true"></span></button>
+    <button class="gw-node-x" type="button" title="Cancel"
+            aria-label="Cancel edit"><span class="ms ms-close" aria-hidden="true"></span></button>`;
+  node.append(pk.el, row);
+  // Multiple focusable fields mean blur cannot commit; the check
+  // button and Enter do, settling once so re-render cannot repeat.
   let settled = false;
   const commit = async () => {
     if (settled) return;
     settled = true;
-    const value = input.value.trim();
+    const value = pk.value();
     if (value && value !== routeTable.aliases[name]) {
       try {
         await mutateRoutes(table => { table.aliases[name] = value; });
@@ -343,12 +384,13 @@ function editAliasTarget(node) {
     }
     loadRoutes();
   };
-  input.addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); commit(); }
+  row.children[0].addEventListener("click", e => { e.stopPropagation(); commit(); });
+  row.children[1].addEventListener("click", e => { e.stopPropagation(); settled = true; loadRoutes(); });
+  node.addEventListener("keydown", e => {
     if (e.key === "Escape") { settled = true; loadRoutes(); }
+    if (e.key === "Enter" && e.target.tagName !== "SELECT") { e.preventDefault(); commit(); }
   });
-  input.addEventListener("blur", commit, { once: true });
-  input.addEventListener("click", e => e.stopPropagation());
+  pk.focus();
 }
 
 // ---- Edge layer: bezier connectors between adjacent nodes ----
@@ -443,10 +485,9 @@ if (document.fonts && document.fonts.ready) {
 async function addComboStep(event) {
   event.preventDefault();
   const form = event.target;
-  const input = form.querySelector(".gw-node-input");
-  const value = input.value.trim();
+  const value = form._picker ? form._picker.value() : "";
   if (!value) {
-    input.focus();
+    if (form._picker) form._picker.focus();
     return false;
   }
   const name = form.dataset.name;
