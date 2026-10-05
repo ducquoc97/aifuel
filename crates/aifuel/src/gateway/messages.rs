@@ -157,6 +157,10 @@ pub(crate) fn handle<C: StatusCollector>(
         &model,
         parsed.reasoning_effort.as_deref(),
         &|| Gateway::status(facade, runtime),
+        &execute::Decide {
+            runtime,
+            prompt: &prompt,
+        },
     ) {
         Ok(attempts) => attempts,
         Err((status, message)) => return fail(request, &model, parsed.stream, status, &message),

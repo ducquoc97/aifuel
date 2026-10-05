@@ -91,6 +91,10 @@ pub(crate) fn completions<C: StatusCollector>(
         model,
         chat.reasoning_effort.as_deref(),
         &|| Gateway::status(facade, runtime),
+        &execute::Decide {
+            runtime,
+            prompt: &prompt,
+        },
     ) {
         Ok(attempts) => attempts,
         Err((status, message)) => {

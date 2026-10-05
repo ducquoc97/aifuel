@@ -60,7 +60,10 @@ function selectorPicker(opts = {}) {
   const autoNote = document.createElement("div");
   autoNote.className = "gw-picker-note";
   autoNote.hidden = true;
-  autoNote.textContent = "auto - the gateway plans a provider per request, so the target can change; the Logs tab shows what actually ran.";
+  const AUTO_NOTES = {
+    auto: "auto - the gateway plans a provider per request, so the target can change; the Logs tab shows what actually ran.",
+    decide: "decide - like auto, but a decision model (TypeSafe Jev) picks which ranked provider leads; falls back to auto order if it is unreachable."
+  };
 
   const dl = document.createElement("datalist");
   dl.id = dlId;
@@ -76,7 +79,8 @@ function selectorPicker(opts = {}) {
     const isRaw = agent.value === PICKER_RAW;
     model.hidden = effort.hidden = isRaw;
     raw.hidden = !isRaw;
-    autoNote.hidden = agent.value !== "auto";
+    autoNote.hidden = !AUTO_NOTES[agent.value];
+    autoNote.textContent = AUTO_NOTES[agent.value] || "";
   }
 
   // The model datalist and effort select both follow the agent.
@@ -110,7 +114,7 @@ function selectorPicker(opts = {}) {
   function refresh() {
     const cur = agent.value;
     agent.innerHTML = pickerIntegrations()
-      .map(id => `<option value="${esc(id)}">${id === "auto" ? "auto (gateway picks)" : esc(id)}</option>`).join("")
+      .map(id => `<option value="${esc(id)}">${id === "auto" ? "auto (gateway picks)" : id === "decide" ? "decide (decision model picks)" : esc(id)}</option>`).join("")
       + `<option value="${PICKER_RAW}">custom selector…</option>`;
     if (cur && [...agent.options].some(o => o.value === cur)) agent.value = cur;
     syncMode();

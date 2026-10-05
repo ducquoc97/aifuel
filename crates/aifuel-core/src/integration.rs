@@ -194,6 +194,12 @@ pub enum WireApi {
     /// session credential and a Monitoring Collection Contract, not to
     /// execute prompts.
     ClaudeWeb,
+    /// A structured decision surface - TypeSafe AI's System One and
+    /// compatible endpoints that answer typed `state` + `questions`
+    /// payloads with calibrated choices rather than chat text. No Agent
+    /// Run adapter serves it; it exists so integrations can declare the
+    /// endpoint honestly for the gateway's `/v1/decisions` forwarding.
+    Decisions,
 }
 
 /// The connection configuration for one HTTP endpoint.

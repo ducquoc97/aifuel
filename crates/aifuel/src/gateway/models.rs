@@ -22,6 +22,8 @@ pub(crate) fn list(gateway: &super::Gateway) -> Value {
     let mut seen = BTreeSet::new();
     let mut data = vec![entry(aifuel_core::AUTO_PROVIDER.to_owned(), "aifuel")];
     seen.insert(aifuel_core::AUTO_PROVIDER.to_owned());
+    data.push(entry(super::execute::DECIDE_SELECTOR.to_owned(), "aifuel"));
+    seen.insert(super::execute::DECIDE_SELECTOR.to_owned());
     for adapter in gateway.adapters() {
         let id = adapter.integration().as_str().to_owned();
         if seen.insert(id.clone()) {

@@ -81,6 +81,18 @@ impl AgentRunOutputHandler for DeltaSink {
     }
 }
 
+/// The selector that plans like `auto` and then lets a decision model
+/// choose which ranked candidate leads; `decide/<model>` narrows the
+/// candidates the way `auto/<model>` does.
+pub(crate) const DECIDE_SELECTOR: &str = "decide";
+
+/// What the `decide` selector needs beyond the selector itself: the async
+/// runtime to reach the decision endpoint, and the prompt text it judges.
+pub(crate) struct Decide<'a> {
+    pub(crate) runtime: &'a tokio::runtime::Runtime,
+    pub(crate) prompt: &'a str,
+}
+
 /// Deepest configured-name expansion `resolve_attempts` follows: an
 /// alias may point at a combo or another alias, so cycles resolve as a
 /// loud 400 instead of recursing forever.
@@ -95,11 +107,12 @@ pub(crate) fn resolve_attempts(
     model: &str,
     effort: Option<&str>,
     status: &dyn Fn() -> StatusReport,
+    decide: &Decide<'_>,
 ) -> Result<Vec<Attempt>, (u16, String)> {
     // Catalog evidence validates a requested effort against the advertised
     // model; a missing cache fails open - unknown evidence never rejects.
     let models = crate::run_selection::load_picker_models().unwrap_or_default();
-    resolve_attempts_at(gateway, model, effort, &models, status, 0)
+    resolve_attempts_at(gateway, model, effort, &models, status, decide, 0)
 }
 
 fn resolve_attempts_at(
@@ -108,6 +121,7 @@ fn resolve_attempts_at(
     inherited_effort: Option<&str>,
     models: &[crate::selection_cli::PickerModel],
     status: &dyn Fn() -> StatusReport,
+    decide: &Decide<'_>,
     depth: usize,
 ) -> Result<Vec<Attempt>, (u16, String)> {
     // `<selector>@<effort>` pins the effort beside the model it belongs to;
@@ -123,7 +137,7 @@ fn resolve_attempts_at(
         }
         return match resolution {
             super::routes::Resolution::Alias(substituted) => {
-                resolve_attempts_at(gateway, &substituted, effort, models, status, depth + 1)
+                resolve_attempts_at(gateway, &substituted, effort, models, status, decide, depth + 1)
             }
             super::routes::Resolution::Combo(selectors) => {
                 let mut attempts = Vec::new();
@@ -134,6 +148,7 @@ fn resolve_attempts_at(
                         effort,
                         models,
                         status,
+                        decide,
                         depth + 1,
                     )?);
                 }
@@ -147,6 +162,12 @@ fn resolve_attempts_at(
     }
     if model == aifuel_core::AUTO_PROVIDER {
         return plan(gateway, model, None, effort, models, status);
+    }
+    if model == DECIDE_SELECTOR || model.starts_with("decide/") {
+        let filter = model.strip_prefix("decide/").map(str::to_owned);
+        let mut attempts = plan(gateway, model, filter, effort, models, status)?;
+        super::decisions::reorder(decide.runtime, decide.prompt, &mut attempts);
+        return Ok(attempts);
     }
     if let Some(filter) = model.strip_prefix("auto/") {
         return plan(

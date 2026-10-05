@@ -187,9 +187,16 @@ pub(crate) fn handle<C: StatusCollector>(
             .and_then(|reasoning| reasoning.get("effort"))
             .and_then(Value::as_str)
     });
-    let attempts = match execute::resolve_attempts(gateway, &model, effort, &|| {
-        Gateway::status(facade, runtime)
-    }) {
+    let attempts = match execute::resolve_attempts(
+        gateway,
+        &model,
+        effort,
+        &|| Gateway::status(facade, runtime),
+        &execute::Decide {
+            runtime,
+            prompt: &prompt,
+        },
+    ) {
         Ok(attempts) => attempts,
         Err((status, message)) => {
             return fail(request, &model, responses.stream, status, &message);

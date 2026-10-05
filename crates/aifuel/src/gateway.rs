@@ -31,12 +31,15 @@
 //! convention.
 
 mod admin;
+mod audio;
 mod chat;
 mod completions;
+mod decisions;
 mod effort;
 mod embeddings;
 mod execute;
 mod flatten;
+mod forward;
 mod keys;
 mod logs;
 mod messages;
@@ -172,6 +175,15 @@ pub fn handle<C: StatusCollector>(
         }
         (&tiny_http::Method::Post, "/v1/embeddings") => {
             embeddings::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/decisions") => {
+            decisions::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/audio/speech") => {
+            audio::speech(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/audio/transcriptions") => {
+            audio::transcriptions(request, gateway, facade, runtime);
         }
         (&tiny_http::Method::Post, "/v1/messages")
         | (&tiny_http::Method::Post, "/v1/messages/count_tokens") => {
