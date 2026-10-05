@@ -216,7 +216,9 @@ fn dashboard_serves_embedded_html_over_loopback() {
     child.wait().expect("dashboard process should be reaped");
 
     assert!(response.starts_with("HTTP/1.1 200"));
-    assert!(response.contains("<title>aifuel - Usage</title>"));
+    // The dashboard serves the React SPA shell for every page route.
+    assert!(response.contains("<title>aifuel</title>"));
+    assert!(response.contains(r#"<div id="root">"#));
 }
 
 #[test]

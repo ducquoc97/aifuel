@@ -135,5 +135,5 @@ This is a single-context repo with root `CONTEXT.md` and `docs/adr/`. See `docs/
 ## Dashboard UI
 
 - The dashboard UI lives in `ui/` as a Vite + React + TypeScript + Tailwind + shadcn app (light theme only, Apple HIG).
-- Do NOT add new vanilla JS/CSS/HTML under `src/ui/` — that legacy tree is being deleted once the React port lands.
+- The old vanilla `src/ui/` tree is deleted; do NOT reintroduce it. New UI work goes in `ui/`.
 - Build order: `pnpm -C ui build` produces `ui/dist`, which `crates/aifuel` embeds at compile time via `rust-embed`. Run the pnpm build before `cargo build`, or use `pnpm -C ui dev` (proxies `/api` and `/v1` to `127.0.0.1:8788`) for local UI iteration.
