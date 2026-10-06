@@ -41,6 +41,7 @@ fn adapter(home: &Path, base: &str) -> CopilotOAuthAdapter {
         user_url: Cow::Owned(format!("{base}/copilot_internal/user")),
         api_fallback: Cow::Owned(base.to_owned()),
         home: Some(home.to_path_buf()),
+        store: Some(CredentialStore::new(home.join("credential-store"))),
         client: OnceLock::new(),
         session: Mutex::new(None),
     }

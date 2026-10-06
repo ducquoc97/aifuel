@@ -12,13 +12,15 @@ aifuel-core = { path = "../aifuel-core", version = "0.1" }
 chrono.workspace = true
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 futures-util.workspace = true
+getrandom = "0.4"
 process-wrap = { workspace = true, features = ["std"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tiny_http.workspace = true
 toml_edit = "0.25.15"
 tokio.workspace = true
 
 [dev-dependencies]
 aifuel-app = { path = "../aifuel-app" }
-tiny_http.workspace = true

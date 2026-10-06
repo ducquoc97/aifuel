@@ -16,12 +16,14 @@
 mod credentials;
 
 use crate::agent_execution::ExecutionCapabilities;
-use crate::oauth_http::{self, http};
+use crate::credentials::{CredentialStore, ManagedCredential};
+use crate::oauth::http as oauth_http;
+use crate::wire::http;
 use crate::wire::{openai_chat, stream};
 use aifuel_core::{
     AgentExecutionAdapter, AgentIntegrationInfo, AgentRunError, AgentRunOutputHandler,
-    AgentSetupGuidance, IntegrationId, ProviderId, ProviderKey, RunCancellationToken, RunRequest,
-    RunResult,
+    AgentSetupGuidance, CredentialRef, IntegrationId, ProviderId, ProviderKey,
+    RunCancellationToken, RunRequest, RunResult,
 };
 use credentials::{copilot_config_token, github_store_token};
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
@@ -53,7 +55,11 @@ const FALLBACK_SESSION_SECONDS: u64 = 900;
 const SESSION_EXPIRY_MARGIN_SECONDS: u64 = 60;
 
 /// The relogin hint attached to every credential rejection.
-const RELOGIN_HINT: &str = "the stored GitHub OAuth credential was rejected or is missing; sign in again through the copilot CLI or a Copilot editor plugin";
+const RELOGIN_HINT: &str = "the stored GitHub OAuth credential was rejected or is missing; sign in again through `aifuel auth login copilot`, the copilot CLI, or a Copilot editor plugin";
+
+/// The Credential Reference `aifuel auth login copilot` stores the managed
+/// grant under - the serving integration's id.
+const MANAGED_REFERENCE: &str = "copilot:oauth";
 
 /// The compiled `copilot:oauth` adapter.
 pub(crate) static ADAPTER: CopilotOAuthAdapter = CopilotOAuthAdapter {
@@ -61,17 +67,21 @@ pub(crate) static ADAPTER: CopilotOAuthAdapter = CopilotOAuthAdapter {
     user_url: Cow::Borrowed(USER_URL),
     api_fallback: Cow::Borrowed(API_FALLBACK),
     home: None,
+    store: None,
     client: OnceLock::new(),
     session: Mutex::new(None),
 };
 
 /// A usable Copilot API session: the bearer the chat endpoint accepts, the
-/// account's API base URL, and the second it stops being safe to reuse.
+/// account's API base URL, the second it stops being safe to reuse, and
+/// the OAuth token it was exchanged from so a changed grant never reuses
+/// a stale session.
 #[derive(Clone)]
 struct CopilotSession {
     bearer: String,
     api_base: String,
     expires_at: u64,
+    source_token: String,
 }
 
 /// Direct subscription execution against the GitHub Copilot API.
@@ -85,6 +95,8 @@ pub(crate) struct CopilotOAuthAdapter {
     user_url: Cow<'static, str>,
     api_fallback: Cow<'static, str>,
     home: Option<PathBuf>,
+    /// `None` resolves the shared user store; tests pin a temporary one.
+    store: Option<CredentialStore>,
     client: OnceLock<reqwest::Client>,
     session: Mutex<Option<CopilotSession>>,
 }
@@ -106,7 +118,18 @@ impl CopilotOAuthAdapter {
         }
     }
 
-    /// The GitHub OAuth token the provider already minted, read from the
+    /// The Credential Store this adapter shares with `aifuel auth`: the
+    /// pinned one in tests, the user configuration directory's otherwise.
+    fn store(&self) -> Result<CredentialStore, AgentRunError> {
+        match &self.store {
+            Some(store) => Ok(store.clone()),
+            None => CredentialStore::user_default()
+                .map_err(|error| AgentRunError::InvalidRequest(error.to_string())),
+        }
+    }
+
+    /// The GitHub OAuth token backing this run: the managed grant `aifuel
+    /// auth login copilot` recorded when one exists, else the
     /// provider-owned files in priority order:
     ///
     /// 1. `~/.copilot/config.json` - the first-party CLI's own store
@@ -120,6 +143,16 @@ impl CopilotOAuthAdapter {
     /// A file that is absent, unreadable, or holds no token is skipped so
     /// the next source can still yield one.
     fn oauth_token(&self) -> Result<String, AgentRunError> {
+        let reference = CredentialRef::new(MANAGED_REFERENCE);
+        // Kind and destination mismatches fail closed inside the helper.
+        if let Some(record) = crate::oauth::managed_oauth_grant(&self.store()?, &reference)
+            .map_err(|error| AgentRunError::InvalidRequest(error.to_string()))?
+        {
+            let ManagedCredential::OAuth { access, .. } = record else {
+                unreachable!("the kind check inside managed_oauth_grant settles it");
+            };
+            return Ok(access);
+        }
         let home = self.home()?;
         if let Some(token) = copilot_config_token(&home.join(".copilot/config.json")) {
             return Ok(token);
@@ -133,10 +166,10 @@ impl CopilotOAuthAdapter {
             }
         }
         Err(AgentRunError::InvalidRequest(
-            "copilot:oauth found no GitHub OAuth token in \
-             ~/.copilot/config.json or ~/.config/github-copilot/{hosts,apps}.json; \
-             sign in through the copilot CLI (`copilot`, then `/login`) or a \
-             Copilot editor plugin"
+            "copilot:oauth found no managed grant (`aifuel auth login copilot`) and \
+             no GitHub OAuth token in ~/.copilot/config.json or \
+             ~/.config/github-copilot/{hosts,apps}.json; sign in through the \
+             copilot CLI (`copilot`, then `/login`) or a Copilot editor plugin"
                 .to_owned(),
         ))
     }
@@ -171,6 +204,7 @@ impl CopilotOAuthAdapter {
         cancellation: &RunCancellationToken,
     ) -> Result<CopilotSession, AgentRunError> {
         if let Some(session) = self.session.lock().expect("session mutex").clone()
+            && session.source_token == oauth_token
             && session.expires_at > oauth_http::unix_now() + SESSION_EXPIRY_MARGIN_SECONDS
         {
             return Ok(session);
@@ -230,6 +264,7 @@ impl CopilotOAuthAdapter {
                     .get("expires_at")
                     .and_then(Value::as_u64)
                     .unwrap_or_else(|| oauth_http::unix_now() + FALLBACK_SESSION_SECONDS),
+                source_token: oauth_token.to_owned(),
             });
         }
         if matches!(status.as_u16(), 401 | 403 | 404 | 410) {
@@ -282,6 +317,7 @@ impl CopilotOAuthAdapter {
             bearer: oauth_token.to_owned(),
             api_base: api_base(&body, &self.api_fallback),
             expires_at: oauth_http::unix_now() + FALLBACK_SESSION_SECONDS,
+            source_token: oauth_token.to_owned(),
         })
     }
 

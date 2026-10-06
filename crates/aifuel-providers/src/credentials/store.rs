@@ -34,6 +34,18 @@ pub struct CredentialStore {
 }
 
 impl CredentialStore {
+    /// The store `aifuel auth` and compiled OAuth adapters share: the
+    /// `aifuel` directory under the user configuration directory. Compiled
+    /// adapters resolve this lazily at use time so tests can pin a store
+    /// instead of touching the real one.
+    pub fn user_default() -> Result<Self, CredentialStoreError> {
+        let home = aifuel_core::user_home_dir().map_err(io::Error::other)?;
+        let directory = aifuel_core::user_config_dir(&home)
+            .map_err(io::Error::other)?
+            .join("aifuel");
+        Ok(Self::new(directory))
+    }
+
     /// Root a store at `directory`. Nothing is created on disk until the
     /// first write, so read-only discovery stays side-effect-free.
     pub fn new(directory: impl Into<PathBuf>) -> Self {
@@ -514,6 +526,13 @@ pub enum CredentialStoreError {
     EnvVarAbsent { var: String },
     /// The material presented for storage is not a credential.
     InvalidMaterial(&'static str),
+    /// A managed OAuth grant's refresh exchange failed or its profile is
+    /// unknown. `detail` carries the failure class and status, never token
+    /// material.
+    OAuthRefreshFailed {
+        reference: CredentialRef,
+        detail: String,
+    },
 }
 
 impl fmt::Display for CredentialStoreError {
@@ -552,6 +571,10 @@ impl fmt::Display for CredentialStoreError {
                 write!(f, "environment variable '{var}' is unset or empty")
             }
             Self::InvalidMaterial(reason) => f.write_str(reason),
+            Self::OAuthRefreshFailed { reference, detail } => write!(
+                f,
+                "the OAuth grant '{reference}' could not be refreshed: {detail}"
+            ),
         }
     }
 }

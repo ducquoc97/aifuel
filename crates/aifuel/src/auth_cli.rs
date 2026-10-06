@@ -20,6 +20,7 @@ use aifuel_core::{ApiKeySource, AuthBinding, CredentialRef, ExecutionConfig, Key
 use aifuel_providers::{CredentialKind, CredentialStore};
 
 mod list;
+mod login;
 mod set_session;
 
 // The Connect panel reuses `auth list`'s per-integration credential-state
@@ -34,6 +35,7 @@ pub fn run(args: &[String]) -> Result<u8, String> {
             Ok(0)
         }
         Some("list") => list::run(&args[1..]),
+        Some("login") => login::run(&args[1..]),
         Some("set-key") => set_key(&args[1..]),
         Some("set-session") => set_session::run(&args[1..]),
         Some("set-admin") => set_admin(&args[1..]),
@@ -46,10 +48,7 @@ pub fn run(args: &[String]) -> Result<u8, String> {
 }
 
 pub(crate) fn credential_store() -> Result<CredentialStore, String> {
-    let home = crate::user_home_dir()?;
-    Ok(CredentialStore::new(
-        crate::user_config_dir(&home)?.join("aifuel"),
-    ))
+    CredentialStore::user_default().map_err(|error| error.to_string())
 }
 
 fn set_key(args: &[String]) -> Result<u8, String> {
@@ -282,7 +281,7 @@ pub(crate) fn resolve_credential_ref(
             auth: AuthBinding::OAuth { credential, .. },
             ..
         } => Err(format!(
-            "integration {target} uses OAuth credential {}; OAuth login is not available yet",
+            "integration {target} uses OAuth credential {}; run `aifuel auth login {target}` to mint it",
             credential.as_str()
         )),
         ExecutionConfig::Cli { .. } => Err(format!(
@@ -562,6 +561,7 @@ pub(super) fn next(args: &[String], index: &mut usize, flag: &str) -> Result<Str
 
 fn print_help() {
     println!("Usage: aifuel auth list [--json]");
+    println!("       aifuel auth login TARGET [--device]");
     println!("       aifuel auth set-key TARGET (--key KEY | --env-var NAME | --stdin)");
     println!("       aifuel auth set-session TARGET (--key SESSION | --stdin)");
     println!("       aifuel auth set-admin (--key PASSWORD | --stdin)");
@@ -569,8 +569,9 @@ fn print_help() {
     println!("       aifuel auth remove CREDENTIAL_REF");
     println!();
     println!("Inspects and manages AI Fuel Managed Credentials. Secret values are");
-    println!("never printed. Built-in API-key integrations read named environment");
-    println!("variables; managed references serve configured and OAuth integrations.");
+    println!("never printed. `auth login` runs a compiled OAuth flow - device code");
+    println!("or browser loopback - and stores the minted grant; built-in API-key");
+    println!("integrations read named environment variables or managed references.");
     println!();
     println!("API-key credentials form Key Pools: repeating set-key on an integration");
     println!("appends a member (TARGET, TARGET/2, TARGET/3, ...), auth list shows each");

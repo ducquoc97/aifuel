@@ -232,7 +232,8 @@ fn pick(
     )
     .map_err(|(_, message)| message)?;
     for candidate in &candidates {
-        let auth = match credentials.resolve_with_env(
+        let auth = match aifuel_providers::oauth::resolve_ready_with_env(
+            &credentials,
             &candidate.auth,
             &candidate.auth_identity,
             &candidate.env,

@@ -62,6 +62,59 @@ pub use status::{
 /// The schema version for the initial Rust discovery output.
 pub const DISCOVERY_SCHEMA_VERSION: u32 = 1;
 
+/// The user's home directory, resolved the same way for every AI Fuel
+/// process so the Credential Store location is stable across the CLI, the
+/// gateway, and provider adapters.
+pub fn user_home_dir() -> Result<std::path::PathBuf, String> {
+    use std::env;
+    use std::path::PathBuf;
+    #[cfg(windows)]
+    let home = env::var_os("USERPROFILE").map(PathBuf::from).or_else(|| {
+        let mut path = PathBuf::from(env::var_os("HOMEDRIVE")?);
+        path.push(env::var_os("HOMEPATH")?);
+        Some(path)
+    });
+    #[cfg(not(windows))]
+    let home = env::var_os("HOME").map(PathBuf::from);
+
+    home.filter(|path| path.is_absolute())
+        .ok_or_else(|| "the user's home directory could not be resolved".to_owned())
+}
+
+/// The user's application configuration directory under `home`.
+#[cfg(windows)]
+pub fn user_config_dir(_user_home: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| {
+            "the user's application configuration directory could not be resolved".to_owned()
+        })
+}
+
+/// The user's application configuration directory under `home`.
+#[cfg(target_os = "macos")]
+pub fn user_config_dir(user_home: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    Ok(user_home.join("Library").join("Application Support"))
+}
+
+/// The user's application configuration directory under `home`.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn user_config_dir(user_home: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from)
+        && config_home.is_absolute()
+    {
+        return Ok(config_home);
+    }
+    Ok(user_home.join(".config"))
+}
+
+/// The user's application configuration directory under `home`.
+#[cfg(not(any(unix, windows)))]
+pub fn user_config_dir(_user_home: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    Err("the user's application configuration directory could not be resolved".to_owned())
+}
+
 /// The read-only monitoring boundary consumed by AI Fuel application workflows.
 ///
 /// Implementations collect a fresh normalized status report. Caching and

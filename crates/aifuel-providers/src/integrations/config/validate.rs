@@ -354,9 +354,19 @@ fn validate_auth(auth: &ConfigAuth) -> Result<AuthBinding, String> {
                 .clone()
                 .filter(|profile| !profile.trim().is_empty())
                 .ok_or_else(|| "auth kind 'oauth-ref' requires a non-empty profile".to_owned())?;
+            let profile = OAuthProfileId::new(profile);
+            if crate::oauth::profile(&profile).is_none() {
+                return Err(format!(
+                    "auth kind 'oauth-ref' names unknown profile '{profile}'; known: {}",
+                    crate::oauth::profiles()
+                        .map(|spec| spec.profile)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             Ok(AuthBinding::OAuth {
                 credential: CredentialRef::new(credential),
-                profile: OAuthProfileId::new(profile),
+                profile,
             })
         }
         other => Err(format!(

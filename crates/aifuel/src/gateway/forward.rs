@@ -435,7 +435,8 @@ pub(crate) fn serve(
         // before the async send and material crosses by value inside the
         // outcome. A credential gone since candidacy ranked simply demotes
         // the candidate.
-        let auth = match credentials.resolve_with_env(
+        let auth = match aifuel_providers::oauth::resolve_ready_with_env(
+            credentials,
             &candidate.auth,
             &candidate.auth_identity,
             &candidate.env,
