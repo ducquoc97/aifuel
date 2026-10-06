@@ -30,39 +30,52 @@ pub(crate) fn list(gateway: &super::Gateway) -> Value {
             data.push(entry(id, adapter.provider().as_str()));
         }
     }
-    // Catalog-advertised models pin under every executable integration of
-    // their provider. Advertisement is provider-scoped evidence; the
-    // composite id keeps it honest (never a bare model id that `auto`
-    // would have to guess at). Reported effort evidence rides the entry
-    // as `reasoning`/`default_reasoning` so a client picker can offer
-    // model and effort independently.
-    if let Ok(models) = crate::run_selection::load_picker_models() {
-        for model in models
-            .iter()
-            .filter(|model| model.advertisement == aifuel_core::CapabilityState::Supported)
-        {
-            for adapter in gateway.adapters() {
-                let advertised = adapter
-                    .provider()
-                    .as_str()
-                    .parse::<aifuel_core::ProviderKey>()
-                    .is_ok_and(|key| key == model.provider);
-                if !advertised {
+    // Declared models pin under their integration id. gateway.json's
+    // optional `models` map is the single advertised source client
+    // pickers read - the provider-discovered catalog still feeds effort
+    // validation elsewhere and marks each declaration `verified` when it
+    // lists the same model id. Declared effort values ride the entry as
+    // `reasoning`/`default_reasoning` so a picker can offer model and
+    // effort independently.
+    let declared = super::route_config::declared_models();
+    if !declared.is_empty() {
+        let catalog = crate::run_selection::load_picker_models().unwrap_or_default();
+        for adapter in gateway.adapters() {
+            let Some(models) = declared.get(adapter.integration().as_str()) else {
+                continue;
+            };
+            let provider = adapter
+                .provider()
+                .as_str()
+                .parse::<aifuel_core::ProviderKey>()
+                .ok();
+            for model in models {
+                if model.id().trim().is_empty() {
                     continue;
                 }
-                let id = format!("{}/{}", adapter.integration().as_str(), model.model_id);
-                if seen.insert(id.clone()) {
-                    let mut entry = entry(id, adapter.provider().as_str());
-                    if model.effort_state == aifuel_core::CapabilityState::Supported
-                        && !model.effort_values.is_empty()
-                    {
-                        entry["reasoning"] = json!(model.effort_values);
-                        if let Some(default) = &model.default_effort {
-                            entry["default_reasoning"] = json!(default);
-                        }
-                    }
-                    data.push(entry);
+                let id = format!("{}/{}", adapter.integration().as_str(), model.id());
+                if !seen.insert(id.clone()) {
+                    continue;
                 }
+                let mut entry = entry(id, adapter.provider().as_str());
+                if let Some(label) = model.label() {
+                    entry["label"] = json!(label);
+                }
+                if !model.efforts().is_empty() {
+                    entry["reasoning"] = json!(model.efforts());
+                }
+                if let Some(default) = model.default_effort() {
+                    entry["default_reasoning"] = json!(default);
+                }
+                entry["verified"] = json!(provider.is_some_and(|provider| {
+                    catalog.iter().any(|catalog_model| {
+                        catalog_model.provider == provider
+                            && catalog_model.model_id == model.id()
+                            && catalog_model.advertisement
+                                == aifuel_core::CapabilityState::Supported
+                    })
+                }));
+                data.push(entry);
             }
         }
     }

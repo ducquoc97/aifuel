@@ -48,9 +48,14 @@ export function assembleSelector(v: PickerValue): string {
   return v.agent + (m ? "/" + m : "") + (v.effort ? "@" + v.effort : "");
 }
 
-// Select-style dropdown for the model field - only catalog models can
+// Select-style dropdown for the model field - only declared models can
 // be picked. While open the input becomes a filter query; the
 // committed value changes only on click/Enter.
+export interface ModelSuggestion {
+  id: string;
+  verified: boolean;
+}
+
 function ModelCombobox({
   value,
   onChange,
@@ -60,7 +65,7 @@ function ModelCombobox({
 }: {
   value: string;
   onChange: (v: string) => void;
-  suggestions: string[];
+  suggestions: ModelSuggestion[];
   disabled?: boolean;
   onInteract?: () => void;
 }) {
@@ -73,11 +78,11 @@ function ModelCombobox({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return suggestions.slice(0, 300);
-    const hit = suggestions.filter((s) => s.toLowerCase().includes(q));
+    const hit = suggestions.filter((s) => s.id.toLowerCase().includes(q));
     // Prefix matches first, substring hits after.
     hit.sort(
       (a, b) =>
-        Number(b.toLowerCase().startsWith(q)) - Number(a.toLowerCase().startsWith(q)),
+        Number(b.id.toLowerCase().startsWith(q)) - Number(a.id.toLowerCase().startsWith(q)),
     );
     return hit.slice(0, 300);
   }, [query, suggestions]);
@@ -99,8 +104,8 @@ function ModelCombobox({
     if (open) setHighlight(0);
   }, [open, query]);
 
-  const pick = (s: string) => {
-    onChange(s);
+  const pick = (s: ModelSuggestion) => {
+    onChange(s.id);
     close();
   };
 
@@ -152,19 +157,27 @@ function ModelCombobox({
         >
           {filtered.map((s, i) => (
             <button
-              key={s}
+              key={s.id}
               type="button"
               role="option"
               aria-selected={i === highlight}
               className={cn(
-                "block w-full text-left px-2.5 py-1 font-mono text-[11.5px] text-ink-80 truncate",
+                "flex w-full items-center gap-1.5 text-left px-2.5 py-1 font-mono text-[11.5px] text-ink-80",
                 i === highlight ? "bg-accent-tint text-accent" : "hover:bg-ink/[0.04]",
               )}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => pick(s)}
               onMouseEnter={() => setHighlight(i)}
             >
-              {s}
+              <span className="truncate">{s.id}</span>
+              {!s.verified && (
+                <span
+                  className="shrink-0 rounded px-1 text-[9.5px] font-sans uppercase tracking-wide text-warn bg-warn-tint"
+                  title="Not in the provider's discovered catalog"
+                >
+                  unverified
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -200,12 +213,12 @@ export function SelectorPicker({
     return m;
   }, [entries]);
 
-  const modelSuggestions = useMemo(() => {
+  const modelSuggestions = useMemo<ModelSuggestion[]>(() => {
     if (!value.agent || value.agent === PICKER_RAW) return [];
     const prefix = value.agent + "/";
     return entries
       .filter((e) => e.id && e.id.startsWith(prefix))
-      .map((e) => e.id.slice(prefix.length));
+      .map((e) => ({ id: e.id.slice(prefix.length), verified: e.verified !== false }));
   }, [entries, value.agent]);
 
   const modelEntry =

@@ -137,3 +137,4 @@ This is a single-context repo with root `CONTEXT.md` and `docs/adr/`. See `docs/
 - The dashboard UI lives in `ui/` as a Vite + React + TypeScript + Tailwind + shadcn app (light theme only, Apple HIG).
 - The old vanilla `src/ui/` tree is deleted; do NOT reintroduce it. New UI work goes in `ui/`.
 - Build order: `pnpm -C ui build` produces `ui/dist`, which `crates/aifuel` embeds at compile time via `rust-embed`. Run the pnpm build before `cargo build`, or use `pnpm -C ui dev` (proxies `/api` and `/v1` to `127.0.0.1:8788`) for local UI iteration.
+- The model list pickers read from `gateway.json`'s optional `models` map (integration id to `"model-id"` strings or `{"id", "label", "efforts", "default_effort"}` entries). It is the single advertised source: provider-discovered catalogs only feed effort validation and the `verified` flag on each entry.

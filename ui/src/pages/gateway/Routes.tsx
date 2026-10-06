@@ -73,11 +73,12 @@ export default function Routes() {
 
   // The API replaces the whole table, so every mutation is: fetch the
   // current table, apply the change client-side, PUT the merged object.
+  // Unknown top-level keys (`models`, ...) pass through untouched.
   const mutate = useCallback(async (fn: (t: RouteTable) => void) => {
-    const data = await apiGet<{ aliases?: Record<string, string>; combos?: Record<string, string[]> }>(
+    const data = await apiGet<RouteTable & Record<string, unknown>>(
       "/api/gateway/routes",
     );
-    const t = { aliases: data.aliases || {}, combos: data.combos || {} };
+    const t = { ...data, aliases: data.aliases || {}, combos: data.combos || {} };
     fn(t);
     await apiPut("/api/gateway/routes", t);
   }, []);
