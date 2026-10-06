@@ -101,13 +101,20 @@ fn persist_model_catalog_discovery(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
+            // Provenance names how the list was observed: Codex reads the
+            // catalog bundled in its binary, while Devin's `models list` is
+            // a live account-scoped call through the CLI.
+            let provenance = match provider {
+                ProviderKey::Codex => CatalogProvenance::BundledCatalog,
+                _ => CatalogProvenance::NativeInterface,
+            };
             let models = models
                 .into_iter()
                 .map(|entry| {
                     let mut model = CatalogModel::new(
                         provider,
                         entry.model_id,
-                        CatalogProvenance::BundledCatalog,
+                        provenance,
                         discovered_at,
                     );
                     model.advertisement = CapabilityState::Supported;

@@ -151,8 +151,17 @@ async fn run_codex(args: &[&str]) -> Result<String, String> {
         }
         if Instant::now() >= deadline {
             let _ = kill_and_wait(&mut child).await;
-            let _ = stdout_reader.await;
+            // codex 0.160 writes the whole catalog then hangs instead of
+            // exiting: accept output that already holds a complete JSON
+            // document. Anything partial stays a timeout error.
+            let stdout = match stdout_reader.await {
+                Ok(Ok(output)) => output.text,
+                _ => String::new(),
+            };
             let _ = stderr_reader.await;
+            if is_complete_json(&stdout) {
+                return Ok(stdout);
+            }
             return Err("Codex catalog command exceeded the 10-second setup limit".to_owned());
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -179,6 +188,13 @@ async fn run_codex(args: &[&str]) -> Result<String, String> {
         ));
     }
     Ok(stdout)
+}
+
+/// `true` when `text` parses as a complete JSON document - the signal
+/// that a hung `codex debug models --bundled` already delivered its
+/// whole catalog before the deadline kill.
+fn is_complete_json(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text).is_ok()
 }
 
 #[cfg(test)]
@@ -234,6 +250,16 @@ mod tests {
             .expect("catalog fixture should parse");
         assert_eq!(models[0].supported_efforts, None);
         assert_eq!(models[0].default_effort, None);
+    }
+
+    #[test]
+    fn complete_json_accepts_only_full_documents() {
+        // The timeout recovery path treats fully-emitted JSON as usable
+        // catalog output but partial documents as real timeouts.
+        assert!(is_complete_json(r#"{"models":[{"slug":"x"}]}"#));
+        assert!(!is_complete_json(r#"{"models":[{"slug":"#));
+        assert!(!is_complete_json("codex-cli 0.160.0\n"));
+        assert!(!is_complete_json(""));
     }
 
     #[test]

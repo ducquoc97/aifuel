@@ -42,6 +42,16 @@ pub async fn discover_model_catalog(provider: ProviderKey) -> ProviderCatalogDis
                 diagnostic: error.diagnostic,
             },
         },
+        ProviderKey::Devin => match crate::devin::model_catalog::discover().await {
+            Ok(catalog) => ProviderCatalogDiscovery::Available {
+                integration_version: catalog.integration_version,
+                models: catalog.models,
+            },
+            Err(error) => ProviderCatalogDiscovery::Failed {
+                integration_version: error.integration_version,
+                diagnostic: error.diagnostic,
+            },
+        },
         provider => ProviderCatalogDiscovery::Unsupported {
             diagnostic: format!(
                 "model catalog discovery is not implemented for {provider}; no model list was inferred"

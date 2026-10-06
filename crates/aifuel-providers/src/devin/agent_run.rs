@@ -18,6 +18,9 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     // and created nothing, while read-only tools were auto-approved.
     // `accept-edits` does not prove a workspace boundary; keep workspace-write
     // blocked until native effect tests establish one.
+    // Devin has no separate effort flag: effort is expressed by picking a
+    // variant `model_uid` - the gateway maps a requested effort onto the
+    // `model` argument, so the adapter declares no effort capability.
     ExecutionCapabilities::new(false, false, false, false)
         .with_read_only()
         .with_prompt_completion(),

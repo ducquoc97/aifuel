@@ -7,8 +7,10 @@
 //! block, `message` items map by role, `function_call`/`custom_tool_call`
 //! and their `*_output` partners keep `call_id`/`name` handles as tool
 //! turns, and `reasoning` items drop - the run contract carries one
-//! prompt, so provider-side thinking, `store`, `max_output_tokens`, and
-//! `reasoning` effort do not round-trip yet. `previous_response_id` and
+//! prompt, so provider-side thinking output, `store`, and
+//! `max_output_tokens` do not round-trip. Requested effort does:
+//! `reasoning.effort` (or the shared `reasoning_effort` spelling) reaches
+//! the run as the model-specific effort. `previous_response_id` and
 //! `item_reference` are rejected outright: the gateway stores no
 //! responses, so the full input must arrive each turn.
 //!
@@ -49,9 +51,9 @@ const COMPACT_INSTRUCTION: &str = "Compact this conversation into a dense \
     summary preserving decisions, file paths, and pending tasks.";
 
 /// `POST /v1/responses*` request subset the gateway consumes. Fields
-/// beyond these - `tools`, `tool_choice`, `store`, `reasoning`,
-/// `max_output_tokens`, `include`, `metadata` and friends - are tolerated
-/// and ignored by design, like `ChatRequest`.
+/// beyond these - `tools`, `tool_choice`, `store`, `max_output_tokens`,
+/// `include`, `metadata` and friends - are tolerated and ignored by
+/// design, like `ChatRequest`.
 #[derive(Debug, Deserialize)]
 struct ResponsesRequest {
     /// The routing selector; see the `crate::gateway` module docs for the
@@ -71,6 +73,14 @@ struct ResponsesRequest {
     tool_choice: Option<Value>,
     #[serde(default)]
     stream: bool,
+    /// The Responses-native reasoning block; only its `effort` member is
+    /// consumed - `summary` and friends have no run-contract meaning.
+    #[serde(default)]
+    reasoning: Option<Value>,
+    /// Requested model-specific effort - the spelling the other `/v1`
+    /// surfaces share; wins over `reasoning.effort` when both arrive.
+    #[serde(default)]
+    reasoning_effort: Option<String>,
     /// Continuation handle for a stored response; rejected because the
     /// gateway stores no responses.
     #[serde(default)]
@@ -168,13 +178,30 @@ pub(crate) fn handle<C: StatusCollector>(
     } else {
         transcript
     };
-    let attempts =
-        match execute::resolve_attempts(gateway, &model, &|| Gateway::status(facade, runtime)) {
-            Ok(attempts) => attempts,
-            Err((status, message)) => {
-                return fail(request, &model, responses.stream, status, &message);
-            }
-        };
+    // `reasoning_effort` is the shared spelling; `reasoning.effort` is the
+    // Responses-native object - the flat field wins when both arrive.
+    let effort = responses.reasoning_effort.as_deref().or_else(|| {
+        responses
+            .reasoning
+            .as_ref()
+            .and_then(|reasoning| reasoning.get("effort"))
+            .and_then(Value::as_str)
+    });
+    let attempts = match execute::resolve_attempts(
+        gateway,
+        &model,
+        effort,
+        &|| Gateway::status(facade, runtime),
+        &execute::Decide {
+            runtime,
+            prompt: &prompt,
+        },
+    ) {
+        Ok(attempts) => attempts,
+        Err((status, message)) => {
+            return fail(request, &model, responses.stream, status, &message);
+        }
+    };
     responses_serve::serve(
         request,
         gateway,

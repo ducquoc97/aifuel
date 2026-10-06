@@ -29,6 +29,7 @@ mod devin;
 mod devin_oauth;
 mod discovery;
 mod embeddings;
+mod forward;
 mod gemini;
 mod integrations;
 mod local_adapter;
@@ -60,6 +61,7 @@ pub use credentials::{
 };
 pub use discovery::{DiscoveryContext, DiscoveryContextError};
 pub use embeddings::{EmbeddingsOutcome, embeddings};
+pub use forward::{ForwardOutcome, post_json, post_raw};
 pub use integrations::{
     ChainDescriptor, ChainStep, ChainStrategy, ConfigError, EvidenceContext, EvidenceSource,
     InstanceDescriptor, InstanceEnvSource, IntegrationDescriptor, IntegrationOrigin,

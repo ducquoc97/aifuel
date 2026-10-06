@@ -17,6 +17,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use tiny_http::Request;
 
 /// The file `routes` reads - repeated because `routes::FILE_NAME` is
@@ -41,6 +42,60 @@ struct RouteTable {
     aliases: BTreeMap<String, String>,
     #[serde(default)]
     combos: BTreeMap<String, Vec<String>>,
+    /// Optional `models` map - integration id to the model ids this
+    /// deployment advertises to client pickers. It is user-managed and
+    /// carried untouched through routes PUTs: an empty map omits the
+    /// key entirely.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    models: BTreeMap<String, Vec<DeclaredModel>>,
+}
+
+/// One declared model: the bare `"model-id"` string, or
+/// `{"id": ..., "label": ..., "efforts": [...], "default_effort": ...}`
+/// when the picker should offer reasoning effort for it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub(crate) enum DeclaredModel {
+    Id(String),
+    Full {
+        id: String,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        efforts: Vec<String>,
+        #[serde(default)]
+        default_effort: Option<String>,
+    },
+}
+
+impl DeclaredModel {
+    pub(crate) fn id(&self) -> &str {
+        match self {
+            DeclaredModel::Id(id) => id,
+            DeclaredModel::Full { id, .. } => id,
+        }
+    }
+
+    pub(crate) fn label(&self) -> Option<&str> {
+        match self {
+            DeclaredModel::Id(_) => None,
+            DeclaredModel::Full { label, .. } => label.as_deref(),
+        }
+    }
+
+    pub(crate) fn efforts(&self) -> &[String] {
+        match self {
+            DeclaredModel::Id(_) => &[],
+            DeclaredModel::Full { efforts, .. } => efforts,
+        }
+    }
+
+    pub(crate) fn default_effort(&self) -> Option<&str> {
+        match self {
+            DeclaredModel::Id(_) => None,
+            DeclaredModel::Full { default_effort, .. } => default_effort.as_deref(),
+        }
+    }
 }
 
 /// `GET /api/gateway/routes`: the configured aliases and combos.
@@ -70,6 +125,61 @@ pub(crate) fn put(mut request: Request) {
 
 fn config_path() -> Result<PathBuf, String> {
     Ok(crate::aifuel_config_dir()?.join(FILE_NAME))
+}
+
+/// The `models` map declared in `gateway.json`, re-read per call the
+/// same way `resolve` re-reads routes. The release-shipped defaults in
+/// `builtin_models.json` merge under it - user entries win on the same
+/// model id, so a hand declaration can correct or extend what a release
+/// ships. A missing or malformed file falls back to the bundled list
+/// alone - `models::list` must never break over it.
+pub(crate) fn declared_models() -> BTreeMap<String, Vec<DeclaredModel>> {
+    let user = config_path()
+        .and_then(|path| load(&path))
+        .map(|table| table.models)
+        .unwrap_or_default();
+    merge_declared(builtin_models().clone(), user)
+}
+
+/// The default model for an integration: the first declared entry,
+/// bundled defaults then user additions. Unpinned selectors (`auto`,
+/// `decide`, a bare integration) send it so HTTP endpoints that require
+/// `model` can serve without a `<integration>/<model>` pin.
+pub(crate) fn default_declared_model(integration: &str) -> Option<String> {
+    declared_models()
+        .get(integration)
+        .and_then(|models| models.first())
+        .map(|model| model.id().to_owned())
+}
+
+/// The model list a release ships, bundled into the binary the way
+/// LiteLLM ships its model registry: maintainers update
+/// `builtin_models.json` per release and users never have to declare
+/// the defaults by hand.
+fn builtin_models() -> &'static BTreeMap<String, Vec<DeclaredModel>> {
+    static BUILTIN: OnceLock<BTreeMap<String, Vec<DeclaredModel>>> = OnceLock::new();
+    BUILTIN.get_or_init(|| {
+        serde_json::from_str(include_str!("builtin_models.json"))
+            .expect("builtin model declarations must parse")
+    })
+}
+
+/// User declarations ride over the bundled defaults: an id the user
+/// re-declares replaces that entry in place, new ids append.
+fn merge_declared(
+    mut declared: BTreeMap<String, Vec<DeclaredModel>>,
+    user: BTreeMap<String, Vec<DeclaredModel>>,
+) -> BTreeMap<String, Vec<DeclaredModel>> {
+    for (integration, models) in user {
+        let merged = declared.entry(integration).or_default();
+        for model in models {
+            match merged.iter_mut().find(|existing| existing.id() == model.id()) {
+                Some(existing) => *existing = model,
+                None => merged.push(model),
+            }
+        }
+    }
+    declared
 }
 
 /// Read the route table from `path`, mirroring `routes::load_from`: a
@@ -109,6 +219,28 @@ fn validate(table: &RouteTable) -> Result<(), String> {
         }
         if selectors.iter().any(|selector| selector.trim().is_empty()) {
             return Err(format!("combo {name:?} has an empty selector"));
+        }
+    }
+    for (integration, models) in &table.models {
+        if integration.trim().is_empty() {
+            return Err("model declarations need a non-empty integration id".to_owned());
+        }
+        for model in models {
+            if model.id().trim().is_empty() {
+                return Err(format!("models declared for {integration:?} need a non-empty id"));
+            }
+            if model.efforts().iter().any(|effort| effort.trim().is_empty()) {
+                return Err(format!(
+                    "declared model {:?} has an empty effort",
+                    model.id()
+                ));
+            }
+            if model.default_effort().is_some_and(|effort| effort.trim().is_empty()) {
+                return Err(format!(
+                    "declared model {:?} has an empty default effort",
+                    model.id()
+                ));
+            }
         }
     }
     Ok(())
@@ -287,6 +419,124 @@ mod tests {
     }
 
     #[test]
+    fn declared_models_parse_as_ids_or_full_entries_and_round_trip() {
+        // The `models` map accepts both spellings and survives a
+        // save/load cycle so routes PUTs never drop declarations.
+        let table: RouteTable = serde_json::from_str(
+            r#"{"models": {"claude": ["sonnet-4-6", {"id": "opus-4-1", "efforts": ["high"], "default_effort": "high", "label": "Opus"}]}}"#,
+        )
+        .expect("declared models decode");
+        let claude = &table.models["claude"];
+        assert_eq!(claude[0].id(), "sonnet-4-6");
+        assert_eq!(claude[0].efforts(), &[] as &[String]);
+        assert_eq!(claude[1].id(), "opus-4-1");
+        assert_eq!(claude[1].efforts(), &["high".to_owned()]);
+        assert_eq!(claude[1].default_effort(), Some("high"));
+        assert_eq!(claude[1].label(), Some("Opus"));
+        assert!(serde_json::from_str::<RouteTable>(r#"{"models": {"claude": "x"}}"#).is_err());
+        assert!(
+            serde_json::from_str::<RouteTable>(r#"{"models": {"claude": [{"label": "x"}]}}"#)
+                .is_err(),
+            "a full entry without id cannot name a model"
+        );
+
+        let dir = test_dir("declared");
+        let path = dir.join(FILE_NAME);
+        save(&path, &table).expect("save");
+        let back = load(&path).expect("load back");
+        assert_eq!(back.models["claude"].len(), 2);
+        std::fs::remove_dir_all(&dir).expect("test dir removable");
+    }
+
+    #[test]
+    fn validation_rejects_declared_models_the_picker_cannot_use() {
+        let declared = |integration: &str, models: Vec<DeclaredModel>| RouteTable {
+            models: BTreeMap::from([(integration.to_owned(), models)]),
+            ..RouteTable::default()
+        };
+        assert!(validate(&declared("claude", vec![DeclaredModel::Id("x".into())])).is_ok());
+        assert!(
+            validate(&declared("", vec![DeclaredModel::Id("x".into())])).is_err(),
+            "a blank integration id can never match an adapter"
+        );
+        assert!(
+            validate(&declared("claude", vec![DeclaredModel::Id("  ".into())])).is_err(),
+            "a blank model id emits no selectable entry"
+        );
+        assert!(
+            validate(&declared(
+                "claude",
+                vec![serde_json::from_str(r#"{"id":"x","efforts":[""]}"#).unwrap()],
+            ))
+            .is_err(),
+            "an empty effort strings looks like an option but selects nothing"
+        );
+    }
+
+    #[test]
+    fn an_empty_models_map_serializes_away() {
+        // `models` is optional: an empty map must not start appearing
+        // in files that never declared one.
+        let body = serde_json::to_value(&RouteTable::default()).expect("serializes");
+        assert_eq!(body, json!({"aliases": {}, "combos": {}}));
+    }
+
+    #[test]
+    fn the_bundled_release_list_parses_in_the_declared_schema() {
+        // `builtin_models.json` ships in the binary: a malformed file
+        // would panic every models call, so it is parse-checked here.
+        let builtin = builtin_models();
+        assert!(!builtin.is_empty(), "the release list ships empty");
+        for (integration, models) in builtin {
+            assert!(
+                !integration.trim().is_empty(),
+                "a bundled key must name an integration"
+            );
+            assert!(
+                models.iter().all(|model| !model.id().trim().is_empty()),
+                "bundled models for {integration} need non-empty ids"
+            );
+        }
+    }
+
+    #[test]
+    fn user_declarations_override_bundled_entries_and_append_new_ones() {
+        let mut builtin = BTreeMap::new();
+        builtin.insert(
+            "codex".to_owned(),
+            vec![
+                DeclaredModel::Id("gpt-a".to_owned()),
+                serde_json::from_str(r#"{"id":"gpt-b","efforts":["low"]}"#).unwrap(),
+            ],
+        );
+        let mut user = BTreeMap::new();
+        user.insert(
+            "codex".to_owned(),
+            vec![
+                serde_json::from_str::<DeclaredModel>(r#"{"id":"gpt-b","efforts":["max"]}"#)
+                    .unwrap(),
+                DeclaredModel::Id("gpt-c".to_owned()),
+            ],
+        );
+        user.insert(
+            "claude".to_owned(),
+            vec![DeclaredModel::Id("sonnet".to_owned())],
+        );
+
+        let merged = merge_declared(builtin, user);
+        let codex = &merged["codex"];
+        assert_eq!(codex.len(), 3, "override replaces in place, not a duplicate");
+        assert_eq!(codex[0].id(), "gpt-a");
+        assert_eq!(
+            codex[1].efforts(),
+            &["max".to_owned()],
+            "the user's declaration wins over the bundled entry"
+        );
+        assert_eq!(codex[2].id(), "gpt-c");
+        assert_eq!(merged["claude"][0].id(), "sonnet");
+    }
+
+    #[test]
     fn a_malformed_file_errors_instead_of_reading_empty() {
         // The same contract `routes::load_from` enforces on `/v1`: a
         // broken route table fails loudly rather than looking like an
@@ -332,6 +582,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            ..RouteTable::default()
         };
         assert!(validate(&table(&[("cheap", "codex")], &[("fast", &["auto"])])).is_ok());
         assert!(

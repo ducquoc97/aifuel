@@ -159,6 +159,17 @@ pub fn builtin_integrations() -> Vec<IntegrationDescriptor> {
             LMSTUDIO_BASE_URL,
             vec![".lmstudio"],
         ),
+        // TypeSafe AI's System One decision surface: an API-key HTTP
+        // endpoint like the `api_keys` catalog, but the declared Wire Api
+        // is `Decisions` - a structured `state` + `questions` surface the
+        // gateway forwards to, never an Agent Run engine.
+        decisions_endpoint(
+            "typesafe:api-key",
+            "typesafe",
+            "TypeSafe AI (API key)",
+            "https://api.typesafe.ai/v1",
+            "TYPESAFE_API_KEY",
+        ),
     ]
     .into_iter()
     // The API-key catalog: OpenAI-compatible endpoints plus Anthropic's
@@ -261,6 +272,47 @@ fn local_endpoint(
     )
 }
 
+/// An API-key endpoint speaking `WireApi::Decisions` - a structured
+/// decision surface, not a chat engine. The binding is the API-key
+/// catalog's `EnvOrStore` shape, but the integration lives beside the
+/// locals here rather than in `api_keys`: that table asserts every row
+/// serves a compiled run surface, and a decision endpoint never does.
+fn decisions_endpoint(
+    id: &str,
+    provider: &str,
+    name: &str,
+    base_url: &str,
+    env_var: &str,
+) -> IntegrationDescriptor {
+    IntegrationDescriptor::builtin(
+        Integration {
+            id: IntegrationId::new(id),
+            provider: ProviderId::new(provider),
+            name: name.to_owned(),
+            execution: ExecutionConfig::Http {
+                endpoint: EndpointConfig {
+                    base_url: base_url.to_owned(),
+                    extra_headers: BTreeMap::new(),
+                    request_timeout_seconds: None,
+                },
+                protocol: WireApi::Decisions,
+                auth: AuthBinding::ApiKey {
+                    source: aifuel_core::ApiKeySource::EnvOrStore {
+                        var: env_var.to_owned(),
+                        credential: aifuel_core::CredentialRef::new(id),
+                    },
+                    delivery: aifuel_core::KeyDelivery::Bearer,
+                },
+            },
+            monitoring: None,
+        },
+        vec![
+            EvidenceSource::EnvVar(env_var.to_owned()),
+            EvidenceSource::ManagedEntry(aifuel_core::CredentialRef::new(id)),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,16 +398,17 @@ mod tests {
     #[test]
     fn no_builtin_declares_a_wire_protocol_without_an_engine() {
         // A builtin on an unserved protocol would be registered but never
-        // executable, which is worse than absent. The documented exception
-        // is the `*:web` set: browser-session integrations exist to carry
-        // their Monitoring Collection Contract, and the declared protocol
-        // names the upstream surface as evidence.
-        const MONITORING_ONLY: &[&str] = &["claude-web:web"];
+        // executable, which is worse than absent. Two documented
+        // exceptions: the `*:web` set, browser-session integrations that
+        // exist to carry their Monitoring Collection Contract; and the
+        // `WireApi::Decisions` endpoints, which the gateway's `/v1/decisions`
+        // forward serves without an Agent Run engine.
+        const FORWARD_ONLY: &[&str] = &["claude-web:web", "typesafe:api-key"];
         for descriptor in builtin_integrations() {
             if let ExecutionConfig::Http { protocol, .. } = &descriptor.integration.execution {
                 assert!(
                     crate::wire::serves(*protocol)
-                        || MONITORING_ONLY.contains(&descriptor.integration.id.as_str()),
+                        || FORWARD_ONLY.contains(&descriptor.integration.id.as_str()),
                     "builtin {} declares an unserveable Wire Api",
                     descriptor.integration.id
                 );
