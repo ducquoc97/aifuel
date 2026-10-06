@@ -35,7 +35,6 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub(crate) use crate::wire::http;
 pub(crate) use crate::wire::stream::{self, StreamEnd};
 
 /// The longest a stream may produce no bytes before the run fails. Same
@@ -404,6 +403,23 @@ pub(crate) fn jwt_payload(token: &str) -> Option<serde_json::Value> {
 /// decides freshness at request time instead of the adapter guessing.
 pub(crate) fn jwt_exp(token: &str) -> Option<u64> {
     jwt_payload(token)?.get("exp")?.as_u64()
+}
+
+/// Encode base64url (RFC 4648 section 5, no padding) without a base64
+/// dependency - the PKCE verifier/challenge and state encoding.
+pub(crate) fn base64url_encode(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let mut value = 0u32;
+        for (index, byte) in chunk.iter().enumerate() {
+            value |= (*byte as u32) << (16 - index * 8);
+        }
+        for index in 0..=chunk.len() {
+            out.push(ALPHABET[((value >> (18 - index * 6)) & 63) as usize] as char);
+        }
+    }
+    out
 }
 
 /// Decode base64url (RFC 4648 section 5, no padding required) without a

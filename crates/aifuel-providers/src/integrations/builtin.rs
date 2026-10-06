@@ -39,8 +39,8 @@ mod web;
 use super::evidence::EvidenceSource;
 use super::registry::IntegrationDescriptor;
 use aifuel_core::{
-    AuthBinding, CliAdapterId, EndpointConfig, ExecutionConfig, Integration, IntegrationId,
-    ProviderId, ProviderKey, WireApi,
+    AuthBinding, CliAdapterId, CredentialRef, EndpointConfig, ExecutionConfig, Integration,
+    IntegrationId, ProviderId, ProviderKey, WireApi,
 };
 use std::collections::BTreeMap;
 
@@ -123,12 +123,18 @@ pub fn builtin_integrations() -> Vec<IntegrationDescriptor> {
         oauth_cli(
             ProviderKey::Codex,
             "Codex (ChatGPT OAuth)",
-            vec![EvidenceSource::File(".codex/auth.json".to_owned())],
+            vec![
+                // A managed grant minted by `aifuel auth login codex` is
+                // present evidence too, winning over the CLI's file.
+                EvidenceSource::ManagedEntry(CredentialRef::new("codex:oauth")),
+                EvidenceSource::File(".codex/auth.json".to_owned()),
+            ],
         ),
         oauth_cli(
             ProviderKey::Copilot,
             "GitHub Copilot (OAuth)",
             vec![
+                EvidenceSource::ManagedEntry(CredentialRef::new("copilot:oauth")),
                 EvidenceSource::File(".copilot/config.json".to_owned()),
                 EvidenceSource::File(".config/github-copilot/hosts.json".to_owned()),
                 EvidenceSource::File(".config/github-copilot/apps.json".to_owned()),

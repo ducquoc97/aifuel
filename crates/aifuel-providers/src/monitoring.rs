@@ -251,15 +251,16 @@ impl ProviderMonitoring {
             // it off the async worker threads.
             let store = credentials.clone();
             let resolve_integration = integration_id.clone();
-            let resolved =
-                tokio::task::spawn_blocking(move || store.resolve(&binding, &resolve_integration))
-                    .await
-                    .map_err(|error| {
-                        integration_error(
-                            provider_id,
-                            format!("credential resolution could not run: {error}"),
-                        )
-                    });
+            let resolved = tokio::task::spawn_blocking(move || {
+                crate::oauth::resolve_ready(&store, &binding, &resolve_integration)
+            })
+            .await
+            .map_err(|error| {
+                integration_error(
+                    provider_id,
+                    format!("credential resolution could not run: {error}"),
+                )
+            });
             let outcome = match resolved {
                 Err(error) => Err((ObservationState::Unavailable, error.message)),
                 Ok(Err(error)) => Err((

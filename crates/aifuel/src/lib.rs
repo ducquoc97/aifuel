@@ -630,45 +630,9 @@ pub fn mcp_gateway_facade(host_id: &str) -> Result<McpGatewayFacade, String> {
 }
 
 pub(crate) fn user_home_dir() -> Result<PathBuf, String> {
-    #[cfg(windows)]
-    let home = env::var_os("USERPROFILE").map(PathBuf::from).or_else(|| {
-        let mut path = PathBuf::from(env::var_os("HOMEDRIVE")?);
-        path.push(env::var_os("HOMEPATH")?);
-        Some(path)
-    });
-    #[cfg(not(windows))]
-    let home = env::var_os("HOME").map(PathBuf::from);
-
-    home.filter(|path| path.is_absolute())
-        .ok_or_else(|| "the user's home directory could not be resolved".to_owned())
+    aifuel_core::user_home_dir()
 }
 
-#[cfg(windows)]
-pub(crate) fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
-    env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .ok_or_else(|| {
-            "the user's application configuration directory could not be resolved".to_owned()
-        })
-}
-
-#[cfg(target_os = "macos")]
 pub(crate) fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
-    Ok(user_home.join("Library").join("Application Support"))
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-pub(crate) fn user_config_dir(user_home: &std::path::Path) -> Result<PathBuf, String> {
-    if let Some(config_home) = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
-        && config_home.is_absolute()
-    {
-        return Ok(config_home);
-    }
-    Ok(user_home.join(".config"))
-}
-
-#[cfg(not(any(unix, windows)))]
-pub(crate) fn user_config_dir(_user_home: &std::path::Path) -> Result<PathBuf, String> {
-    Err("the user's application configuration directory could not be resolved".to_owned())
+    aifuel_core::user_config_dir(user_home)
 }

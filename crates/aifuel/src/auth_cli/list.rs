@@ -141,7 +141,23 @@ pub(crate) fn describe_source(
     stored: &std::collections::BTreeMap<&CredentialRef, &CredentialMetadata>,
 ) -> String {
     match &descriptor.integration.execution {
-        ExecutionConfig::Cli { .. } => "provider CLI credential".to_owned(),
+        ExecutionConfig::Cli { .. } => {
+            // `*:oauth` adapters read a managed grant before the provider's
+            // own credential files, so presence is reported on exactly the
+            // integration the grant binds to - not its bare Cli sibling.
+            let id = descriptor.integration.id.as_str();
+            if aifuel_providers::oauth::profiles().any(|spec| spec.integration == id) {
+                let reference = CredentialRef::new(id);
+                if stored.contains_key(&reference) {
+                    return format!(
+                        "managed OAuth grant {id} (present); provider credential as fallback"
+                    );
+                }
+                return "provider credential (managed grant absent; `aifuel auth login` can mint one)"
+                    .to_owned();
+            }
+            "provider CLI credential".to_owned()
+        }
         ExecutionConfig::Http { auth, .. } => match auth {
             AuthBinding::None => "none".to_owned(),
             AuthBinding::ApiKey {

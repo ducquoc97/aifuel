@@ -88,9 +88,12 @@ impl WireExecutionAdapter {
                     .collect())
             }
             other => Ok(vec![KeyAttempt {
-                auth: self
-                    .credentials
-                    .resolve_with_env(other, &self.auth_identity, env)?,
+                auth: crate::oauth::resolve_ready_with_env(
+                    &self.credentials,
+                    other,
+                    &self.auth_identity,
+                    env,
+                )?,
                 reference: None,
                 state: ApiKeyState::default(),
                 attempted: false,

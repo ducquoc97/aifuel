@@ -13,7 +13,7 @@
 //! explicit explanation instead of silently routing onto the `devin` CLI.
 
 use crate::agent_execution::ExecutionCapabilities;
-use crate::oauth_http;
+use crate::oauth::http as oauth_http;
 use aifuel_core::{
     AgentExecutionAdapter, AgentIntegrationInfo, AgentPresenceEvidence, AgentPresenceState,
     AgentRunError, AgentRunOutputHandler, AgentSetupGuidance, IntegrationId, ProviderId,

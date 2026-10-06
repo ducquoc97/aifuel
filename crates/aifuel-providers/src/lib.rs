@@ -34,7 +34,7 @@ mod integrations;
 mod local_adapter;
 mod model_catalog;
 mod monitoring;
-mod oauth_http;
+pub mod oauth;
 pub mod opencode_runtime;
 mod openrouter;
 mod quota;

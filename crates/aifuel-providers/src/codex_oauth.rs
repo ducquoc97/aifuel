@@ -15,12 +15,14 @@
 //! errors.
 
 use crate::agent_execution::ExecutionCapabilities;
-use crate::oauth_http::{self, http};
+use crate::credentials::{CredentialStore, ManagedCredential};
+use crate::oauth::http as oauth_http;
+use crate::wire::http;
 use crate::wire::stream::{self, DataVerdict};
 use aifuel_core::{
     AgentExecutionAdapter, AgentIntegrationInfo, AgentRunError, AgentRunOutputHandler,
-    AgentSetupGuidance, IntegrationId, ProviderId, ProviderKey, RunCancellationToken, RunRequest,
-    RunResult, TokenUsage,
+    AgentSetupGuidance, CredentialRef, IntegrationId, OAuthProfileId, ProviderId, ProviderKey,
+    RunCancellationToken, RunRequest, RunResult, TokenUsage,
 };
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
@@ -29,6 +31,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
+
+/// Where the serving grant lives. An AI Fuel Managed Credential wins when
+/// `aifuel auth login codex` recorded one; the first-party CLI's
+/// `auth.json` remains the fallback so an existing sign-in keeps working.
+enum GrantSource {
+    Managed,
+    File,
+}
 
 /// The Codex backend's Responses surface: the endpoint the first-party CLI
 /// itself posts to for a ChatGPT-subscription run. It is not the public
@@ -45,8 +55,14 @@ const INSTRUCTIONS: &str = "You are a ChatGPT agent.";
 const DEFAULT_MODEL: &str = "gpt-6-luna";
 
 /// The relogin hint attached to every credential rejection: the file the
-/// adapter reads is the one `codex login` writes.
-const RELOGIN_HINT: &str = "the stored Codex OAuth credential was rejected or is missing; run `codex login` to re-authenticate";
+/// adapter reads is the one `codex login` writes, and `aifuel auth login
+/// codex` mints the managed grant that wins over it.
+const RELOGIN_HINT: &str = "the stored Codex OAuth credential was rejected or is missing; run `codex login` or `aifuel auth login codex` to re-authenticate";
+
+/// The Credential Reference `aifuel auth login codex` stores the managed
+/// grant under - the serving integration's id, matching the api-key
+/// naming convention.
+const MANAGED_REFERENCE: &str = "codex:oauth";
 
 /// The OpenAI OAuth token endpoint the first-party `codex` CLI posts the
 /// `refresh_token` grant to (`codex-rs` login manager `REFRESH_TOKEN_URL`,
@@ -70,6 +86,7 @@ pub(crate) static ADAPTER: CodexOAuthAdapter = CodexOAuthAdapter {
     responses_url: Cow::Borrowed(RESPONSES_URL),
     token_url: Cow::Borrowed(TOKEN_URL),
     home: None,
+    store: None,
     client: OnceLock::new(),
     refresh_lock: OnceLock::new(),
 };
@@ -107,10 +124,14 @@ pub(crate) struct CodexOAuthAdapter {
     responses_url: Cow<'static, str>,
     token_url: Cow<'static, str>,
     home: Option<PathBuf>,
+    /// `None` resolves the shared user store; tests pin a temporary one.
+    store: Option<CredentialStore>,
     client: OnceLock<reqwest::Client>,
-    /// Serializes the refresh exchange and write-back so concurrent runs
-    /// spend the rotation-consuming grant once: a second waiter re-reads
-    /// the file under the lock and runs with what the first landed.
+    /// Serializes the file-source refresh exchange and write-back so
+    /// concurrent runs spend the rotation-consuming grant once: a second
+    /// waiter re-reads the file under the lock and runs with what the
+    /// first landed. Managed grants serialize on the store's own sidecar
+    /// lock inside `oauth::refresh_grant` instead.
     refresh_lock: OnceLock<tokio::sync::Mutex<()>>,
 }
 
@@ -137,14 +158,93 @@ impl CodexOAuthAdapter {
         Ok(self.home()?.join(".codex/auth.json"))
     }
 
+    /// The Credential Store this adapter shares with `aifuel auth`: the
+    /// pinned one in tests, the user configuration directory's otherwise.
+    fn store(&self) -> Result<CredentialStore, AgentRunError> {
+        match &self.store {
+            Some(store) => Ok(store.clone()),
+            None => CredentialStore::user_default()
+                .map_err(|error| AgentRunError::InvalidRequest(error.to_string())),
+        }
+    }
+
+    /// The managed grant `aifuel auth login codex` recorded under the
+    /// integration's Credential Reference, or `None` when the store holds
+    /// none and the provider-owned file is the fallback. Kind and
+    /// destination mismatches fail closed inside `managed_oauth_grant`.
+    fn managed_credentials(&self) -> Result<Option<CodexCredentials>, AgentRunError> {
+        let reference = CredentialRef::new(MANAGED_REFERENCE);
+        let Some(record) = crate::oauth::managed_oauth_grant(&self.store()?, &reference)
+            .map_err(|error| AgentRunError::InvalidRequest(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let ManagedCredential::OAuth {
+            access,
+            refresh,
+            expires,
+            account_id,
+            ..
+        } = record
+        else {
+            unreachable!("the kind check inside managed_oauth_grant settles it");
+        };
+        Ok(Some(CodexCredentials {
+            expires_at: expires
+                .and_then(|at| u64::try_from(at).ok())
+                .or_else(|| oauth_http::jwt_exp(&access)),
+            access_token: access,
+            refresh_token: refresh,
+            account_id,
+        }))
+    }
+
     /// Read the OAuth material the run needs. Presence, JSON shape, and the
     /// `tokens` object are validated here - the credential file's
     /// `auth_mode: "apikey"` layout (an `OPENAI_API_KEY` field, no
     /// `tokens`) is a managed API-key credential, not the subscription one
     /// this integration serves, and reads as "not signed in".
-    fn credentials(&self) -> Result<CodexCredentials, AgentRunError> {
+    fn credentials(&self) -> Result<(CodexCredentials, GrantSource), AgentRunError> {
+        if let Some(managed) = self.managed_credentials()? {
+            return Ok((managed, GrantSource::Managed));
+        }
         let path = self.auth_json_path()?;
         credentials_from(&path, &read_auth_json(&path)?)
+            .map(|credentials| (credentials, GrantSource::File))
+    }
+
+    /// Rotate the stored token set, dispatching on where the grant lives:
+    /// a managed grant refreshes through the Credential Store transaction
+    /// (`oauth::refresh_grant` serializes contenders on the sidecar lock);
+    /// a provider-owned file through the adapter's own lock and atomic
+    /// rewrite below.
+    async fn refresh(
+        &self,
+        source: GrantSource,
+        deadline: Option<Instant>,
+        cancellation: &RunCancellationToken,
+    ) -> Result<CodexCredentials, AgentRunError> {
+        match source {
+            GrantSource::File => self.refresh_file(deadline, cancellation).await,
+            GrantSource::Managed => {
+                let store = self.store()?;
+                let reference = CredentialRef::new(MANAGED_REFERENCE);
+                let spec = crate::oauth::profile(&OAuthProfileId::new("codex"))
+                    .expect("the codex profile is compiled");
+                let refreshed = tokio::task::spawn_blocking(move || {
+                    crate::oauth::refresh_grant(&store, &reference, spec)
+                })
+                .await
+                .map_err(|error| AgentRunError::Io(std::io::Error::other(error)))?
+                .map_err(|error| AgentRunError::InvalidRequest(error.to_string()));
+                refreshed?;
+                self.managed_credentials()?.ok_or_else(|| {
+                    AgentRunError::InvalidRequest(format!(
+                        "{RELOGIN_HINT} (the managed grant was removed during refresh)"
+                    ))
+                })
+            }
+        }
     }
 
     /// Rotate the stored token set through the OpenAI OAuth token endpoint:
@@ -155,7 +255,7 @@ impl CodexOAuthAdapter {
     /// grant again. Only a successful exchange is written back, atomically
     /// and preserving every unrelated field; a failed exchange touches
     /// nothing on disk.
-    async fn refresh(
+    async fn refresh_file(
         &self,
         deadline: Option<Instant>,
         cancellation: &RunCancellationToken,
@@ -270,13 +370,13 @@ impl CodexOAuthAdapter {
     ) -> Result<RunResult, AgentRunError> {
         let started_at = Instant::now();
         let deadline = request.timeout.map(|timeout| started_at + timeout);
-        let mut credentials = self.credentials()?;
+        let (mut credentials, source) = self.credentials()?;
         // A locally-decodable expiry inside the refresh margin triggers the
         // same rotation the first-party CLI runs, before the billed
         // request. A dead credential with no refresh grant still fails with
         // the re-login hint the endpoint's own 401 would map to.
         if credentials.needs_refresh() {
-            credentials = self.refresh(deadline, cancellation).await?;
+            credentials = self.refresh(source, deadline, cancellation).await?;
         }
         let model = request
             .model
@@ -339,7 +439,8 @@ impl CodexOAuthAdapter {
 fn read_auth_json(path: &Path) -> Result<Value, AgentRunError> {
     let text = std::fs::read_to_string(path).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => AgentRunError::InvalidRequest(format!(
-            "codex:oauth requires {path:?}; run `codex login` to create it"
+            "codex:oauth requires a managed grant (`aifuel auth login codex`) \
+             or {path:?} (`codex login` creates it)"
         )),
         _ => AgentRunError::Io(error),
     })?;

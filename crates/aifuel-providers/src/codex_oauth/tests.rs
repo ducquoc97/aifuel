@@ -102,6 +102,7 @@ fn adapter_urls(home: &Path, responses_url: String, token_url: String) -> CodexO
         responses_url: Cow::Owned(responses_url),
         token_url: Cow::Owned(token_url),
         home: Some(home.to_path_buf()),
+        store: Some(CredentialStore::new(home.join("credential-store"))),
         client: OnceLock::new(),
         refresh_lock: OnceLock::new(),
     }
@@ -214,12 +215,13 @@ fn credentials_read_access_token_and_account_id() {
     let home = TestHome::new();
     let access = jwt(oauth_http::unix_now() + 3600);
     write_auth(home.path(), &access, Some("acc-123"));
-    let creds = adapter(home.path(), String::new())
+    let (creds, source) = adapter(home.path(), String::new())
         .credentials()
         .expect("credentials");
     assert_eq!(creds.access_token, access);
     assert_eq!(creds.account_id.as_deref(), Some("acc-123"));
     assert!(creds.expires_at.is_some());
+    assert!(matches!(source, GrantSource::File));
 }
 
 #[test]
