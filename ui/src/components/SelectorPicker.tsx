@@ -48,8 +48,9 @@ export function assembleSelector(v: PickerValue): string {
   return v.agent + (m ? "/" + m : "") + (v.effort ? "@" + v.effort : "");
 }
 
-// Filterable dropdown for the model field - datalist cannot scroll
-// well at ~800 catalog entries.
+// Select-style dropdown for the model field - only catalog models can
+// be picked. While open the input becomes a filter query; the
+// committed value changes only on click/Enter.
 function ModelCombobox({
   value,
   onChange,
@@ -64,12 +65,13 @@ function ModelCombobox({
   onInteract?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => {
-    const q = value.trim().toLowerCase();
+    const q = query.trim().toLowerCase();
     if (!q) return suggestions.slice(0, 300);
     const hit = suggestions.filter((s) => s.toLowerCase().includes(q));
     // Prefix matches first, substring hits after.
@@ -78,11 +80,16 @@ function ModelCombobox({
         Number(b.toLowerCase().startsWith(q)) - Number(a.toLowerCase().startsWith(q)),
     );
     return hit.slice(0, 300);
-  }, [value, suggestions]);
+  }, [query, suggestions]);
+
+  const close = () => {
+    setOpen(false);
+    setQuery("");
+  };
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) close();
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -90,28 +97,33 @@ function ModelCombobox({
 
   useEffect(() => {
     if (open) setHighlight(0);
-  }, [open, value]);
+  }, [open, query]);
 
   const pick = (s: string) => {
     onChange(s);
-    setOpen(false);
+    close();
   };
 
   return (
     <div ref={wrapRef} className="relative min-w-0">
       <Input
-        className="font-mono text-xs w-full"
+        className={cn("font-mono text-xs w-full", !open && "cursor-pointer caret-transparent")}
         placeholder="model (blank = default)"
         aria-label="Model"
         autoComplete="off"
         disabled={disabled}
-        value={value}
+        readOnly={!open}
+        value={open ? query : value}
         onFocus={() => {
           setOpen(true);
           onInteract?.();
         }}
+        onClick={() => {
+          setOpen(true);
+          onInteract?.();
+        }}
         onChange={(e) => {
-          onChange(e.target.value);
+          setQuery(e.target.value);
           setOpen(true);
         }}
         onKeyDown={(e) => {
@@ -128,7 +140,7 @@ function ModelCombobox({
               pick(filtered[highlight]);
             }
           } else if (e.key === "Escape") {
-            setOpen(false);
+            close();
           }
         }}
       />
@@ -253,7 +265,11 @@ export function SelectorPicker({
               value={value.model}
               onChange={(model) => set({ model, effort: "" })}
               suggestions={modelSuggestions}
-              disabled={!value.agent || disabled}
+              disabled={
+                !value.agent ||
+                disabled ||
+                (!modelSuggestions.length && !value.model)
+              }
               onInteract={onInteract}
             />
           </div>
