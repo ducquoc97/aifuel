@@ -141,6 +141,17 @@ pub(crate) fn declared_models() -> BTreeMap<String, Vec<DeclaredModel>> {
     merge_declared(builtin_models().clone(), user)
 }
 
+/// The default model for an integration: the first declared entry,
+/// bundled defaults then user additions. Unpinned selectors (`auto`,
+/// `decide`, a bare integration) send it so HTTP endpoints that require
+/// `model` can serve without a `<integration>/<model>` pin.
+pub(crate) fn default_declared_model(integration: &str) -> Option<String> {
+    declared_models()
+        .get(integration)
+        .and_then(|models| models.first())
+        .map(|model| model.id().to_owned())
+}
+
 /// The model list a release ships, bundled into the binary the way
 /// LiteLLM ships its model registry: maintainers update
 /// `builtin_models.json` per release and users never have to declare

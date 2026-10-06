@@ -256,7 +256,10 @@ fn pinned_candidate(
     let model = match model {
         ModelPin::Pinned(model) => Some(model),
         ModelPin::Default => (surface.default_model)(descriptor.provider().as_str())
-            .map(str::to_owned),
+            .map(str::to_owned)
+            .or_else(|| {
+                super::route_config::default_declared_model(descriptor.id().as_str())
+            }),
     };
     let serving_id = instance.map_or_else(|| descriptor.id().clone(), |i| i.id.clone());
     Ok(Some(Candidate {
@@ -341,7 +344,12 @@ fn auto_candidates(
                 auth: auth.clone(),
                 auth_identity: descriptor.id().clone(),
                 env: BTreeMap::new(),
-                model: model.clone(),
+                // `auto` without a model filter sends the integration's
+                // first declared model so endpoints that require one can
+                // serve the candidate.
+                model: model.clone().or_else(|| {
+                    super::route_config::default_declared_model(descriptor.id().as_str())
+                }),
                 path,
             },
         ));

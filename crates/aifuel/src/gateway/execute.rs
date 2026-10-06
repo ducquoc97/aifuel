@@ -268,8 +268,9 @@ fn attempt(
         }
     }
     Ok(Attempt {
-        integration,
-        model,
+        integration: integration.clone(),
+        model: model
+            .or_else(|| super::route_config::default_declared_model(integration.as_str())),
         effort: effort.map(str::to_owned),
     })
 }
