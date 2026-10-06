@@ -187,7 +187,7 @@ impl RuntimeExecutionAdapter {
             .map(|spelling| {
                 Effort::parse(spelling).ok_or_else(|| {
                     AgentRunError::InvalidRequest(format!(
-                        "effort {spelling:?} is not selectable; expected low, medium, high, or max"
+                        "effort {spelling:?} is not selectable; expected low, medium, high, xhigh, max, or ultra"
                     ))
                 })
             })

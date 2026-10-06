@@ -153,12 +153,19 @@ fn keyed_api_key(
     credentials: &aifuel_providers::CredentialStore,
 ) -> Option<RouteCandidate> {
     let ExecutionConfig::Http {
+        protocol,
         auth: AuthBinding::ApiKey { source, delivery },
         ..
     } = &descriptor.integration.execution
     else {
         return None;
     };
+    // A `WireApi::Decisions` endpoint has no chat engine: forwarding-only
+    // integrations stay registered for `/v1/decisions` but can never be a
+    // run candidate.
+    if !aifuel_providers::wire_serves(*protocol) {
+        return None;
+    }
     if matches!(delivery, aifuel_core::KeyDelivery::Cookie { .. }) {
         return None;
     }

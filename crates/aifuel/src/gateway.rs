@@ -12,6 +12,12 @@
 //! - `<integration>/<model>` pins one integration and passes the remainder
 //!   as the provider-native model id (split on the first `/`, so model ids
 //!   containing slashes like `openai/gpt-5` still work).
+//! - A `@<effort>` suffix on any selector pins a model-specific effort
+//!   (`codex/gpt-5.6-terra@high`, `devin/swe-2@swe-2-max`); the
+//!   request-level `reasoning_effort` field applies when no selector pins
+//!   one. Effort values are the provider's own spellings - Codex takes its
+//!   reasoning levels, Devin takes the variant uid from `devin models
+//!   list`.
 //! - A bare `<integration>` or unique `<provider>` runs that target with
 //!   the provider's default model.
 //! - Any other bare string is treated as a catalog model id and routes to
@@ -25,11 +31,15 @@
 //! convention.
 
 mod admin;
+mod audio;
 mod chat;
 mod completions;
+mod decisions;
+mod effort;
 mod embeddings;
 mod execute;
 mod flatten;
+mod forward;
 mod keys;
 mod logs;
 mod messages;
@@ -165,6 +175,15 @@ pub fn handle<C: StatusCollector>(
         }
         (&tiny_http::Method::Post, "/v1/embeddings") => {
             embeddings::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/decisions") => {
+            decisions::handle(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/audio/speech") => {
+            audio::speech(request, gateway, facade, runtime);
+        }
+        (&tiny_http::Method::Post, "/v1/audio/transcriptions") => {
+            audio::transcriptions(request, gateway, facade, runtime);
         }
         (&tiny_http::Method::Post, "/v1/messages")
         | (&tiny_http::Method::Post, "/v1/messages/count_tokens") => {

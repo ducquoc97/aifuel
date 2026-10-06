@@ -167,7 +167,7 @@ where
     // them before a session exists, so /ui/ stays public on every bind.
     if request.method() == &Method::Get && path.starts_with("/ui/") {
         match ui::asset(&path) {
-            Some(asset) => respond_bytes(request, 200, asset.body, asset.content_type),
+            Some(asset) => respond_bytes(request, 200, &asset.body, &asset.content_type),
             None => {
                 drain_body(&mut request);
                 respond(request, 404, "not found", "text/plain");
@@ -246,7 +246,7 @@ fn handle_request<C>(
             return;
         }
         if let Some(asset) = ui::asset(&path) {
-            respond_bytes(request, 200, asset.body, asset.content_type);
+            respond_bytes(request, 200, &asset.body, &asset.content_type);
             return;
         }
         if path.starts_with("/ui/") {

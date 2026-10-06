@@ -1,0 +1,2371 @@
+{
+  "codex": [
+    {
+      "id": "gpt-6-astra",
+      "label": "GPT-6-Astra",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "low"
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "label": "GPT-6.1-Sol",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "low"
+    },
+    {
+      "id": "gpt-6-sol",
+      "label": "GPT-6-Sol",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-6-luna",
+      "label": "GPT-6-Luna",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "label": "GPT-5.6-Sol",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "low"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "label": "GPT-5.6-Terra",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "label": "GPT-5.6-Luna",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-daybreak-blue-latest",
+      "label": "Daybreak Blue",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "low"
+    },
+    {
+      "id": "gpt-daybreak-red-latest",
+      "label": "Daybreak Red",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-5.5",
+      "label": "GPT-5.5",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "codex-auto-review",
+      "label": "Codex Auto Review",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default_effort": "medium"
+    }
+  ],
+  "codex:oauth": [
+    {
+      "id": "gpt-6-astra",
+      "label": "GPT-6-Astra",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "low"
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "label": "GPT-6.1-Sol",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "low"
+    },
+    {
+      "id": "gpt-6-sol",
+      "label": "GPT-6-Sol",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-6-luna",
+      "label": "GPT-6-Luna",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "label": "GPT-5.6-Sol",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "low"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "label": "GPT-5.6-Terra",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "label": "GPT-5.6-Luna",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-daybreak-blue-latest",
+      "label": "Daybreak Blue",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "low"
+    },
+    {
+      "id": "gpt-daybreak-red-latest",
+      "label": "Daybreak Red",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "gpt-5.5",
+      "label": "GPT-5.5",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "default_effort": "medium"
+    },
+    {
+      "id": "codex-auto-review",
+      "label": "Codex Auto Review",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default_effort": "medium"
+    }
+  ],
+  "devin": [
+    {
+      "id": "adaptive",
+      "label": "Adaptive"
+    },
+    {
+      "id": "claude-fable-5",
+      "label": "Claude Fable 5",
+      "efforts": [
+        "claude-5-fable-low",
+        "claude-5-fable-medium",
+        "claude-5-fable-high",
+        "claude-5-fable-xhigh",
+        "claude-5-fable-max"
+      ]
+    },
+    {
+      "id": "claude-fable-5.1",
+      "label": "Claude Fable 5.1",
+      "efforts": [
+        "claude-fable-5-1-medium",
+        "claude-fable-5-1-low",
+        "claude-fable-5-1-high",
+        "claude-fable-5-1-xhigh",
+        "claude-fable-5-1-max"
+      ]
+    },
+    {
+      "id": "claude-haiku-4.5",
+      "label": "Claude Haiku 4.5",
+      "efforts": [
+        "MODEL_PRIVATE_11"
+      ]
+    },
+    {
+      "id": "claude-opus-4.5",
+      "label": "Claude Opus 4.5",
+      "efforts": [
+        "MODEL_CLAUDE_4_5_OPUS",
+        "MODEL_CLAUDE_4_5_OPUS_THINKING"
+      ]
+    },
+    {
+      "id": "claude-opus-4.6",
+      "label": "Claude Opus 4.6",
+      "efforts": [
+        "claude-opus-4-6",
+        "claude-opus-4-6-thinking",
+        "claude-opus-4-6-1m",
+        "claude-opus-4-6-thinking-1m"
+      ]
+    },
+    {
+      "id": "claude-opus-4.7",
+      "label": "Claude Opus 4.7",
+      "efforts": [
+        "claude-opus-4-7-medium",
+        "claude-opus-4-7-low",
+        "claude-opus-4-7-high",
+        "claude-opus-4-7-xhigh",
+        "claude-opus-4-7-max"
+      ]
+    },
+    {
+      "id": "claude-opus-4.8",
+      "label": "Claude Opus 4.8",
+      "efforts": [
+        "claude-opus-4-8-medium",
+        "claude-opus-4-8-low",
+        "claude-opus-4-8-high",
+        "claude-opus-4-8-xhigh",
+        "claude-opus-4-8-max",
+        "claude-opus-4-8-low-fast",
+        "claude-opus-4-8-medium-fast",
+        "claude-opus-4-8-high-fast",
+        "claude-opus-4-8-xhigh-fast",
+        "claude-opus-4-8-max-fast"
+      ]
+    },
+    {
+      "id": "claude-opus-5",
+      "label": "Claude Opus 5",
+      "efforts": [
+        "claude-opus-5-medium",
+        "claude-opus-5-low",
+        "claude-opus-5-high",
+        "claude-opus-5-xhigh",
+        "claude-opus-5-max",
+        "claude-opus-5-low-fast",
+        "claude-opus-5-medium-fast",
+        "claude-opus-5-high-fast",
+        "claude-opus-5-xhigh-fast",
+        "claude-opus-5-max-fast"
+      ]
+    },
+    {
+      "id": "claude-opus-5.5",
+      "label": "Claude Opus 5.5",
+      "efforts": [
+        "claude-opus-5-5-medium",
+        "claude-opus-5-5-low",
+        "claude-opus-5-5-high",
+        "claude-opus-5-5-xhigh",
+        "claude-opus-5-5-max",
+        "claude-opus-5-5-low-fast",
+        "claude-opus-5-5-medium-fast",
+        "claude-opus-5-5-high-fast",
+        "claude-opus-5-5-xhigh-fast",
+        "claude-opus-5-5-max-fast"
+      ]
+    },
+    {
+      "id": "claude-sonnet-4.6",
+      "label": "Claude Sonnet 4.6",
+      "efforts": [
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-6-thinking",
+        "claude-sonnet-4-6-1m",
+        "claude-sonnet-4-6-thinking-1m"
+      ]
+    },
+    {
+      "id": "claude-sonnet-5",
+      "label": "Claude Sonnet 5",
+      "efforts": [
+        "claude-sonnet-5-low",
+        "claude-sonnet-5-medium",
+        "claude-sonnet-5-high",
+        "claude-sonnet-5-xhigh",
+        "claude-sonnet-5-max"
+      ]
+    },
+    {
+      "id": "claude-sonnet-5.5",
+      "label": "Claude Sonnet 5.5",
+      "efforts": [
+        "claude-sonnet-5-5-medium",
+        "claude-sonnet-5-5-low",
+        "claude-sonnet-5-5-high",
+        "claude-sonnet-5-5-xhigh",
+        "claude-sonnet-5-5-max"
+      ]
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "label": "DeepSeek V4 Flash",
+      "efforts": [
+        "deepseek-v4-flash-high",
+        "deepseek-v4-flash-max"
+      ]
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "label": "DeepSeek V4 Pro",
+      "efforts": [
+        "deepseek-v4-pro-high",
+        "deepseek-v4-pro-max"
+      ]
+    },
+    {
+      "id": "deepseek-v4.1-flash",
+      "label": "DeepSeek V4.1 Flash",
+      "efforts": [
+        "deepseek-v4-1-flash-high",
+        "deepseek-v4-1-flash-max"
+      ]
+    },
+    {
+      "id": "fusion",
+      "label": "Fusion",
+      "efforts": [
+        "fusion-claude-fable-5-1-medium-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-high-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-high-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-high-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-high-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-high-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-high-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-high-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-high-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-high-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-high-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-high-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-medium-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-medium-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-medium-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-medium-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-medium-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-medium-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-medium-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-medium-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-medium-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-xhigh-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-xhigh-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-low-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-low-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-low-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-low-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-low-fast-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-low-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-low-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-low-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-low-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-low-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-low-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-max-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-max-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-max-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-max-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-max-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-max-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-max-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-max-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-max-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-max-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-max-fast-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-high-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-high-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-high-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-high-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-high-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-high-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-high-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-low-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-low-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-low-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-low-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-low-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-low-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-low-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-max-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-max-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-max-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-max-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-max-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-max-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-max-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-medium-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-high-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-high-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-high-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-high-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-high-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-high-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-high-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-medium-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-medium-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-medium-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-medium-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-medium-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-medium-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-low-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-low-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-low-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-low-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-low-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-low-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-low-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-max-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-max-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-max-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-max-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-max-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-max-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-max-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-medium-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-high-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-high-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-high-sidekick-glm-5-2",
+        "fusion-claude-opus-5-high-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-high-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-high-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-high-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-high-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-high-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-high-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-high-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-medium-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-medium-sidekick-glm-5-2",
+        "fusion-claude-opus-5-medium-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-medium-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-medium-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-medium-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-medium-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-medium-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-medium-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-xhigh-sidekick-glm-5-2",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-xhigh-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-low-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-low-sidekick-glm-5-2",
+        "fusion-claude-opus-5-low-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-low-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-low-fast-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-low-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-low-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-low-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-low-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-low-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-low-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-max-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-max-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-max-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-max-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-max-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-max-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-max-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-max-sidekick-glm-5-2",
+        "fusion-claude-opus-5-max-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-max-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-max-fast-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-high-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-high-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-high-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-high-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-high-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-high-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-low-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-low-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-low-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-low-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-low-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-low-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-max-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-max-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-max-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-max-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-max-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-max-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-medium-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-high-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-high-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-high-sidekick-swe-2-high",
+        "fusion-claude-opus-5-high-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-high-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-high-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-high-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-high-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-high-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-high-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-high-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-medium-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-medium-sidekick-swe-2-high",
+        "fusion-claude-opus-5-medium-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-medium-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-medium-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-medium-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-medium-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-medium-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-medium-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-xhigh-sidekick-swe-2-high",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-xhigh-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-low-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-low-sidekick-swe-2-high",
+        "fusion-claude-opus-5-low-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-low-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-low-fast-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-low-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-low-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-low-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-low-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-low-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-low-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-max-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-max-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-max-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-max-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-max-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-max-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-max-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-max-sidekick-swe-2-high",
+        "fusion-claude-opus-5-max-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-max-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-max-fast-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-fable-5-1-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-fable-5-1-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-fable-5-1-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-fable-5-1-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-max-fast-sidekick-claude-sonnet-5-5-medium"
+      ]
+    },
+    {
+      "id": "gemini-3-flash",
+      "label": "Gemini 3 Flash",
+      "efforts": [
+        "MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL",
+        "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW",
+        "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
+        "MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH"
+      ]
+    },
+    {
+      "id": "gemini-3.1-pro",
+      "label": "Gemini 3.1 Pro",
+      "efforts": [
+        "gemini-3-1-pro-low",
+        "gemini-3-1-pro-high"
+      ]
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "label": "Gemini 3.5 Flash",
+      "efforts": [
+        "gemini-3-5-flash-minimal",
+        "gemini-3-5-flash-low",
+        "gemini-3-5-flash-medium",
+        "gemini-3-5-flash-high"
+      ]
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "label": "Gemini 3.6 Flash",
+      "efforts": [
+        "gemini-3-6-flash-minimal",
+        "gemini-3-6-flash-low",
+        "gemini-3-6-flash-medium",
+        "gemini-3-6-flash-high"
+      ]
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "label": "Gemini 3.7 Flash",
+      "efforts": [
+        "gemini-3-7-flash-low",
+        "gemini-3-7-flash-medium",
+        "gemini-3-7-flash-high"
+      ]
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "label": "Gemini 3.8 Flash",
+      "efforts": [
+        "gemini-3-8-flash-medium",
+        "gemini-3-8-flash-low",
+        "gemini-3-8-flash-high"
+      ]
+    },
+    {
+      "id": "glm-5.2",
+      "label": "GLM-5.2",
+      "efforts": [
+        "glm-5-2",
+        "glm-5-2-max",
+        "glm-5-2-1m",
+        "glm-5-2-max-1m",
+        "glm-5-2-none",
+        "glm-5-2-none-1m"
+      ]
+    },
+    {
+      "id": "glm-5.3",
+      "label": "GLM-5.3",
+      "efforts": [
+        "glm-5-3-low",
+        "glm-5-3-high",
+        "glm-5-3-max"
+      ]
+    },
+    {
+      "id": "glm-5.3-flash",
+      "label": "GLM-5.3 Flash",
+      "efforts": [
+        "glm-5-3-flash-low",
+        "glm-5-3-flash-high",
+        "glm-5-3-flash-max"
+      ]
+    },
+    {
+      "id": "gpt-4.1",
+      "label": "GPT-4.1",
+      "efforts": [
+        "MODEL_CHAT_GPT_4_1_2025_04_14"
+      ]
+    },
+    {
+      "id": "gpt-5.1",
+      "label": "GPT-5.1",
+      "efforts": [
+        "MODEL_PRIVATE_12",
+        "MODEL_PRIVATE_13",
+        "MODEL_PRIVATE_14",
+        "MODEL_PRIVATE_15"
+      ]
+    },
+    {
+      "id": "gpt-5.2",
+      "label": "GPT-5.2",
+      "efforts": [
+        "MODEL_GPT_5_2_LOW",
+        "MODEL_GPT_5_2_MEDIUM",
+        "MODEL_GPT_5_2_NONE",
+        "MODEL_GPT_5_2_HIGH",
+        "MODEL_GPT_5_2_XHIGH"
+      ]
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "label": "GPT-5.3-Codex",
+      "efforts": [
+        "gpt-5-3-codex-low",
+        "gpt-5-3-codex-medium",
+        "gpt-5-3-codex-high",
+        "gpt-5-3-codex-xhigh",
+        "gpt-5-3-codex-low-priority",
+        "gpt-5-3-codex-medium-priority",
+        "gpt-5-3-codex-high-priority",
+        "gpt-5-3-codex-xhigh-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.4",
+      "label": "GPT-5.4",
+      "efforts": [
+        "gpt-5-4-none",
+        "gpt-5-4-low",
+        "gpt-5-4-medium",
+        "gpt-5-4-high",
+        "gpt-5-4-xhigh",
+        "gpt-5-4-none-priority",
+        "gpt-5-4-low-priority",
+        "gpt-5-4-medium-priority",
+        "gpt-5-4-high-priority",
+        "gpt-5-4-xhigh-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "efforts": [
+        "gpt-5-4-mini-low",
+        "gpt-5-4-mini-medium",
+        "gpt-5-4-mini-high",
+        "gpt-5-4-mini-xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.5",
+      "label": "GPT-5.5",
+      "efforts": [
+        "gpt-5-5-none",
+        "gpt-5-5-low",
+        "gpt-5-5-medium",
+        "gpt-5-5-high",
+        "gpt-5-5-xhigh",
+        "gpt-5-5-none-priority",
+        "gpt-5-5-low-priority",
+        "gpt-5-5-medium-priority",
+        "gpt-5-5-high-priority",
+        "gpt-5-5-xhigh-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "efforts": [
+        "gpt-5-6-luna-none",
+        "gpt-5-6-luna-low",
+        "gpt-5-6-luna-medium",
+        "gpt-5-6-luna-high",
+        "gpt-5-6-luna-xhigh",
+        "gpt-5-6-luna-max",
+        "gpt-5-6-luna-none-priority",
+        "gpt-5-6-luna-low-priority",
+        "gpt-5-6-luna-medium-priority",
+        "gpt-5-6-luna-high-priority",
+        "gpt-5-6-luna-xhigh-priority",
+        "gpt-5-6-luna-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "efforts": [
+        "gpt-5-6-sol-none",
+        "gpt-5-6-sol-low",
+        "gpt-5-6-sol-medium",
+        "gpt-5-6-sol-high",
+        "gpt-5-6-sol-xhigh",
+        "gpt-5-6-sol-max",
+        "gpt-5-6-sol-none-priority",
+        "gpt-5-6-sol-low-priority",
+        "gpt-5-6-sol-medium-priority",
+        "gpt-5-6-sol-high-priority",
+        "gpt-5-6-sol-xhigh-priority",
+        "gpt-5-6-sol-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "efforts": [
+        "gpt-5-6-terra-none",
+        "gpt-5-6-terra-low",
+        "gpt-5-6-terra-medium",
+        "gpt-5-6-terra-high",
+        "gpt-5-6-terra-xhigh",
+        "gpt-5-6-terra-max",
+        "gpt-5-6-terra-none-priority",
+        "gpt-5-6-terra-low-priority",
+        "gpt-5-6-terra-medium-priority",
+        "gpt-5-6-terra-high-priority",
+        "gpt-5-6-terra-xhigh-priority",
+        "gpt-5-6-terra-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-6-astra",
+      "label": "GPT-6 Astra",
+      "efforts": [
+        "gpt-6-astra-medium",
+        "gpt-6-astra-low",
+        "gpt-6-astra-high",
+        "gpt-6-astra-xhigh",
+        "gpt-6-astra-max",
+        "gpt-6-astra-low-priority",
+        "gpt-6-astra-medium-priority",
+        "gpt-6-astra-high-priority",
+        "gpt-6-astra-xhigh-priority",
+        "gpt-6-astra-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-6-luna",
+      "label": "GPT-6 Luna",
+      "efforts": [
+        "gpt-6-luna-medium",
+        "gpt-6-luna-none",
+        "gpt-6-luna-low",
+        "gpt-6-luna-high",
+        "gpt-6-luna-xhigh",
+        "gpt-6-luna-max",
+        "gpt-6-luna-none-priority",
+        "gpt-6-luna-low-priority",
+        "gpt-6-luna-medium-priority",
+        "gpt-6-luna-high-priority",
+        "gpt-6-luna-xhigh-priority",
+        "gpt-6-luna-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-6-sol",
+      "label": "GPT-6 Sol",
+      "efforts": [
+        "gpt-6-sol-medium",
+        "gpt-6-sol-none",
+        "gpt-6-sol-low",
+        "gpt-6-sol-high",
+        "gpt-6-sol-xhigh",
+        "gpt-6-sol-max",
+        "gpt-6-sol-none-priority",
+        "gpt-6-sol-low-priority",
+        "gpt-6-sol-medium-priority",
+        "gpt-6-sol-high-priority",
+        "gpt-6-sol-xhigh-priority",
+        "gpt-6-sol-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "label": "GPT-6.1 Sol",
+      "efforts": [
+        "gpt-6-1-sol-low",
+        "gpt-6-1-sol-medium",
+        "gpt-6-1-sol-high",
+        "gpt-6-1-sol-xhigh",
+        "gpt-6-1-sol-max",
+        "gpt-6-1-sol-low-priority",
+        "gpt-6-1-sol-medium-priority",
+        "gpt-6-1-sol-high-priority",
+        "gpt-6-1-sol-xhigh-priority",
+        "gpt-6-1-sol-max-priority"
+      ]
+    },
+    {
+      "id": "grok-4.5",
+      "label": "Grok 4.5",
+      "efforts": [
+        "grok-4-5-low",
+        "grok-4-5-medium",
+        "grok-4-5-high"
+      ]
+    },
+    {
+      "id": "grok-4.6",
+      "label": "Grok 4.6",
+      "efforts": [
+        "grok-4-6-low",
+        "grok-4-6-medium",
+        "grok-4-6-high",
+        "grok-4-6-xhigh"
+      ]
+    },
+    {
+      "id": "grok-4.7",
+      "label": "Grok 4.7",
+      "efforts": [
+        "grok-4-7-low",
+        "grok-4-7-medium",
+        "grok-4-7-high",
+        "grok-4-7-xhigh"
+      ]
+    },
+    {
+      "id": "inkling",
+      "label": "Inkling",
+      "efforts": [
+        "inkling-none",
+        "inkling-low",
+        "inkling-medium",
+        "inkling-high",
+        "inkling-xhigh",
+        "inkling-max"
+      ]
+    },
+    {
+      "id": "kimi-k2.6",
+      "label": "Kimi K2.6",
+      "efforts": [
+        "kimi-k2-6"
+      ]
+    },
+    {
+      "id": "kimi-k2.7",
+      "label": "Kimi K2.7",
+      "efforts": [
+        "kimi-k2-7"
+      ]
+    },
+    {
+      "id": "kimi-k3",
+      "label": "Kimi K3",
+      "efforts": [
+        "kimi-k3-high",
+        "kimi-k3-low",
+        "kimi-k3-max"
+      ]
+    },
+    {
+      "id": "nemotron-3-ultra",
+      "label": "Nemotron 3 Ultra",
+      "efforts": [
+        "nemotron-3-ultra-none",
+        "nemotron-3-ultra-medium",
+        "nemotron-3-ultra-high"
+      ]
+    },
+    {
+      "id": "swe-1.6",
+      "label": "SWE-1.6",
+      "efforts": [
+        "swe-1-6"
+      ]
+    },
+    {
+      "id": "swe-1.6-fast",
+      "label": "SWE-1.6 Fast",
+      "efforts": [
+        "swe-1-6-fast"
+      ]
+    },
+    {
+      "id": "swe-1.7",
+      "label": "SWE-1.7",
+      "efforts": [
+        "swe-1-7",
+        "swe-1-7-medium"
+      ]
+    },
+    {
+      "id": "swe-1.7-lightning",
+      "label": "SWE-1.7 Lightning",
+      "efforts": [
+        "swe-1-7-lightning",
+        "swe-1-7-lightning-medium"
+      ]
+    },
+    {
+      "id": "swe-2",
+      "label": "SWE-2",
+      "efforts": [
+        "swe-2-high",
+        "swe-2-medium",
+        "swe-2-max"
+      ]
+    }
+  ],
+  "devin:oauth": [
+    {
+      "id": "adaptive",
+      "label": "Adaptive"
+    },
+    {
+      "id": "claude-fable-5",
+      "label": "Claude Fable 5",
+      "efforts": [
+        "claude-5-fable-low",
+        "claude-5-fable-medium",
+        "claude-5-fable-high",
+        "claude-5-fable-xhigh",
+        "claude-5-fable-max"
+      ]
+    },
+    {
+      "id": "claude-fable-5.1",
+      "label": "Claude Fable 5.1",
+      "efforts": [
+        "claude-fable-5-1-medium",
+        "claude-fable-5-1-low",
+        "claude-fable-5-1-high",
+        "claude-fable-5-1-xhigh",
+        "claude-fable-5-1-max"
+      ]
+    },
+    {
+      "id": "claude-haiku-4.5",
+      "label": "Claude Haiku 4.5",
+      "efforts": [
+        "MODEL_PRIVATE_11"
+      ]
+    },
+    {
+      "id": "claude-opus-4.5",
+      "label": "Claude Opus 4.5",
+      "efforts": [
+        "MODEL_CLAUDE_4_5_OPUS",
+        "MODEL_CLAUDE_4_5_OPUS_THINKING"
+      ]
+    },
+    {
+      "id": "claude-opus-4.6",
+      "label": "Claude Opus 4.6",
+      "efforts": [
+        "claude-opus-4-6",
+        "claude-opus-4-6-thinking",
+        "claude-opus-4-6-1m",
+        "claude-opus-4-6-thinking-1m"
+      ]
+    },
+    {
+      "id": "claude-opus-4.7",
+      "label": "Claude Opus 4.7",
+      "efforts": [
+        "claude-opus-4-7-medium",
+        "claude-opus-4-7-low",
+        "claude-opus-4-7-high",
+        "claude-opus-4-7-xhigh",
+        "claude-opus-4-7-max"
+      ]
+    },
+    {
+      "id": "claude-opus-4.8",
+      "label": "Claude Opus 4.8",
+      "efforts": [
+        "claude-opus-4-8-medium",
+        "claude-opus-4-8-low",
+        "claude-opus-4-8-high",
+        "claude-opus-4-8-xhigh",
+        "claude-opus-4-8-max",
+        "claude-opus-4-8-low-fast",
+        "claude-opus-4-8-medium-fast",
+        "claude-opus-4-8-high-fast",
+        "claude-opus-4-8-xhigh-fast",
+        "claude-opus-4-8-max-fast"
+      ]
+    },
+    {
+      "id": "claude-opus-5",
+      "label": "Claude Opus 5",
+      "efforts": [
+        "claude-opus-5-medium",
+        "claude-opus-5-low",
+        "claude-opus-5-high",
+        "claude-opus-5-xhigh",
+        "claude-opus-5-max",
+        "claude-opus-5-low-fast",
+        "claude-opus-5-medium-fast",
+        "claude-opus-5-high-fast",
+        "claude-opus-5-xhigh-fast",
+        "claude-opus-5-max-fast"
+      ]
+    },
+    {
+      "id": "claude-opus-5.5",
+      "label": "Claude Opus 5.5",
+      "efforts": [
+        "claude-opus-5-5-medium",
+        "claude-opus-5-5-low",
+        "claude-opus-5-5-high",
+        "claude-opus-5-5-xhigh",
+        "claude-opus-5-5-max",
+        "claude-opus-5-5-low-fast",
+        "claude-opus-5-5-medium-fast",
+        "claude-opus-5-5-high-fast",
+        "claude-opus-5-5-xhigh-fast",
+        "claude-opus-5-5-max-fast"
+      ]
+    },
+    {
+      "id": "claude-sonnet-4.6",
+      "label": "Claude Sonnet 4.6",
+      "efforts": [
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-6-thinking",
+        "claude-sonnet-4-6-1m",
+        "claude-sonnet-4-6-thinking-1m"
+      ]
+    },
+    {
+      "id": "claude-sonnet-5",
+      "label": "Claude Sonnet 5",
+      "efforts": [
+        "claude-sonnet-5-low",
+        "claude-sonnet-5-medium",
+        "claude-sonnet-5-high",
+        "claude-sonnet-5-xhigh",
+        "claude-sonnet-5-max"
+      ]
+    },
+    {
+      "id": "claude-sonnet-5.5",
+      "label": "Claude Sonnet 5.5",
+      "efforts": [
+        "claude-sonnet-5-5-medium",
+        "claude-sonnet-5-5-low",
+        "claude-sonnet-5-5-high",
+        "claude-sonnet-5-5-xhigh",
+        "claude-sonnet-5-5-max"
+      ]
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "label": "DeepSeek V4 Flash",
+      "efforts": [
+        "deepseek-v4-flash-high",
+        "deepseek-v4-flash-max"
+      ]
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "label": "DeepSeek V4 Pro",
+      "efforts": [
+        "deepseek-v4-pro-high",
+        "deepseek-v4-pro-max"
+      ]
+    },
+    {
+      "id": "deepseek-v4.1-flash",
+      "label": "DeepSeek V4.1 Flash",
+      "efforts": [
+        "deepseek-v4-1-flash-high",
+        "deepseek-v4-1-flash-max"
+      ]
+    },
+    {
+      "id": "fusion",
+      "label": "Fusion",
+      "efforts": [
+        "fusion-claude-fable-5-1-medium-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-high-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-high-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-high-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-high-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-high-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-high-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-high-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-high-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-high-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-high-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-high-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-medium-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-medium-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-medium-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-medium-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-medium-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-medium-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-medium-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-medium-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-medium-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-xhigh-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-xhigh-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-low-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-low-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-low-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-low-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-low-fast-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-low-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-low-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-low-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-low-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-low-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-low-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-max-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-max-sidekick-swe-2-medium",
+        "fusion-gpt-6-astra-max-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-max-sidekick-swe-2-medium",
+        "fusion-gpt-6-sol-max-fast-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-max-sidekick-swe-2-medium",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-max-sidekick-swe-2-medium",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-max-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-max-fast-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-max-sidekick-swe-2-medium",
+        "fusion-claude-opus-5-5-max-fast-sidekick-swe-2-medium",
+        "fusion-claude-fable-5-1-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-high-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-high-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-high-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-high-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-high-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-high-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-high-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-medium-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-low-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-low-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-low-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-low-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-low-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-low-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-low-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-max-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-fable-5-1-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-astra-max-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-astra-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-sol-max-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-sol-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-max-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-max-sidekick-gpt-5-6-luna-high",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-max-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-opus-5-5-max-sidekick-gpt-5-6-luna-high",
+        "fusion-claude-opus-5-5-max-fast-sidekick-gpt-5-6-luna-high-priority",
+        "fusion-claude-fable-5-1-medium-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-high-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-high-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-high-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-high-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-high-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-high-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-high-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-medium-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-medium-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-medium-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-medium-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-medium-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-medium-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-low-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-low-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-low-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-low-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-low-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-low-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-low-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-max-sidekick-gpt-6-luna-high",
+        "fusion-claude-fable-5-1-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-astra-max-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-astra-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-sol-max-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-sol-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-6-1-sol-max-sidekick-gpt-6-luna-high",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-gpt-5-6-sol-max-sidekick-gpt-6-luna-high",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-max-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-opus-5-5-max-sidekick-gpt-6-luna-high",
+        "fusion-claude-opus-5-5-max-fast-sidekick-gpt-6-luna-high-priority",
+        "fusion-claude-fable-5-1-medium-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-high-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-high-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-high-sidekick-glm-5-2",
+        "fusion-claude-opus-5-high-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-high-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-high-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-high-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-high-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-high-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-high-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-high-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-medium-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-medium-sidekick-glm-5-2",
+        "fusion-claude-opus-5-medium-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-medium-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-medium-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-medium-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-medium-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-medium-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-medium-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-xhigh-sidekick-glm-5-2",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-xhigh-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-low-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-low-sidekick-glm-5-2",
+        "fusion-claude-opus-5-low-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-low-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-low-fast-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-low-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-low-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-low-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-low-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-low-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-low-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-max-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-max-sidekick-glm-5-2",
+        "fusion-gpt-6-astra-max-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-max-sidekick-glm-5-2",
+        "fusion-gpt-6-sol-max-fast-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-max-sidekick-glm-5-2",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-max-sidekick-glm-5-2",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-max-sidekick-glm-5-2",
+        "fusion-claude-opus-5-max-fast-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-max-sidekick-glm-5-2",
+        "fusion-claude-opus-5-5-max-fast-sidekick-glm-5-2",
+        "fusion-claude-fable-5-1-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-high-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-high-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-high-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-high-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-high-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-high-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-medium-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-low-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-low-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-low-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-low-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-low-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-low-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-max-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-fable-5-1-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-astra-max-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-astra-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-sol-max-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-sol-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-gpt-6-1-sol-max-sidekick-gpt-5-6-sol-high",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-max-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-opus-5-5-max-sidekick-gpt-5-6-sol-high",
+        "fusion-claude-opus-5-5-max-fast-sidekick-gpt-5-6-sol-high-priority",
+        "fusion-claude-fable-5-1-medium-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-high-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-high-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-high-sidekick-swe-2-high",
+        "fusion-claude-opus-5-high-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-high-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-high-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-high-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-high-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-high-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-high-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-high-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-medium-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-medium-sidekick-swe-2-high",
+        "fusion-claude-opus-5-medium-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-medium-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-medium-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-medium-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-medium-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-medium-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-medium-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-xhigh-sidekick-swe-2-high",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-xhigh-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-low-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-low-sidekick-swe-2-high",
+        "fusion-claude-opus-5-low-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-low-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-low-fast-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-low-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-low-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-low-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-low-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-low-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-low-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-max-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-max-sidekick-swe-2-high",
+        "fusion-gpt-6-astra-max-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-max-sidekick-swe-2-high",
+        "fusion-gpt-6-sol-max-fast-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-max-sidekick-swe-2-high",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-max-sidekick-swe-2-high",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-max-sidekick-swe-2-high",
+        "fusion-claude-opus-5-max-fast-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-max-sidekick-swe-2-high",
+        "fusion-claude-opus-5-5-max-fast-sidekick-swe-2-high",
+        "fusion-claude-fable-5-1-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-fable-5-1-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-high-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-high-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-medium-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-medium-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-fable-5-1-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-xhigh-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-xhigh-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-fable-5-1-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-low-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-low-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-fable-5-1-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-astra-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-sol-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-6-1-sol-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-gpt-5-6-sol-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-max-fast-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-max-sidekick-claude-sonnet-5-5-medium",
+        "fusion-claude-opus-5-5-max-fast-sidekick-claude-sonnet-5-5-medium"
+      ]
+    },
+    {
+      "id": "gemini-3-flash",
+      "label": "Gemini 3 Flash",
+      "efforts": [
+        "MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL",
+        "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW",
+        "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
+        "MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH"
+      ]
+    },
+    {
+      "id": "gemini-3.1-pro",
+      "label": "Gemini 3.1 Pro",
+      "efforts": [
+        "gemini-3-1-pro-low",
+        "gemini-3-1-pro-high"
+      ]
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "label": "Gemini 3.5 Flash",
+      "efforts": [
+        "gemini-3-5-flash-minimal",
+        "gemini-3-5-flash-low",
+        "gemini-3-5-flash-medium",
+        "gemini-3-5-flash-high"
+      ]
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "label": "Gemini 3.6 Flash",
+      "efforts": [
+        "gemini-3-6-flash-minimal",
+        "gemini-3-6-flash-low",
+        "gemini-3-6-flash-medium",
+        "gemini-3-6-flash-high"
+      ]
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "label": "Gemini 3.7 Flash",
+      "efforts": [
+        "gemini-3-7-flash-low",
+        "gemini-3-7-flash-medium",
+        "gemini-3-7-flash-high"
+      ]
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "label": "Gemini 3.8 Flash",
+      "efforts": [
+        "gemini-3-8-flash-medium",
+        "gemini-3-8-flash-low",
+        "gemini-3-8-flash-high"
+      ]
+    },
+    {
+      "id": "glm-5.2",
+      "label": "GLM-5.2",
+      "efforts": [
+        "glm-5-2",
+        "glm-5-2-max",
+        "glm-5-2-1m",
+        "glm-5-2-max-1m",
+        "glm-5-2-none",
+        "glm-5-2-none-1m"
+      ]
+    },
+    {
+      "id": "glm-5.3",
+      "label": "GLM-5.3",
+      "efforts": [
+        "glm-5-3-low",
+        "glm-5-3-high",
+        "glm-5-3-max"
+      ]
+    },
+    {
+      "id": "glm-5.3-flash",
+      "label": "GLM-5.3 Flash",
+      "efforts": [
+        "glm-5-3-flash-low",
+        "glm-5-3-flash-high",
+        "glm-5-3-flash-max"
+      ]
+    },
+    {
+      "id": "gpt-4.1",
+      "label": "GPT-4.1",
+      "efforts": [
+        "MODEL_CHAT_GPT_4_1_2025_04_14"
+      ]
+    },
+    {
+      "id": "gpt-5.1",
+      "label": "GPT-5.1",
+      "efforts": [
+        "MODEL_PRIVATE_12",
+        "MODEL_PRIVATE_13",
+        "MODEL_PRIVATE_14",
+        "MODEL_PRIVATE_15"
+      ]
+    },
+    {
+      "id": "gpt-5.2",
+      "label": "GPT-5.2",
+      "efforts": [
+        "MODEL_GPT_5_2_LOW",
+        "MODEL_GPT_5_2_MEDIUM",
+        "MODEL_GPT_5_2_NONE",
+        "MODEL_GPT_5_2_HIGH",
+        "MODEL_GPT_5_2_XHIGH"
+      ]
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "label": "GPT-5.3-Codex",
+      "efforts": [
+        "gpt-5-3-codex-low",
+        "gpt-5-3-codex-medium",
+        "gpt-5-3-codex-high",
+        "gpt-5-3-codex-xhigh",
+        "gpt-5-3-codex-low-priority",
+        "gpt-5-3-codex-medium-priority",
+        "gpt-5-3-codex-high-priority",
+        "gpt-5-3-codex-xhigh-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.4",
+      "label": "GPT-5.4",
+      "efforts": [
+        "gpt-5-4-none",
+        "gpt-5-4-low",
+        "gpt-5-4-medium",
+        "gpt-5-4-high",
+        "gpt-5-4-xhigh",
+        "gpt-5-4-none-priority",
+        "gpt-5-4-low-priority",
+        "gpt-5-4-medium-priority",
+        "gpt-5-4-high-priority",
+        "gpt-5-4-xhigh-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "efforts": [
+        "gpt-5-4-mini-low",
+        "gpt-5-4-mini-medium",
+        "gpt-5-4-mini-high",
+        "gpt-5-4-mini-xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.5",
+      "label": "GPT-5.5",
+      "efforts": [
+        "gpt-5-5-none",
+        "gpt-5-5-low",
+        "gpt-5-5-medium",
+        "gpt-5-5-high",
+        "gpt-5-5-xhigh",
+        "gpt-5-5-none-priority",
+        "gpt-5-5-low-priority",
+        "gpt-5-5-medium-priority",
+        "gpt-5-5-high-priority",
+        "gpt-5-5-xhigh-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "efforts": [
+        "gpt-5-6-luna-none",
+        "gpt-5-6-luna-low",
+        "gpt-5-6-luna-medium",
+        "gpt-5-6-luna-high",
+        "gpt-5-6-luna-xhigh",
+        "gpt-5-6-luna-max",
+        "gpt-5-6-luna-none-priority",
+        "gpt-5-6-luna-low-priority",
+        "gpt-5-6-luna-medium-priority",
+        "gpt-5-6-luna-high-priority",
+        "gpt-5-6-luna-xhigh-priority",
+        "gpt-5-6-luna-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "efforts": [
+        "gpt-5-6-sol-none",
+        "gpt-5-6-sol-low",
+        "gpt-5-6-sol-medium",
+        "gpt-5-6-sol-high",
+        "gpt-5-6-sol-xhigh",
+        "gpt-5-6-sol-max",
+        "gpt-5-6-sol-none-priority",
+        "gpt-5-6-sol-low-priority",
+        "gpt-5-6-sol-medium-priority",
+        "gpt-5-6-sol-high-priority",
+        "gpt-5-6-sol-xhigh-priority",
+        "gpt-5-6-sol-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "efforts": [
+        "gpt-5-6-terra-none",
+        "gpt-5-6-terra-low",
+        "gpt-5-6-terra-medium",
+        "gpt-5-6-terra-high",
+        "gpt-5-6-terra-xhigh",
+        "gpt-5-6-terra-max",
+        "gpt-5-6-terra-none-priority",
+        "gpt-5-6-terra-low-priority",
+        "gpt-5-6-terra-medium-priority",
+        "gpt-5-6-terra-high-priority",
+        "gpt-5-6-terra-xhigh-priority",
+        "gpt-5-6-terra-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-6-astra",
+      "label": "GPT-6 Astra",
+      "efforts": [
+        "gpt-6-astra-medium",
+        "gpt-6-astra-low",
+        "gpt-6-astra-high",
+        "gpt-6-astra-xhigh",
+        "gpt-6-astra-max",
+        "gpt-6-astra-low-priority",
+        "gpt-6-astra-medium-priority",
+        "gpt-6-astra-high-priority",
+        "gpt-6-astra-xhigh-priority",
+        "gpt-6-astra-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-6-luna",
+      "label": "GPT-6 Luna",
+      "efforts": [
+        "gpt-6-luna-medium",
+        "gpt-6-luna-none",
+        "gpt-6-luna-low",
+        "gpt-6-luna-high",
+        "gpt-6-luna-xhigh",
+        "gpt-6-luna-max",
+        "gpt-6-luna-none-priority",
+        "gpt-6-luna-low-priority",
+        "gpt-6-luna-medium-priority",
+        "gpt-6-luna-high-priority",
+        "gpt-6-luna-xhigh-priority",
+        "gpt-6-luna-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-6-sol",
+      "label": "GPT-6 Sol",
+      "efforts": [
+        "gpt-6-sol-medium",
+        "gpt-6-sol-none",
+        "gpt-6-sol-low",
+        "gpt-6-sol-high",
+        "gpt-6-sol-xhigh",
+        "gpt-6-sol-max",
+        "gpt-6-sol-none-priority",
+        "gpt-6-sol-low-priority",
+        "gpt-6-sol-medium-priority",
+        "gpt-6-sol-high-priority",
+        "gpt-6-sol-xhigh-priority",
+        "gpt-6-sol-max-priority"
+      ]
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "label": "GPT-6.1 Sol",
+      "efforts": [
+        "gpt-6-1-sol-low",
+        "gpt-6-1-sol-medium",
+        "gpt-6-1-sol-high",
+        "gpt-6-1-sol-xhigh",
+        "gpt-6-1-sol-max",
+        "gpt-6-1-sol-low-priority",
+        "gpt-6-1-sol-medium-priority",
+        "gpt-6-1-sol-high-priority",
+        "gpt-6-1-sol-xhigh-priority",
+        "gpt-6-1-sol-max-priority"
+      ]
+    },
+    {
+      "id": "grok-4.5",
+      "label": "Grok 4.5",
+      "efforts": [
+        "grok-4-5-low",
+        "grok-4-5-medium",
+        "grok-4-5-high"
+      ]
+    },
+    {
+      "id": "grok-4.6",
+      "label": "Grok 4.6",
+      "efforts": [
+        "grok-4-6-low",
+        "grok-4-6-medium",
+        "grok-4-6-high",
+        "grok-4-6-xhigh"
+      ]
+    },
+    {
+      "id": "grok-4.7",
+      "label": "Grok 4.7",
+      "efforts": [
+        "grok-4-7-low",
+        "grok-4-7-medium",
+        "grok-4-7-high",
+        "grok-4-7-xhigh"
+      ]
+    },
+    {
+      "id": "inkling",
+      "label": "Inkling",
+      "efforts": [
+        "inkling-none",
+        "inkling-low",
+        "inkling-medium",
+        "inkling-high",
+        "inkling-xhigh",
+        "inkling-max"
+      ]
+    },
+    {
+      "id": "kimi-k2.6",
+      "label": "Kimi K2.6",
+      "efforts": [
+        "kimi-k2-6"
+      ]
+    },
+    {
+      "id": "kimi-k2.7",
+      "label": "Kimi K2.7",
+      "efforts": [
+        "kimi-k2-7"
+      ]
+    },
+    {
+      "id": "kimi-k3",
+      "label": "Kimi K3",
+      "efforts": [
+        "kimi-k3-high",
+        "kimi-k3-low",
+        "kimi-k3-max"
+      ]
+    },
+    {
+      "id": "nemotron-3-ultra",
+      "label": "Nemotron 3 Ultra",
+      "efforts": [
+        "nemotron-3-ultra-none",
+        "nemotron-3-ultra-medium",
+        "nemotron-3-ultra-high"
+      ]
+    },
+    {
+      "id": "swe-1.6",
+      "label": "SWE-1.6",
+      "efforts": [
+        "swe-1-6"
+      ]
+    },
+    {
+      "id": "swe-1.6-fast",
+      "label": "SWE-1.6 Fast",
+      "efforts": [
+        "swe-1-6-fast"
+      ]
+    },
+    {
+      "id": "swe-1.7",
+      "label": "SWE-1.7",
+      "efforts": [
+        "swe-1-7",
+        "swe-1-7-medium"
+      ]
+    },
+    {
+      "id": "swe-1.7-lightning",
+      "label": "SWE-1.7 Lightning",
+      "efforts": [
+        "swe-1-7-lightning",
+        "swe-1-7-lightning-medium"
+      ]
+    },
+    {
+      "id": "swe-2",
+      "label": "SWE-2",
+      "efforts": [
+        "swe-2-high",
+        "swe-2-medium",
+        "swe-2-max"
+      ]
+    }
+  ],
+  "claude": [
+    "claude-sonnet-4-5",
+    "claude-opus-4",
+    "claude-opus"
+  ],
+  "gemini": [
+    "gemini-2.5-flash",
+    "gemini-3.5-flash",
+    "gemini-3-flash"
+  ],
+  "antigravity": [
+    "gemini-3.8-flash-low"
+  ]
+}

@@ -32,6 +32,10 @@ struct CompletionRequest {
     prompt: Option<Prompt>,
     #[serde(default)]
     stream: bool,
+    /// Requested model-specific effort - the `reasoning_effort` spelling
+    /// the other `/v1` surfaces share.
+    #[serde(default)]
+    reasoning_effort: Option<String>,
 }
 
 /// The two prompt shapes the legacy API accepts here: a bare string, or
@@ -102,14 +106,22 @@ pub(crate) fn handle<C: StatusCollector>(
         );
         return;
     }
-    let attempts =
-        match execute::resolve_attempts(gateway, model, &|| Gateway::status(facade, runtime)) {
-            Ok(attempts) => attempts,
-            Err((status, message)) => {
-                respond_error(request, status, &message, "invalid_request_error");
-                return;
-            }
-        };
+    let attempts = match execute::resolve_attempts(
+        gateway,
+        model,
+        completion.reasoning_effort.as_deref(),
+        &|| Gateway::status(facade, runtime),
+        &execute::Decide {
+            runtime,
+            prompt: &prompt,
+        },
+    ) {
+        Ok(attempts) => attempts,
+        Err((status, message)) => {
+            respond_error(request, status, &message, "invalid_request_error");
+            return;
+        }
+    };
     serve(
         request,
         gateway,

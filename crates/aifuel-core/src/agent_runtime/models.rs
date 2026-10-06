@@ -20,14 +20,19 @@ pub struct ModelSelection {
     pub effort: Option<Effort>,
 }
 
-/// A model-specific effort level.
+/// A model-specific effort level. The spellings are the provider-reported
+/// catalog values the runtime contract carries; a provider advertising
+/// others (`minimal`, `none`, composite uids) cannot select them through
+/// this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Effort {
     Low,
     Medium,
     High,
+    Xhigh,
     Max,
+    Ultra,
 }
 
 impl Effort {
@@ -37,7 +42,9 @@ impl Effort {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::Xhigh => "xhigh",
             Self::Max => "max",
+            Self::Ultra => "ultra",
         }
     }
 
@@ -47,7 +54,9 @@ impl Effort {
             "low" => Self::Low,
             "medium" => Self::Medium,
             "high" => Self::High,
+            "xhigh" => Self::Xhigh,
             "max" => Self::Max,
+            "ultra" => Self::Ultra,
             _ => return None,
         })
     }

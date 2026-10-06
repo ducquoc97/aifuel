@@ -18,6 +18,11 @@ pub(crate) struct ChatRequest {
     pub(crate) stream: bool,
     #[serde(default)]
     pub(crate) stream_options: Option<StreamOptions>,
+    /// Requested model-specific effort - OpenAI's `reasoning_effort`
+    /// spelling. The value applies to every attempt the model selector
+    /// resolves to, unless the selector pins its own `@effort` suffix.
+    #[serde(default)]
+    pub(crate) reasoning_effort: Option<String>,
     /// Declared tools for the prompt-level tool-call emulation; see
     /// `flatten::flatten_tools`.
     #[serde(default)]

@@ -1,2 +1,4 @@
 __pycache__/
 target/
+ui/node_modules/
+ui/dist/
