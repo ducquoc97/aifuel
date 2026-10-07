@@ -10,7 +10,7 @@ AI Fuel already delegates explicit Agent Runs and provides quota monitoring and 
 
 Provide one application contract for local Agent Run management, accessible through a global terminal picker, scriptable CLI, and a separately registered execution MCP endpoint. Users explicitly select provider, model, and effort, directly or through named global profiles. AI Fuel resolves the request, checks capabilities and permissions, invokes the correct local Agent Integration, and exposes progress, results, cancellation, approvals, and same-provider resume.
 
-Cover all five agents and WSL, native Windows, macOS, and Linux. Expose reduced capabilities and verified blocked access modes explicitly. Keep monitoring, execution, and external MCP routing separate responsibilities with shared configuration and application workflows where appropriate.
+Cover all five agents. This release requires live acceptance on WSL; native Windows, macOS, and other Linux targets are deferred as recorded outstanding acceptance. Expose reduced capabilities and verified blocked access modes explicitly. Keep monitoring, execution, and external MCP routing separate responsibilities with shared configuration and application workflows where appropriate.
 
 ## User Stories
 
@@ -69,7 +69,7 @@ Cover all five agents and WSL, native Windows, macOS, and Linux. Expose reduced 
 
 ### Authority and existing architecture
 
-- The explicitly answered interview decisions and the subsequently requested specification corrections are normative. Five-agent/four-platform acceptance, connection-owned runs, and supported approval forwarding remain requirements. A daemon, WSL-first release gate, detached runs, and default persistent content retention are not part of this release.
+- The explicitly answered interview decisions and the subsequently requested specification corrections are normative. Five-agent acceptance on WSL, connection-owned runs, and supported approval forwarding remain requirements; native Windows, macOS, and other Linux acceptance are deferred beyond this release. A daemon, WSL-first release gate, detached runs, and default persistent content retention are not part of this release.
 - Reuse the domain contracts, application facade, compiled provider registry, provider-local adapters, and existing MCP transport boundaries established by ADR-0001 through ADR-0004. Add separate model-catalog and run-lifecycle capabilities where needed. Avoid a generic strategy framework until multiple real sources require it.
 - The unified endpoint is one versioned application API consumed by CLI, picker, and execution MCP. Each invocation owns its run manager; an execution MCP process owns runs for its stdio connection. There is no network listener or shared run daemon. Run inspection/results/cancellation use the owning invocation; global active-run browsing, reconnecting to an active run, and transfer of run ownership are outside this release. A new invocation may explicitly resume a persisted native Agent Session as a new Agent Run.
 - Cross-process functionality is limited to cooperating write locks and pending local approval delivery. An owner with a pending permission request exposes an ephemeral same-user IPC endpoint: a Unix-domain socket on Linux/macOS/WSL or a named pipe with a user-restricted ACL on native Windows. A private per-user discovery record maps the run and owner instance to this endpoint. It is created only when needed and removed on owner exit. The local approval command connects directly to the owning process; it does not take ownership of the run or persist approval payloads. Platform peer/ACL checks and owner-instance validation prevent other OS users or stale records from supplying responses. Existing ten-second connection setup policy applies to this IPC.
@@ -178,7 +178,7 @@ The following operation names define the application contract and execution MCP 
 4. Deliver model discovery, scoped caches, profiles, resolved settings, and the terminal picker through the existing workflow. This can run alongside provider expansion; release still requires honest catalog/unknown reporting for all five.
 5. Add same-provider resume and supported questions/approvals through CLI and MCP, including local IPC delivery, selection inheritance, policy revalidation, and stale-response handling. Each new capability includes a complete user-facing acceptance path.
 6. Complete central external MCP management and exact per-run restrictions through the shared Gateway. It can progress alongside run/session work, but tool-enabled Agent Runs depend on both capability and policy enforcement. Preserve independent Gateway process sessions.
-7. Complete installed and live verification across all four platform targets, resolve review findings, and publish the exact tested/blocked matrix. CI and live evidence accumulate with each workflow milestone rather than being deferred entirely to this phase.
+7. Complete installed and live verification across the WSL target, resolve review findings, and publish the exact tested/blocked matrix. Native Windows, macOS, and other Linux cells remain recorded outstanding acceptance. CI and live evidence accumulate with each workflow milestone rather than being deferred entirely to this phase.
 
 ## Testing Decisions
 
@@ -204,13 +204,13 @@ The following operation names define the application contract and execution MCP 
 
 | Agent Integration | WSL | Native Windows | macOS | Linux |
 | --- | --- | --- | --- | --- |
-| Codex | Verify live | Verify live | Verify live | Verify live |
-| Claude Code | Verify live | Verify live | Verify live | Verify live |
-| GitHub Copilot CLI | Verify live | Verify live | Verify live | Verify live |
-| Antigravity CLI | Verify live | Verify live | Verify live | Verify live |
-| Gemini CLI | Verify live | Verify live | Verify live | Verify live |
+| Codex | Verify live | Deferred | Deferred | Deferred |
+| Claude Code | Verify live | Deferred | Deferred | Deferred |
+| GitHub Copilot CLI | Verify live | Deferred | Deferred | Deferred |
+| Antigravity CLI | Verify live | Deferred | Deferred | Deferred |
+| Gemini CLI | Verify live | Deferred | Deferred | Deferred |
 
-- Verified blocked access modes and labelled reduced capabilities are acceptable. An untested platform/provider combination is not release-ready. Missing hardware, credentials, or native interfaces must be recorded as outstanding acceptance, never silently counted as passed.
+- Verified blocked access modes and labelled reduced capabilities are acceptable. An untested WSL/agent combination is not release-ready; deferred non-WSL cells are recorded as outstanding acceptance, never silently counted as passed. Missing hardware, credentials, or native interfaces must likewise be recorded as outstanding acceptance.
 
 ## Out of Scope
 
