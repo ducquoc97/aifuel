@@ -75,6 +75,8 @@ The same listener already fronts an OpenAI/Anthropic-compatible endpoint (`/v1/c
 
 The `claude-web:web` integration monitors a claude.ai browser session - the `five_hour`, `seven_day`, and per-model usage windows - through a session credential you paste yourself: `aifuel auth set-session claude-web:web --stdin` accepts a bare session token or a copied `Cookie` header line (sent as `Cookie`, never a Bearer token), or export `CLAUDE_WEB_SESSION`. It never executes prompts, so it never appears in `run --provider auto`; nothing reads a browser profile or an OS keyring.
 
+Gemini CLI is no longer a built-in integration or MCP Host. When upgrading, remove or update any `providers.json` instances and chains that reference `gemini` or a Gemini instance: an unknown integration reference prevents the provider registry from loading. Update saved profiles and defaults that select Gemini too. AI Fuel leaves existing configuration files untouched; Antigravity and Gemini model IDs offered by other integrations remain available.
+
 ## Running prompts
 
 ```bash
