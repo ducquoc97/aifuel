@@ -7,7 +7,7 @@ use aifuel_core::{ProviderId, ProviderKey, RunState, RunStatus};
 fn run_has_no_default_overall_deadline() {
     let args = [
         "--provider".to_owned(),
-        "gemini".to_owned(),
+        "copilot".to_owned(),
         "--model".to_owned(),
         "test-model".to_owned(),
         "--prompt".to_owned(),
@@ -34,7 +34,7 @@ fn run_has_no_default_overall_deadline() {
 fn cli_records_selection_sources_using_shared_precedence() {
     let mut config = GlobalSelectionConfig {
         defaults: SelectionSettings {
-            integration: Some(ProviderKey::Gemini.into()),
+            integration: Some(ProviderKey::Copilot.into()),
             model: Some("global-model".to_owned()),
             effort: Some("low".to_owned()),
             access: Some(aifuel_core::AccessMode::ReadOnly),
@@ -118,7 +118,7 @@ fn terminal_picker_preserves_explicit_profile_and_global_precedence() {
         },
     );
     let explicit = SelectionSettings {
-        integration: Some(ProviderKey::Gemini.into()),
+        integration: Some(ProviderKey::Copilot.into()),
         model: Some("explicit-model".to_owned()),
         effort: None,
         access: Some(aifuel_core::AccessMode::ReadOnly),
@@ -144,7 +144,7 @@ fn terminal_picker_preserves_explicit_profile_and_global_precedence() {
 
     assert_eq!(
         selected.settings.integration,
-        Some(ProviderKey::Gemini.into())
+        Some(ProviderKey::Copilot.into())
     );
     assert_eq!(selected.settings.model.as_deref(), Some("explicit-model"));
     assert_eq!(selected.settings.effort.as_deref(), Some("medium"));
@@ -359,7 +359,7 @@ fn explicit_model_without_catalog_match_keeps_unknown_evidence() {
 fn terminal_picker_prompts_stay_out_of_structured_run_output() {
     let config = GlobalSelectionConfig {
         defaults: SelectionSettings {
-            integration: Some(ProviderKey::Gemini.into()),
+            integration: Some(ProviderKey::Copilot.into()),
             model: Some("configured-model".to_owned()),
             effort: Some("configured-effort".to_owned()),
             access: None,
@@ -464,11 +464,11 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
         schema_version: aifuel_core::RUN_MANAGEMENT_SCHEMA_VERSION,
         run_id: "managed-run-1".to_owned(),
         state: RunState::Succeeded,
-        integration: ProviderKey::Gemini.into(),
-        provider: ProviderKey::Gemini.into(),
-        requested_model: Some("gemini-flash".to_owned()),
+        integration: ProviderKey::Copilot.into(),
+        provider: ProviderKey::Copilot.into(),
+        requested_model: Some("test-model".to_owned()),
         requested_effort: None,
-        effective_model: Some("gemini-flash".to_owned()),
+        effective_model: Some("test-model".to_owned()),
         effective_effort: None,
         local_session_id: Some("local-session".to_owned()),
         session_id: None,
@@ -507,7 +507,7 @@ fn run_json_exposes_the_managed_result_contract_and_model_evidence() {
         serde_json::from_str(&output).expect("run output should be valid JSON");
 
     assert_eq!(value["run_id"], "managed-run-1");
-    assert_eq!(value["provider"], "gemini");
+    assert_eq!(value["provider"], "copilot");
     assert_eq!(value["state"], "succeeded");
     assert_eq!(value["output"], "answer");
     assert_eq!(value["model_evidence"], "catalog_record");

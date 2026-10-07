@@ -2,7 +2,7 @@
 
 **The fuel gauge for your AI coding subscriptions - and one interface for spending them.**
 
-You pay for Claude Code, Codex, Copilot, Gemini, Antigravity, Devin... `aifuel` answers the two questions that matter: *which limit runs out first?* and *which subscription should take this prompt?*
+You pay for Claude Code, Codex, Copilot, Antigravity, Devin... `aifuel` answers the two questions that matter: *which limit runs out first?* and *which subscription should take this prompt?*
 
 - **Know what's left.** Reads each provider's own usage endpoint and shows the quota you have left in one dashboard, ranked by soonest reset, with a live countdown to every refill.
 - **Spend it deliberately.** `aifuel run` sends a prompt through any installed provider CLI - explicit model and permission selection, resumable sessions, local approvals, `text|json|jsonl` output for scripts.
@@ -68,11 +68,10 @@ The same listener already fronts an OpenAI/Anthropic-compatible endpoint (`/v1/c
 | Claude Code | **live** | `~/.claude/.credentials.json` |
 | Codex CLI | **live** | `~/.codex/auth.json` |
 | GitHub Copilot | **live** | `~/.copilot/config.json` |
-| Gemini CLI | **live** | Code Assist OAuth token |
 | Antigravity CLI | **live** | Code Assist OAuth token |
 | Devin CLI | **live** | `credentials.toml` key |
 
-`live` = pulled from the provider's own API; a provider that cannot return live usage shows as an error, never a guess. API-key integrations for OpenRouter (`/key` credits), Z.AI (coding-plan quota windows), DeepSeek, and SiliconFlow (account balance) also report live when their key is set. A pinned catalog covers 76 provider IDs and flags documented free tiers (`has_free`/`free_note` in `--json`, `free:` in `aifuel auth list`) - catalog-only entries report as unsupported.
+`live` = pulled from the provider's own API; a provider that cannot return live usage shows as an error, never a guess. API-key integrations for OpenRouter (`/key` credits), Z.AI (coding-plan quota windows), DeepSeek, and SiliconFlow (account balance) also report live when their key is set. A pinned catalog covers 75 provider IDs and flags documented free tiers (`has_free`/`free_note` in `--json`, `free:` in `aifuel auth list`) - catalog-only entries report as unsupported.
 
 The `claude-web:web` integration monitors a claude.ai browser session - the `five_hour`, `seven_day`, and per-model usage windows - through a session credential you paste yourself: `aifuel auth set-session claude-web:web --stdin` accepts a bare session token or a copied `Cookie` header line (sent as `Cookie`, never a Bearer token), or export `CLAUDE_WEB_SESSION`. It never executes prompts, so it never appears in `run --provider auto`; nothing reads a browser profile or an OS keyring.
 
@@ -82,7 +81,7 @@ The `claude-web:web` integration monitors a claude.ai browser session - the `fiv
 aifuel run --provider codex --model gpt-5-codex --prompt "Explain Rust ownership"
 ```
 
-Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `gemini`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, and the API-key integrations `openai:api-key`, `openrouter:api-key`, `anthropic:api-key`, `cerebras:api-key`, `cohere:api-key`, `deepinfra:api-key`, `deepseek:api-key`, `fireworks:api-key`, `groq:api-key`, `huggingface:api-key`, `mistral:api-key`, `moonshot:api-key`, `nvidia:api-key`, `perplexity:api-key`, `siliconflow:api-key`, `together:api-key`, `xai:api-key`, `zai:api-key`. Each `*:api-key` reads its provider's conventional env var (for example `GROQ_API_KEY` or `ANTHROPIC_API_KEY`; Hugging Face uses `HF_TOKEN`) or a key stored with `aifuel auth set-key`. `anthropic:api-key` speaks the Anthropic Messages API (`x-api-key` auth); the rest are OpenAI-compatible. The `claude-web:web` integration binds a pasted browser session for monitoring only - it is not a run target. Options:
+Integration IDs (`--provider` is an alias for `--integration`): `claude`, `codex`, `copilot`, `antigravity`, `devin`, `opencode`, `cursor`, `ollama:local`, `lmstudio:local`, and the API-key integrations `openai:api-key`, `openrouter:api-key`, `anthropic:api-key`, `cerebras:api-key`, `cohere:api-key`, `deepinfra:api-key`, `deepseek:api-key`, `fireworks:api-key`, `groq:api-key`, `huggingface:api-key`, `mistral:api-key`, `moonshot:api-key`, `nvidia:api-key`, `perplexity:api-key`, `siliconflow:api-key`, `together:api-key`, `xai:api-key`, `zai:api-key`. Each `*:api-key` reads its provider's conventional env var (for example `GROQ_API_KEY` or `ANTHROPIC_API_KEY`; Hugging Face uses `HF_TOKEN`) or a key stored with `aifuel auth set-key`. `anthropic:api-key` speaks the Anthropic Messages API (`x-api-key` auth); the rest are OpenAI-compatible. The `claude-web:web` integration binds a pasted browser session for monitoring only - it is not a run target. Options:
 
 - `--prompt TEXT` / `--prompt-file PATH` - or omit both to pipe the prompt on stdin
 - `--model ID` / `--effort LEVEL` - explicit model and effort
@@ -164,7 +163,7 @@ aifuel mcp servers select --defaults [SERVER_ID ...] | --agent HOST [SERVER_ID .
 
 Trust rules: remote endpoints must use HTTPS (plain HTTP only on loopback) and speak MCP 2025-11-25. `bearerTokenEnv` and `secretHeaders` name environment variables only - values resolve once at startup (a missing or empty value fails that server), are sent only to the configured endpoint, and are never written to `mcp.json` or logs. Redirects are rejected, so configure the final URL. For stdio servers, `env` sets literals and `envFrom` names variables read at startup; children get a small platform allowlist plus what you configure.
 
-Then connect an agent: `aifuel mcp setup --agent HOST` writes the managed entry into the host's config (backup and `--dry-run` supported, `--remove` detaches). Host IDs: `codex`, `claude`, `copilot`, `gemini`, `antigravity`, `devin`. Restart the host after changing its registration. Repeatable `--tool NAME` on `mcp gateway` restricts which tools a host sees.
+Then connect an agent: `aifuel mcp setup --agent HOST` writes the managed entry into the host's config (backup and `--dry-run` supported, `--remove` detaches). Host IDs: `codex`, `claude`, `copilot`, `antigravity`, `devin`. Restart the host after changing its registration. Repeatable `--tool NAME` on `mcp gateway` restricts which tools a host sees.
 
 ### Quota webhooks
 
@@ -182,7 +181,7 @@ Each collection (dashboard refresh, `--json`, `--text`, MCP `get_status`) can PO
 `threshold_crossed` fires when a quota window's consumed share reaches `threshold_percent` (default 90); `quota_reset` fires when a window that was over threshold comes back under it - the window reset or quota was replenished. `events` and `threshold_percent` fall back to `defaults`, then to the built-ins. Payloads look like:
 
 ```json
-{ "event": "threshold_crossed", "provider": "gemini", "provider_name": "Gemini CLI", "window": "gemini-3.5-flash", "window_period": "daily", "authoritative": true, "percent_used": 95.0, "percent_remaining": 5.0, "threshold_percent": 90, "reset_at": 1893456000.0, "checked_at": 1790879303.8 }
+{ "event": "threshold_crossed", "provider": "antigravity", "provider_name": "Antigravity CLI", "window": "gemini-3.5-flash", "window_period": "unknown", "authoritative": true, "percent_used": 95.0, "percent_remaining": 5.0, "threshold_percent": 90, "reset_at": 1893456000.0, "checked_at": 1790879303.8 }
 ```
 
 `reset_at` and `checked_at` are Unix seconds. Endpoints must use HTTPS, or HTTP only on loopback - the same trust rule as the MCP gateway. Each crossing notifies once per window and threshold; the state lives in `webhook-state.json` so restarts don't re-announce. Delivery is at-most-once with short timeouts, and failures are logged to stderr without affecting collection.
@@ -202,4 +201,4 @@ Each collection (dashboard refresh, `--json`, `--text`, MCP `get_status`) can PO
 
 **It only shows some providers.** Those are the ones with local credentials. Log in to that provider's AI coding CLI, then refresh.
 
-**Why not just check each dashboard?** Six tabs don't tell you which limit you'll hit first - `aifuel` does, at a glance.
+**Why not just check each dashboard?** Five tabs don't tell you which limit you'll hit first - `aifuel` does, at a glance.

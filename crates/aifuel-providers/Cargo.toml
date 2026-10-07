@@ -1,6 +1,6 @@
 [package]
 name = "aifuel-providers"
-description = "AI coding provider integrations for aifuel: Claude Code, Codex, Copilot, Gemini, Antigravity, Devin CLI"
+description = "AI coding provider integrations for aifuel: Claude Code, Codex, Copilot, Antigravity, Devin CLI"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

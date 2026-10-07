@@ -55,7 +55,7 @@ fn marker_executor<'a>(
 
 fn request() -> RunRequest {
     RunRequest {
-        integration: IntegrationId::from(ProviderKey::Gemini),
+        integration: IntegrationId::from(ProviderKey::Devin),
         model: None,
         effort: None,
         external_tools: None,
@@ -82,7 +82,7 @@ fn provider_execution_capabilities_are_data_not_provider_key_checks() {
     generic_request.effort = Some("high".to_owned());
     generic_request.external_tools = Some(Vec::new());
     let generic_adapter = CliExecutionAdapter::new(
-        ProviderKey::Gemini,
+        ProviderKey::Devin,
         "unused",
         &[],
         &[],
@@ -115,7 +115,7 @@ fn provider_execution_capabilities_are_data_not_provider_key_checks() {
 #[test]
 fn declared_executor_override_runs_before_cli_preflight() {
     let adapter = CliExecutionAdapter::new(
-        ProviderKey::Gemini,
+        ProviderKey::Devin,
         "this-executable-does-not-exist",
         &["--help"],
         &["required-flag"],
@@ -137,7 +137,7 @@ fn cancellation_kills_and_reaps_the_provider_process_and_keeps_partial_output() 
 
     let directory = TestDirectory::new();
     let marker = directory.0.join("started");
-    let executable = directory.0.join("gemini");
+    let executable = directory.0.join("agent");
     fs::write(
         &executable,
         format!(
@@ -155,7 +155,7 @@ fn cancellation_kills_and_reaps_the_provider_process_and_keeps_partial_output() 
     let program: &'static str =
         Box::leak(executable.to_string_lossy().into_owned().into_boxed_str());
     let adapter = CliExecutionAdapter::new(
-        ProviderKey::Gemini,
+        ProviderKey::Devin,
         program,
         &["--help"],
         &["--prompt", "--approval-mode", "--output-format"],
@@ -389,7 +389,7 @@ fn run_manager_version_probe_times_out_and_reaps_the_fake_process_group() {
     let program: &'static str =
         Box::leak(executable.to_string_lossy().into_owned().into_boxed_str());
     let adapter = CliExecutionAdapter::new(
-        ProviderKey::Gemini,
+        ProviderKey::Devin,
         program,
         &[],
         &[],
@@ -402,7 +402,7 @@ fn run_manager_version_probe_times_out_and_reaps_the_fake_process_group() {
     let started_at = Instant::now();
 
     let agent = manager
-        .list_agents(Some(ProviderId::from(ProviderKey::Gemini)), None)
+        .list_agents(Some(ProviderId::from(ProviderKey::Devin)), None)
         .pop()
         .expect("registered provider should be returned");
 
@@ -437,7 +437,7 @@ fn run_manager_version_probe_bounds_captured_output() {
     let program: &'static str =
         Box::leak(executable.to_string_lossy().into_owned().into_boxed_str());
     let adapter = CliExecutionAdapter::new(
-        ProviderKey::Gemini,
+        ProviderKey::Devin,
         program,
         &[],
         &[],
@@ -449,7 +449,7 @@ fn run_manager_version_probe_bounds_captured_output() {
     let manager = RunManager::new(vec![Arc::new(adapter)]);
 
     let agent = manager
-        .list_agents(Some(ProviderId::from(ProviderKey::Gemini)), None)
+        .list_agents(Some(ProviderId::from(ProviderKey::Devin)), None)
         .pop()
         .expect("registered provider should be returned");
 

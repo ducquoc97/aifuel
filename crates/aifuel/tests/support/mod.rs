@@ -379,7 +379,7 @@ pub fn start_claude_web_fixture(
     (format!("http://{address}"), captured, server)
 }
 
-pub fn start_gemini_fixture() -> (String, thread::JoinHandle<()>) {
+pub fn start_code_assist_fixture() -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("fixture server should bind");
     let address = listener
         .local_addr()

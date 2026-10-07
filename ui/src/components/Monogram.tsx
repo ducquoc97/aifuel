@@ -6,7 +6,7 @@ const PROVIDER_HUE: Record<string, string> = {
   anthropic: "#b04a2a", claude: "#b04a2a", antigravity: "#b04a2a",
   openai: "#1d1d1f", codex: "#1d1d1f",
   copilot: "#56349e", github: "#56349e",
-  gemini: "#1a73e8", google: "#1a73e8",
+  google: "#1a73e8",
   groq: "#d63c23", mistral: "#d9660a", deepseek: "#3d5bf5",
   cohere: "#39594d", openrouter: "#5151d6", together: "#0f6fff",
   fireworks: "#8a2be2", perplexity: "#12808d", xai: "#1d1d1f",

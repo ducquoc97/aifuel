@@ -11,7 +11,6 @@ const REGISTRATIONS: &[(&str, &dyn AgentMcpRegistrationAdapter)] = &[
     ("claude", &crate::claude::MCP_REGISTRATION_ADAPTER),
     ("copilot", &crate::copilot::COPILOT_REGISTRATION),
     ("antigravity", &crate::antigravity::MCP_REGISTRATION_ADAPTER),
-    ("gemini", &crate::gemini::MCP_REGISTRATION_ADAPTER),
     ("devin", &crate::devin::MCP_REGISTRATION_ADAPTER),
 ];
 

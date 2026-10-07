@@ -85,8 +85,8 @@ docker exec -it aifuel aifuel auth set-key openai:api-key --stdin
 
 Inside the container only `*:api-key` and configured HTTP integrations work -
 there are no provider CLIs. For CLI-backed providers (claude, codex, copilot,
-gemini, ...) install those CLIs in a derived image and sign in, or prefer the
-binary/systemd path on the host where they already exist.
+antigravity, devin, ...) install those CLIs in a derived image and sign in, or
+prefer the binary/systemd path on the host where they already exist.
 
 ## TLS: put a reverse proxy in front
 

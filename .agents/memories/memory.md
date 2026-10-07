@@ -1,5 +1,11 @@
 # Project Memory
 
+## Gemini CLI removal (2026-10-07)
+
+- Remove Gemini CLI from the shipped Rust Supported Provider, Agent Integration, MCP Host, and declared integration catalogs.
+- Preserve Antigravity's `.gemini` credential/config paths, Gemini model IDs offered by other integrations, and `AIFUEL_GEMINI_API_URL`, which configures the shared Code Assist endpoint.
+- Legacy Python code and historical research, specifications, acceptance records, and ADRs remain outside this removal's scope.
+
 ## Provider discovery
 
 - Treat provider discovery as a local, side-effect-free presence check. It must not call provider APIs, refresh tokens, or write credentials.

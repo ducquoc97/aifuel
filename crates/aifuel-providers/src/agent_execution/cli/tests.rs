@@ -62,7 +62,7 @@ fn install_fake_cli(directory: &Path, unix_body: &str, windows_body: &str) -> &'
 
 fn read_only_test_adapter(program: &'static str) -> CliExecutionAdapter {
     CliExecutionAdapter::new(
-        aifuel_core::ProviderKey::Gemini,
+        aifuel_core::ProviderKey::Devin,
         program,
         &["--help"],
         &["--prompt", "--approval-mode", "--output-format"],
@@ -74,7 +74,7 @@ fn read_only_test_adapter(program: &'static str) -> CliExecutionAdapter {
 
 fn cli_test_request() -> RunRequest {
     let mut request = read_only_project_request();
-    request.integration = aifuel_core::IntegrationId::from(aifuel_core::ProviderKey::Gemini);
+    request.integration = aifuel_core::IntegrationId::from(aifuel_core::ProviderKey::Devin);
     request
 }
 

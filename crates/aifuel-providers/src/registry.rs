@@ -193,12 +193,11 @@ impl<'a> ProviderRegistry<'a> {
     }
 }
 
-/// The explicit catalog of the six current Catalog Provider identities.
+/// The explicit catalog of the five current Catalog Provider identities.
 pub static CATALOG_PROVIDERS: &[&dyn CatalogProviderDefinition] = &[
     &crate::claude::DEFINITION,
     &crate::codex::DEFINITION,
     &crate::copilot::DEFINITION,
-    &crate::gemini::DEFINITION,
     &crate::antigravity::DEFINITION,
     &crate::devin::DEFINITION,
 ];
@@ -215,10 +214,6 @@ static MONITORING_ADAPTERS: &[MonitoringAdapter] = &[
     MonitoringAdapter {
         provider: ProviderKey::Copilot,
         collect: crate::copilot::collect,
-    },
-    MonitoringAdapter {
-        provider: ProviderKey::Gemini,
-        collect: crate::gemini::collect,
     },
     MonitoringAdapter {
         provider: ProviderKey::Antigravity,
@@ -299,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_is_explicit_and_keeps_the_six_provider_identities() {
+    fn catalog_is_explicit_and_keeps_the_five_provider_identities() {
         let keys: Vec<_> = CATALOG_PROVIDERS
             .iter()
             .map(|provider| provider.descriptor().key)
@@ -311,7 +306,6 @@ mod tests {
                 ProviderKey::Claude,
                 ProviderKey::Codex,
                 ProviderKey::Copilot,
-                ProviderKey::Gemini,
                 ProviderKey::Antigravity,
                 ProviderKey::Devin,
             ]
@@ -324,7 +318,6 @@ mod tests {
             (ProviderKey::Claude, ".claude/.credentials.json"),
             (ProviderKey::Codex, ".codex/auth.json"),
             (ProviderKey::Copilot, ".copilot/config.json"),
-            (ProviderKey::Gemini, ".gemini/oauth_creds.json"),
         ];
 
         for (key, marker) in cases {
@@ -348,6 +341,17 @@ mod tests {
 
             assert_eq!(keys(&selection), vec![ProviderKey::Antigravity]);
         }
+    }
+
+    #[test]
+    fn gemini_credentials_do_not_discover_antigravity() {
+        let home = TestHome::new();
+        home.write_file(".gemini/oauth_creds.json", b"present but unparsed");
+
+        let selection = default_registry().discover_and_initialize(&home.context());
+
+        assert!(selection.providers().next().is_none());
+        assert!(selection.report().discovery_errors.is_empty());
     }
 
     #[test]
@@ -379,9 +383,9 @@ mod tests {
     #[test]
     fn an_uninspectable_source_is_reported_as_a_discovery_failure() {
         let home = TestHome::new();
-        let gemini = CatalogProvider::file_source(ProviderKey::Gemini, "\0");
+        let claude = CatalogProvider::file_source(ProviderKey::Claude, "\0");
         let antigravity = CatalogProvider::file_source(ProviderKey::Antigravity, "\0");
-        let definitions: [&dyn CatalogProviderDefinition; 2] = [&gemini, &antigravity];
+        let definitions: [&dyn CatalogProviderDefinition; 2] = [&claude, &antigravity];
 
         let selection =
             ProviderRegistry::new(&definitions).discover_and_initialize(&home.context());
@@ -395,7 +399,7 @@ mod tests {
         assert!(selection.providers().next().is_none());
         assert_eq!(
             failures,
-            vec![ProviderKey::Gemini, ProviderKey::Antigravity]
+            vec![ProviderKey::Claude, ProviderKey::Antigravity]
         );
     }
 
@@ -457,7 +461,7 @@ mod tests {
             initialized: Arc::clone(&absent_count),
         };
         let failed = ControlledDefinition {
-            descriptor: ProviderDescriptor::for_key(ProviderKey::Gemini),
+            descriptor: ProviderDescriptor::for_key(ProviderKey::Copilot),
             state: Err(DiscoveryError::SourceUnavailable),
             initialized: Arc::clone(&failed_count),
         };
@@ -470,7 +474,7 @@ mod tests {
         assert_eq!(selection.report().discovery_errors.len(), 1);
         assert_eq!(
             selection.report().discovery_errors[0].provider.key,
-            ProviderKey::Gemini
+            ProviderKey::Copilot
         );
         assert_eq!(present_count.load(Ordering::Relaxed), 1);
         assert_eq!(absent_count.load(Ordering::Relaxed), 0);
@@ -483,11 +487,11 @@ mod tests {
         let first = default_registry().discover_and_initialize(&home.context());
         assert!(first.providers().next().is_none());
 
-        home.write_file(".gemini/oauth_creds.json", b"not parsed");
+        home.write_file(".copilot/config.json", b"not parsed");
         let second = default_registry().discover_and_initialize(&home.context());
-        assert_eq!(keys(&second), vec![ProviderKey::Gemini]);
+        assert_eq!(keys(&second), vec![ProviderKey::Copilot]);
 
-        fs::remove_file(home.path.join(".gemini/oauth_creds.json"))
+        fs::remove_file(home.path.join(".copilot/config.json"))
             .expect("test marker should be removable");
         let third = default_registry().discover_and_initialize(&home.context());
         assert!(third.providers().next().is_none());

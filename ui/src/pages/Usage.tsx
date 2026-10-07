@@ -47,13 +47,12 @@ const PROVIDER_NAME: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex CLI",
   copilot: "GitHub Copilot",
-  gemini: "Gemini CLI",
   antigravity: "Antigravity CLI",
 };
 
 const WINDOW_LIMIT = 6;
 const MODEL_PREVIEW = 3;
-const MODEL_PROVIDERS = new Set(["gemini", "antigravity"]);
+const MODEL_PROVIDERS = new Set(["antigravity"]);
 
 function anchorPeriod(windows: QuotaWindow[]) {
   return windows

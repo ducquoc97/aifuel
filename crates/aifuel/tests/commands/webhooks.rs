@@ -144,12 +144,14 @@ fn collect_json(root: &Path, endpoint: &str) -> std::process::Output {
 #[test]
 fn json_collection_delivers_threshold_and_reset_events_to_the_webhook() {
     let home = TestDirectory::new("webhooks");
-    fs::create_dir_all(home.path().join(".gemini")).expect("Gemini directory should exist");
+    fs::create_dir_all(home.path().join(".gemini/antigravity-cli"))
+        .expect("Antigravity directory should exist");
     fs::write(
-        home.path().join(".gemini/oauth_creds.json"),
+        home.path()
+            .join(".gemini/antigravity-cli/antigravity-oauth-token"),
         r#"{"access_token":"test-token"}"#,
     )
-    .expect("Gemini credentials should exist");
+    .expect("Antigravity credentials should exist");
     let remaining = Arc::new(Mutex::new(0.05_f64));
     let endpoint = start_quota_fixture(Arc::clone(&remaining));
     let (webhook_url, bodies) = start_webhook_receiver();
@@ -181,7 +183,7 @@ fn json_collection_delivers_threshold_and_reset_events_to_the_webhook() {
     let first: serde_json::Value =
         serde_json::from_str(&received).expect("webhook payload should be JSON");
     assert_eq!(first["event"], "threshold_crossed");
-    assert_eq!(first["provider"], "gemini");
+    assert_eq!(first["provider"], "antigravity");
     assert_eq!(first["window"], "gemini-3.5-flash");
     assert_eq!(first["percent_used"], 95.0);
     assert_eq!(first["threshold_percent"], 90.0);
@@ -207,6 +209,6 @@ fn json_collection_delivers_threshold_and_reset_events_to_the_webhook() {
     )
     .expect("webhook payload should be JSON");
     assert_eq!(reset["event"], "quota_reset");
-    assert_eq!(reset["provider"], "gemini");
+    assert_eq!(reset["provider"], "antigravity");
     assert_eq!(reset["percent_used"], 50.0);
 }

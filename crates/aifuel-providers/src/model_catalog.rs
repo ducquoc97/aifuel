@@ -69,7 +69,6 @@ mod tests {
         for provider in [
             ProviderKey::Claude,
             ProviderKey::Copilot,
-            ProviderKey::Gemini,
             ProviderKey::Antigravity,
         ] {
             let result = discover_model_catalog(provider).await;

@@ -1,6 +1,6 @@
 //! The built-in Provider Integrations.
 //!
-//! Six CLI integrations wrap the compiled CLI adapters (`ExecutionConfig::Cli`
+//! Five CLI integrations wrap the compiled CLI adapters (`ExecutionConfig::Cli`
 //! - the provider CLI owns its credential, so no auth binding exists). Their
 //! evidence sources are the same provider-owned credential markers the
 //! catalog registry inspects; the marker paths are repeated here because the
@@ -47,7 +47,7 @@ use std::collections::BTreeMap;
 const OLLAMA_BASE_URL: &str = "http://localhost:11434/v1";
 const LMSTUDIO_BASE_URL: &str = "http://localhost:1234/v1";
 
-/// The built-in integration descriptors: the six compiled-adapter CLI
+/// The built-in integration descriptors: the five compiled-adapter CLI
 /// integrations in pinned catalog order, the OpenCode runtime adapter
 /// integration, the compiled `*:oauth` direct HTTP adapters, then the
 /// local-server and API-key HTTP integrations.
@@ -72,10 +72,6 @@ pub fn builtin_integrations() -> Vec<IntegrationDescriptor> {
         cli(
             ProviderKey::Copilot,
             vec![EvidenceSource::File(".copilot/config.json".to_owned())],
-        ),
-        cli(
-            ProviderKey::Gemini,
-            vec![EvidenceSource::File(".gemini/oauth_creds.json".to_owned())],
         ),
         cli(
             ProviderKey::Antigravity,
@@ -325,7 +321,7 @@ mod tests {
 
     #[test]
     fn the_cli_integrations_appear_in_catalog_order() {
-        // The six compiled-adapter integrations in pinned catalog order,
+        // The five compiled-adapter integrations in pinned catalog order,
         // then the runtime-adapter integrations (`opencode`, `cursor`),
         // then the compiled OAuth direct HTTP adapters.
         let descriptors = builtin_integrations();
@@ -340,7 +336,6 @@ mod tests {
                 ("claude", "claude"),
                 ("codex", "codex"),
                 ("copilot", "copilot"),
-                ("gemini", "gemini"),
                 ("antigravity", "antigravity"),
                 ("devin", "devin"),
                 ("opencode", "opencode"),

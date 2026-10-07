@@ -18,9 +18,10 @@ impl TestHome {
         let suffix = NEXT_TEST_HOME_ID.fetch_add(1, Ordering::Relaxed);
         let path =
             std::env::temp_dir().join(format!("aifuel-usage-test-{}-{suffix}", std::process::id()));
-        fs::create_dir_all(path.join(".gemini")).expect("test home should be creatable");
+        fs::create_dir_all(path.join(".gemini/antigravity-cli"))
+            .expect("test home should be creatable");
         fs::write(
-            path.join(".gemini/oauth_creds.json"),
+            path.join(".gemini/antigravity-cli/antigravity-oauth-token"),
             r#"{"access_token":"test-token"}"#,
         )
         .expect("test credentials should be writable");
@@ -114,7 +115,7 @@ fn response_with_body(mut stream: TcpStream, body: &str) {
 }
 
 #[tokio::test]
-async fn gemini_collection_normalizes_live_model_quota() {
+async fn antigravity_collection_normalizes_live_model_quota() {
     let home = TestHome::new();
     let listener = TcpListener::bind("127.0.0.1:0").expect("fixture server should bind");
     let address = listener
@@ -136,15 +137,18 @@ async fn gemini_collection_normalizes_live_model_quota() {
     server.join().expect("fixture server should finish");
 
     assert_eq!(report.providers.len(), 1);
-    assert_eq!(report.providers[0].key, ProviderKey::Gemini);
+    assert_eq!(report.providers[0].key, ProviderKey::Antigravity);
     assert_eq!(report.providers[0].status, ProviderStatus::Ok);
     assert_eq!(report.providers[0].windows[0].label, "gemini-3.5-flash");
     assert_eq!(report.providers[0].windows[0].remaining_percent, Some(50.0));
     assert_eq!(report.collection.outcome, Some(CollectionOutcome::Complete));
     assert!(report.discovery_errors.is_empty());
     assert_eq!(
-        fs::read_to_string(home.path.join(".gemini/oauth_creds.json"))
-            .expect("credentials should remain readable"),
+        fs::read_to_string(
+            home.path
+                .join(".gemini/antigravity-cli/antigravity-oauth-token")
+        )
+        .expect("credentials should remain readable"),
         r#"{"access_token":"test-token"}"#
     );
 }
@@ -203,8 +207,8 @@ async fn codex_collection_normalizes_rate_limit_windows_and_account() {
 #[tokio::test]
 async fn devin_collection_reads_toml_credentials_and_quota_windows() {
     let home = TestHome::new();
-    fs::remove_file(home.path.join(".gemini/oauth_creds.json"))
-        .expect("Gemini fixture credentials should be removable");
+    fs::remove_dir_all(home.path.join(".gemini"))
+        .expect("Antigravity fixture credentials should be removable");
     let (endpoint, server) = start_fixed_server(
         r#"{"userStatus":{"pro":true,"name":"Test User","teamId":"devin-team$account-1","teamsTier":"TEAMS_TIER_DEVIN_PRO","planStatus":{"planInfo":{"planName":"Pro","devinInfo":{"orgId":"org-1","apiUrl":"https://api.devin.ai","accountDisplayName":"Test Org"}},"planStart":"2026-09-25T08:05:10Z","planEnd":"2026-10-25T08:05:10Z","availablePromptCredits":-1,"dailyQuotaRemainingPercent":60,"weeklyQuotaRemainingPercent":40,"overageBalanceMicros":"10000000","dailyQuotaResetAtUnix":"1790409600","weeklyQuotaResetAtUnix":"1790496000"}}}"#,
     );
@@ -261,8 +265,8 @@ async fn devin_collection_reads_toml_credentials_and_quota_windows() {
 #[tokio::test]
 async fn devin_collection_falls_back_to_configured_api_server_url() {
     let home = TestHome::new();
-    fs::remove_file(home.path.join(".gemini/oauth_creds.json"))
-        .expect("Gemini fixture credentials should be removable");
+    fs::remove_dir_all(home.path.join(".gemini"))
+        .expect("Antigravity fixture credentials should be removable");
     let (endpoint, server) = start_fixed_server(
         r#"{"userStatus":{"planStatus":{"planInfo":{"planName":"Pro"},"dailyQuotaRemainingPercent":88,"dailyQuotaResetAtUnix":"1790409600"}}}"#,
     );

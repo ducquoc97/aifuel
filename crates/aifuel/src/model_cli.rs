@@ -267,14 +267,14 @@ mod tests {
     fn unsupported_refresh_keeps_provider_diagnostic_visible() {
         let results = vec![serde_json::json!({
             "status":"unsupported",
-            "scope":{"provider":"gemini"},
+            "scope":{"provider":"antigravity"},
             "diagnostic":"native catalog interface is unavailable"
         })];
 
         let (output, code) = render_refresh_results(&results);
 
         assert_eq!(code, 3);
-        assert!(output.contains("gemini: unsupported"));
+        assert!(output.contains("antigravity: unsupported"));
         assert!(output.contains("native catalog interface is unavailable"));
     }
 }
