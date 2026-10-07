@@ -1,0 +1,131 @@
+name: Release
+
+# Runs only when a release is needed: pushing a v* tag publishes a GitHub
+# Release; manual dispatch runs the same verify+build as a dry run.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Test workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Tag must match workspace version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          [ "$tag" = "$ver" ] || { echo "tag $GITHUB_REF_NAME != workspace version $ver"; exit 1; }
+      - run: pnpm -C ui install --frozen-lockfile
+      - run: pnpm -C ui build
+      - run: cargo test --workspace --locked
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64,   os: ubuntu-latest,    target: x86_64-unknown-linux-gnu }
+          - { name: linux-arm64, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { name: macos-arm64, os: macos-latest,     target: aarch64-apple-darwin }
+          - { name: macos-x64,   os: macos-15-intel,   target: x86_64-apple-darwin }
+          - { name: windows-x64, os: windows-latest,   target: x86_64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+      - name: Compute package version
+        shell: bash
+        run: echo "pkg_version=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+      - run: pnpm -C ui install --frozen-lockfile
+      - run: pnpm -C ui build
+      - run: cargo build --release --locked -p aifuel --target ${{ matrix.target }}
+      - name: Package archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="aifuel-${{ env.pkg_version }}-${{ matrix.name }}"
+          mkdir -p "stage/$pkg"
+          cp "target/${{ matrix.target }}/release/aifuel" "stage/$pkg/aifuel"
+          cp LICENSE README.md "stage/$pkg/"
+          tar -C stage -czf "$pkg.tar.gz" "$pkg"
+          (command -v sha256sum >/dev/null && sha256sum "$pkg.tar.gz" || shasum -a 256 "$pkg.tar.gz") > "$pkg.tar.gz.sha256"
+      - name: Package archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pkg = "aifuel-${{ env.pkg_version }}-${{ matrix.name }}"
+          New-Item -ItemType Directory -Force "stage/$pkg" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/aifuel.exe" "stage/$pkg/aifuel.exe"
+          Copy-Item LICENSE, README.md "stage/$pkg/"
+          Compress-Archive -Path "stage/$pkg" -DestinationPath "$pkg.zip"
+          $hash = (Get-FileHash "$pkg.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -NoNewline "$pkg.zip.sha256" "$hash  $pkg.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: aifuel-${{ matrix.name }}
+          path: |
+            aifuel-*.tar.gz
+            aifuel-*.tar.gz.sha256
+            aifuel-*.zip
+            aifuel-*.zip.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: aifuel-*
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "${{ github.ref_name }}" dist/*
+          --title "${{ github.ref_name }}" --generate-notes

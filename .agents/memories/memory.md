@@ -47,3 +47,10 @@
 - Inline OAuth refresh belongs inside `execute` when the access token is expired or inside a ~60s margin and a `refresh_token` exists - never refresh a valid token (rotation is consuming), write back atomically preserving unknown fields, serialize with a per-adapter `OnceLock<tokio::Mutex>` (tokio `Mutex::new` is not const, so a static adapter cannot hold one inline).
 - GitHub Copilot Business seats reject `POST /copilot_internal/v2/token` with 403, not 404 - auth-class failures (401/403/404/410) must all reconcile through `/copilot_internal/user`, which reports the seat's real `endpoints.api` (e.g. `api.business.githubcopilot.com`) where the `gho_` token works as bearer directly.
 - A branch whose base commits entered `main` via squash merge rebases cleanly with `git rebase --onto origin/main <last-merged-commit>` - a plain rebase tries to re-apply already-merged commits and conflicts.
+
+## CI and releases
+
+- The user prefers release-only CI (Option A): workflows trigger on `v*` tags and manual `workflow_dispatch`, not on every commit, because commit frequency is high. `.github/workflows/release.yml` runs verify (cargo test on ubuntu) -> 5-target build matrix -> GitHub Release with archives and sha256 files.
+- `crates/aifuel/build.rs` auto-runs `pnpm install --frozen-lockfile` + `pnpm build` when `ui/dist` is missing, so CI only needs pnpm+node on PATH; no separate UI job.
+- `cargo fmt --check` is not currently clean (43 diffs) and `src/`+`tests/` Python is the legacy implementation, not the shipped artifact - keep both out of release gates.
+- Repo is a bare-worktree layout (`.bare/` + worktree dirs under `/home/willnguyen/Developer/aifuel/`): use the bare-repo-worktree skill, never edit `main/` directly.
