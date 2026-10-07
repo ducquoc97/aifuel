@@ -352,6 +352,62 @@ fn public_claude_setup_uses_user_scope_json_and_preserves_other_settings() {
 }
 
 #[test]
+fn public_setup_repeated_agent_applies_and_remove_without_agent_cleans_all_hosts() {
+    let directory = TestDirectory::new("mcp-setup-remove-all");
+    let root = directory.path();
+    let claude_config = root.join(".claude.json");
+    let devin_config = root.join(".config").join("devin").join("mcp_config.json");
+    fs::create_dir_all(devin_config.parent().unwrap()).unwrap();
+    fs::write(
+        &claude_config,
+        br#"{"mcpServers":{"notes":{"command":"notes"}}}"#,
+    )
+    .unwrap();
+    fs::write(&devin_config, br#"{"mcpServers":{}}"#).unwrap();
+
+    let apply = run_setup(
+        root,
+        &["mcp", "setup", "--agent", "claude", "--agent", "devin"],
+    );
+    assert!(
+        apply.status.success(),
+        "repeated --agent should apply to each host: {}",
+        String::from_utf8_lossy(&apply.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&apply.stdout);
+    assert!(stdout.contains("MCP Host claude: registration applied"));
+    assert!(stdout.contains("MCP Host devin: registration applied"));
+    assert!(String::from_utf8_lossy(&fs::read(&claude_config).unwrap()).contains("aifuel-gateway"));
+    assert!(String::from_utf8_lossy(&fs::read(&devin_config).unwrap()).contains("aifuel-gateway"));
+
+    let remove = run_setup(root, &["mcp", "setup", "--remove"]);
+    assert!(
+        remove.status.success(),
+        "agentless --remove should clean every host: {}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&remove.stdout);
+    assert!(stdout.contains("MCP Host claude: registration removed"));
+    assert!(stdout.contains("MCP Host devin: registration removed"));
+    assert!(
+        !String::from_utf8_lossy(&fs::read(&claude_config).unwrap()).contains("aifuel-gateway")
+    );
+    assert!(!String::from_utf8_lossy(&fs::read(&devin_config).unwrap()).contains("aifuel-gateway"));
+    assert!(String::from_utf8_lossy(&fs::read(&claude_config).unwrap()).contains("notes"));
+}
+
+#[test]
+fn public_setup_without_agent_still_requires_one_to_apply() {
+    let directory = TestDirectory::new("mcp-setup-no-agent");
+    let root = directory.path();
+
+    let apply = run_setup(root, &["mcp", "setup"]);
+
+    assert_eq!(apply.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&apply.stderr).contains("requires --agent MCP_HOST_ID"));
+}
+
+#[test]
 fn public_claude_setup_rejects_an_unowned_gateway_conflict() {
     let directory = TestDirectory::new("mcp-setup-claude-conflict");
     let root = directory.path();

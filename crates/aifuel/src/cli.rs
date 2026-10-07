@@ -285,7 +285,7 @@ fn print_help() {
     println!(
         "       aifuel mcp gateway --agent MCP_HOST_ID [--tool GATEWAY_TOOL_NAME ...] [--http [--host H] [--port P]]"
     );
-    println!("       aifuel mcp setup --agent MCP_HOST_ID [--dry-run] [--remove]");
+    println!("       aifuel mcp setup [--agent MCP_HOST_ID ...] [--dry-run] [--remove]");
     println!("       aifuel mcp servers list|validate|add|remove|select");
     println!();
     println!("The default command collects live status for discovered providers.");
