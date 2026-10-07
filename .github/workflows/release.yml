@@ -102,8 +102,14 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/aifuel.exe" "stage/$pkg/aifuel.exe"
           Copy-Item LICENSE, README.md "stage/$pkg/"
           Compress-Archive -Path "stage/$pkg" -DestinationPath "$pkg.zip"
-          $hash = (Get-FileHash "$pkg.zip" -Algorithm SHA256).Hash.ToLower()
-          Set-Content -NoNewline "$pkg.zip.sha256" "$hash  $pkg.zip"
+      - name: Checksum archive
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="aifuel-${{ env.pkg_version }}-${{ matrix.name }}"
+          sha256sum "$pkg.zip" > "$pkg.zip.sha256"
+          cat "$pkg.zip.sha256"
       - uses: actions/upload-artifact@v7
         with:
           name: aifuel-${{ matrix.name }}
