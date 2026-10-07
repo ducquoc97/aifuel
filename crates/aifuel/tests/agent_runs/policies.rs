@@ -61,7 +61,10 @@ fn unverified_read_only_project_modes_are_rejected_before_launch() {
     )
     .expect("execution policy should be writable");
 
-    for provider in ["claude", "copilot", "gemini", "antigravity"] {
+    // Claude and Copilot moved out of this list: their adapters declare
+    // verified read-only enforcement (plan-mode evidence on WSL). Gemini and
+    // Antigravity remain unverified and must still be rejected before launch.
+    for provider in ["gemini", "antigravity"] {
         let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
             .args([
                 "run",
