@@ -130,6 +130,8 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout in this job - gh resolves the repo from GH_REPO.
+          GH_REPO: ${{ github.repository }}
         run: |
           tag="${{ github.ref_name }}"
           # Idempotent: re-running on an existing release replaces its assets.
