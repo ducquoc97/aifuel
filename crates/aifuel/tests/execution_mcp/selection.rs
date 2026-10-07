@@ -117,10 +117,10 @@ fn resume_ignores_global_selection_defaults_and_preserves_stored_values() {
         &directory,
         json!({
             "schema_version": 1,
-            "defaults": {"provider":"gemini","model":"global-model","effort":"global-effort"},
+            "defaults": {"provider":"copilot","model":"global-model","effort":"global-effort"},
             "profiles": {
                 "work":{"provider":"codex","model":"profile-model","effort":"profile-effort"},
-                "other":{"provider":"gemini","model":"other-model","effort":"low"}
+                "other":{"provider":"copilot","model":"other-model","effort":"low"}
             },
             "policy": {"allowed_roots": [directory.path().to_string_lossy()]}
         }),
@@ -154,7 +154,7 @@ fn resume_ignores_global_selection_defaults_and_preserves_stored_values() {
     let explicit_conflict = call_tools(
         &directory,
         &[
-            json!({"name":"resume_session","arguments":{"session_id":"stored-session","provider":"gemini","prompt":"conflict"}}),
+            json!({"name":"resume_session","arguments":{"session_id":"stored-session","provider":"copilot","prompt":"conflict"}}),
         ],
         Some(directory.path()),
     );
@@ -166,7 +166,7 @@ fn resume_ignores_global_selection_defaults_and_preserves_stored_values() {
     assert!(
         structured(&explicit_conflict[0])["message"]
             .as_str()
-            .is_some_and(|message| message.contains("codex") && message.contains("gemini"))
+            .is_some_and(|message| message.contains("codex") && message.contains("copilot"))
     );
 
     let profile_conflict = call_tools(
@@ -184,7 +184,7 @@ fn resume_ignores_global_selection_defaults_and_preserves_stored_values() {
     assert!(
         structured(&profile_conflict[0])["message"]
             .as_str()
-            .is_some_and(|message| message.contains("codex") && message.contains("gemini"))
+            .is_some_and(|message| message.contains("codex") && message.contains("copilot"))
     );
 
     let profile_resume = call_tools(

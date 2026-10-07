@@ -46,7 +46,7 @@ fn aifuel(directory: &TestDirectory) -> Command {
 
 #[test]
 fn run_rejects_prompt_only_read_only_without_verified_provider_enforcement() {
-    for (provider, executable) in [("gemini", "gemini"), ("antigravity", "agy")] {
+    for (provider, executable) in [("antigravity", "agy")] {
         let directory = TestDirectory::new(&format!("{provider}-prompt-read-only"));
         install_fake_command(directory.path(), executable);
 
@@ -242,7 +242,7 @@ fn run_uses_the_selected_codex_integration() {
 fn model_catalog_refresh_reports_unsupported_provider_interfaces() {
     let directory = TestDirectory::new("model-refresh-unsupported");
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args(["model", "refresh", "--provider", "gemini"])
+        .args(["model", "refresh", "--provider", "antigravity"])
         .env("HOME", directory.path())
         .env("USERPROFILE", directory.path())
         .env("APPDATA", directory.path())
@@ -252,7 +252,7 @@ fn model_catalog_refresh_reports_unsupported_provider_interfaces() {
 
     assert_eq!(output.status.code(), Some(3));
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("gemini: unsupported"));
+    assert!(stdout.contains("antigravity: unsupported"));
     assert!(stdout.contains("no model list was inferred"));
 }
 

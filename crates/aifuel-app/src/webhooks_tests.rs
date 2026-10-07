@@ -78,7 +78,7 @@ fn complete_body(request: &[u8]) -> Option<String> {
 
 fn report_with_window(used_percent: f64) -> StatusReport {
     let provider = ProviderUsage::success(
-        ProviderKey::Gemini,
+        ProviderKey::Antigravity,
         vec![QuotaWindow::new(
             "gemini-3.5-flash",
             "daily",
@@ -181,8 +181,8 @@ async fn deliver_posts_once_per_threshold_crossing() {
     let body: serde_json::Value =
         serde_json::from_str(&bodies.recv().expect("one payload")).expect("payload is JSON");
     assert_eq!(body["event"], "threshold_crossed");
-    assert_eq!(body["provider"], "gemini");
-    assert_eq!(body["provider_name"], "Gemini CLI");
+    assert_eq!(body["provider"], "antigravity");
+    assert_eq!(body["provider_name"], "Antigravity CLI");
     assert_eq!(body["window"], "gemini-3.5-flash");
     assert_eq!(body["window_period"], "daily");
     assert_eq!(body["authoritative"], true);

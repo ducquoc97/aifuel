@@ -18,7 +18,7 @@
 //! - [`chains`]: the named fallback chains (`chains` map in
 //!   `providers.json`) - user-configured ordered fallback lists over
 //!   registered integrations, `--chain NAME`'s target.
-//! - [`builtin`]: the compiled [`IntegrationDescriptor`] set - six CLI
+//! - [`builtin`]: the compiled [`IntegrationDescriptor`] set - five CLI
 //!   integrations, the runtime-adapter integrations, the local OpenAI-
 //!   compatible endpoints, and the API-key provider catalog.
 

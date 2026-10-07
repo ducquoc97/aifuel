@@ -4,7 +4,6 @@ static ADAPTERS: &[&dyn AgentExecutionAdapter] = &[
     &crate::claude::AGENT_RUN_ADAPTER,
     &crate::codex::AGENT_RUN_ADAPTER,
     &crate::copilot::AGENT_RUN_ADAPTER,
-    &crate::gemini::AGENT_RUN_ADAPTER,
     &crate::antigravity::AGENT_RUN_ADAPTER,
     &crate::devin::AGENT_RUN_ADAPTER,
     // The `*:oauth` direct HTTP adapters follow the CLI set: a bare
@@ -57,7 +56,6 @@ mod tests {
             ProviderKey::Claude,
             ProviderKey::Codex,
             ProviderKey::Copilot,
-            ProviderKey::Gemini,
             ProviderKey::Antigravity,
             ProviderKey::Devin,
         ]
@@ -159,13 +157,6 @@ mod tests {
                 "Start `copilot`, then enter `/login` in its interactive UI.",
                 "Run `copilot --version` to check the installed version; AI Fuel does not inspect Copilot sign-in state.",
                 "https://docs.github.com/en/copilot/get-started/cli-quickstart",
-            ),
-            (
-                ProviderKey::Gemini,
-                "npm install -g @google/gemini-cli",
-                "Start `gemini` and choose a documented sign-in method, such as Sign in with Google.",
-                "Run `gemini --version` to check the install. Start `gemini` and complete the interactive auth selection to verify account access; AI Fuel does not inspect local credentials.",
-                "https://geminicli.com/docs/get-started/",
             ),
             (
                 ProviderKey::Antigravity,

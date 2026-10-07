@@ -47,9 +47,9 @@ fn antigravity_prompt_only_read_only_is_rejected_before_launch() {
 #[test]
 fn noninteractive_run_requires_an_explicit_or_configured_model() {
     let directory = TestDirectory::new("noninteractive-model-required");
-    install_fake_command(directory.path(), "gemini");
+    install_fake_command(directory.path(), "copilot");
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
-        .args(["run", "--provider", "gemini", "--prompt", "hello"])
+        .args(["run", "--provider", "copilot", "--prompt", "hello"])
         .env("PATH", path_with(directory.path()))
         .env("HOME", directory.path())
         .env("USERPROFILE", directory.path())
@@ -67,8 +67,86 @@ fn noninteractive_run_requires_an_explicit_or_configured_model() {
 }
 
 #[test]
+fn removed_gemini_integration_is_rejected_even_when_its_cli_is_installed() {
+    let directory = TestDirectory::new("removed-gemini-run");
+    install_fake_command(directory.path(), "gemini");
+    let args_log = directory.path().join("gemini.args");
+
+    for selection_flag in ["--integration", "--provider"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+            .args([
+                "run",
+                selection_flag,
+                "gemini",
+                "--model",
+                "gemini-2.5-pro",
+                "--prompt",
+                "hello",
+            ])
+            .env("PATH", path_with(directory.path()))
+            .env("HOME", directory.path())
+            .env("USERPROFILE", directory.path())
+            .env("APPDATA", directory.path())
+            .env("XDG_CONFIG_HOME", directory.path().join(".config"))
+            .env("AIFUEL_FAKE_ARGS_LOG", &args_log)
+            .output()
+            .expect("aifuel should start");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(3), "{selection_flag}: {stderr}");
+        assert!(
+            stderr.contains("integration gemini is not a registered agent integration"),
+            "{selection_flag}: {stderr}"
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "removed integrations must not run"
+        );
+        assert!(
+            !args_log.exists(),
+            "the removed Gemini CLI must not be probed or launched"
+        );
+    }
+}
+
+#[test]
+fn model_commands_reject_the_removed_gemini_provider_without_probing_its_cli() {
+    let directory = TestDirectory::new("removed-gemini-models");
+    install_fake_command(directory.path(), "gemini");
+    let args_log = directory.path().join("gemini.args");
+
+    for command in ["list", "refresh"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+            .args(["model", command, "--provider", "gemini"])
+            .env("PATH", path_with(directory.path()))
+            .env("HOME", directory.path())
+            .env("USERPROFILE", directory.path())
+            .env("APPDATA", directory.path())
+            .env("XDG_CONFIG_HOME", directory.path().join(".config"))
+            .env("AIFUEL_FAKE_ARGS_LOG", &args_log)
+            .output()
+            .expect("aifuel should start");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{command}: {stderr}");
+        assert!(
+            stderr.contains("unknown provider \"gemini\""),
+            "{command}: {stderr}"
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "a removed provider has no model catalog"
+        );
+        assert!(
+            !args_log.exists(),
+            "the removed Gemini CLI must not be probed"
+        );
+    }
+}
+
+#[test]
 fn account_selection_remains_explicitly_unsupported_for_each_current_adapter() {
-    for provider in ["claude", "codex", "copilot", "gemini"] {
+    for provider in ["claude", "codex", "copilot"] {
         let directory = TestDirectory::new(&format!("{provider}-account"));
         install_fake_command(directory.path(), provider);
 

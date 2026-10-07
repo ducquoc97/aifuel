@@ -5,7 +5,7 @@ use crate::support::{TestDirectory, ai_fuel_config_dir, install_fake_command, pa
 
 #[test]
 fn unverified_workspace_write_modes_are_rejected_before_launch() {
-    for provider in ["claude", "gemini", "antigravity"] {
+    for provider in ["claude", "antigravity"] {
         let directory = TestDirectory::new(&format!("{provider}-unverified-write"));
         install_fake_command(directory.path(), provider);
         let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
@@ -45,9 +45,7 @@ fn unverified_read_only_project_modes_are_rejected_before_launch() {
     fs::create_dir_all(&executable_dir).expect("bin directory should exist");
     fs::create_dir_all(&workspace).expect("workspace should exist");
     fs::create_dir_all(&config).expect("AI Fuel config directory should exist");
-    for executable in ["claude", "copilot", "gemini", "agy"] {
-        install_fake_command(&executable_dir, executable);
-    }
+    install_fake_command(&executable_dir, "agy");
     fs::write(
         config.join("execution.json"),
         serde_json::json!({
@@ -62,9 +60,9 @@ fn unverified_read_only_project_modes_are_rejected_before_launch() {
     .expect("execution policy should be writable");
 
     // Claude and Copilot moved out of this list: their adapters declare
-    // verified read-only enforcement (plan-mode evidence on WSL). Gemini and
-    // Antigravity remain unverified and must still be rejected before launch.
-    for provider in ["gemini", "antigravity"] {
+    // verified read-only enforcement (plan-mode evidence on WSL). Antigravity
+    // remains unverified and must still be rejected before launch.
+    for provider in ["antigravity"] {
         let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
             .args([
                 "run",
@@ -108,7 +106,7 @@ fn project_runs_outside_configured_execution_roots_are_rejected_by_the_manager()
     fs::create_dir_all(&allowed_root).expect("allowed root should exist");
     fs::create_dir_all(&denied_root).expect("denied root should exist");
     fs::create_dir_all(&config).expect("AI Fuel config directory should exist");
-    install_fake_command(&executable_dir, "gemini");
+    install_fake_command(&executable_dir, "copilot");
     fs::write(
         config.join("execution.json"),
         serde_json::json!({
@@ -126,7 +124,7 @@ fn project_runs_outside_configured_execution_roots_are_rejected_by_the_manager()
         .args([
             "run",
             "--provider",
-            "gemini",
+            "copilot",
             "--model",
             "test-model",
             "--working-directory",
@@ -186,12 +184,12 @@ fn copilot_rejects_unverified_workspace_write_before_launch() {
 #[test]
 fn requested_effort_is_rejected_until_the_provider_reports_a_verified_value() {
     let directory = TestDirectory::new("unknown-effort");
-    install_fake_command(directory.path(), "gemini");
+    install_fake_command(directory.path(), "copilot");
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args([
             "run",
             "--provider",
-            "gemini",
+            "copilot",
             "--model",
             "test-model",
             "--access",

@@ -8,10 +8,6 @@ use aifuel_core::{CapabilityState, CatalogPlatformStatus, CatalogProviderStatus}
 /// absence means none is documented, not a guarantee none exists.
 const FREE_TIER_NOTES: &[(&str, &str)] = &[
     (
-        "gemini",
-        "Free tier through Google AI Studio; per-model quotas apply",
-    ),
-    (
         "openrouter",
         "Free models at $0/token with :free suffix - 20 RPM / 200 RPD",
     ),
@@ -74,7 +70,6 @@ pub const PINNED_PROVIDER_IDS: &[&str] = &[
     "qwencloud",
     "factory",
     "fireworks",
-    "gemini",
     "antigravity",
     "copilot",
     "devin",
@@ -144,7 +139,7 @@ pub(crate) fn statuses() -> Vec<CatalogProviderStatus> {
         .iter()
         .map(|id| {
             let (monitoring, agent_execution) = match *id {
-                "claude" | "codex" | "copilot" | "gemini" | "devin" => {
+                "claude" | "codex" | "copilot" | "devin" => {
                     (CapabilityState::Supported, CapabilityState::Supported)
                 }
                 "antigravity" => (CapabilityState::Supported, CapabilityState::Unsupported),
@@ -198,8 +193,10 @@ mod tests {
 
     #[test]
     fn pinned_catalog_preserves_all_provider_ids() {
-        assert_eq!(PINNED_PROVIDER_IDS.len(), 76);
+        assert_eq!(PINNED_PROVIDER_IDS.len(), 75);
         assert_eq!(PINNED_PROVIDER_IDS.first(), Some(&"codex"));
         assert_eq!(PINNED_PROVIDER_IDS.last(), Some(&"anthropic"));
+        assert!(!PINNED_PROVIDER_IDS.contains(&"gemini"));
+        assert!(PINNED_PROVIDER_IDS.contains(&"antigravity"));
     }
 }

@@ -1,12 +1,12 @@
 mod common;
 
-use common::{TestDirectory, ai_fuel_config_dir, backup_files, backup_path, run_setup};
-use serde_json::Value;
+use common::{TestDirectory, ai_fuel_config_dir, run_setup};
 use std::fs;
+use std::process::Command;
 
 #[test]
-fn public_gemini_setup_previews_applies_repeats_and_removes_without_losing_user_config() {
-    let directory = TestDirectory::new("mcp-setup-gemini-public");
+fn removed_gemini_host_rejects_setup_preview_and_removal_without_changing_user_config() {
+    let directory = TestDirectory::new("mcp-setup-gemini-removed");
     let root = directory.path();
     let config = root.join(".gemini").join("settings.json");
     let config_dir = ai_fuel_config_dir(root);
@@ -20,60 +20,34 @@ fn public_gemini_setup_previews_applies_repeats_and_removes_without_losing_user_
 }"#;
     fs::write(&config, original).unwrap();
 
-    let preview = run_setup(root, &["mcp", "setup", "--agent", "gemini", "--dry-run"]);
+    for flags in [
+        vec!["--dry-run"],
+        vec![],
+        vec!["--remove"],
+        vec!["--remove", "--dry-run"],
+    ] {
+        let mut args = vec!["mcp", "setup", "--agent", "gemini"];
+        args.extend(flags);
+        let output = run_setup(root, &args);
 
-    assert!(preview.status.success());
-    assert!(String::from_utf8_lossy(&preview.stdout).contains("dry run: would apply"));
-    assert_eq!(fs::read(&config).unwrap(), original);
-    assert!(!config_dir.join("mcp-registrations").exists());
-
-    let apply = run_setup(root, &["mcp", "setup", "--agent", "gemini"]);
-
-    assert!(
-        apply.status.success(),
-        "Gemini setup should apply: {}",
-        String::from_utf8_lossy(&apply.stderr)
-    );
-    assert!(String::from_utf8_lossy(&apply.stdout).contains("registration applied"));
-    let apply_backup = backup_path(&apply);
-    assert_eq!(fs::read(&apply_backup).unwrap(), original);
-    let updated: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
-    assert_eq!(updated["theme"], "dark");
-    assert_eq!(updated["mcp"]["allowed"], serde_json::json!(["docs"]));
-    assert_eq!(updated["mcpServers"]["docs"]["command"], "docs-server");
-    assert_eq!(
-        updated["mcpServers"]["aifuel-gateway"],
-        serde_json::json!({
-            "command": env!("CARGO_BIN_EXE_aifuel"),
-            "args": ["mcp", "gateway", "--agent", "gemini"]
-        })
-    );
-
-    let repeated = run_setup(root, &["mcp", "setup", "--agent", "gemini"]);
-    assert!(repeated.status.success());
-    assert!(
-        String::from_utf8_lossy(&repeated.stdout).contains("no configuration change was needed")
-    );
-    assert_eq!(backup_files(&config_dir).len(), 1);
-
-    let remove = run_setup(root, &["mcp", "setup", "--agent", "gemini", "--remove"]);
-    assert!(
-        remove.status.success(),
-        "Gemini removal should succeed: {}",
-        String::from_utf8_lossy(&remove.stderr)
-    );
-    assert!(String::from_utf8_lossy(&remove.stdout).contains("registration removed"));
-    let removed: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
-    assert!(removed["mcpServers"].get("aifuel-gateway").is_none());
-    assert_eq!(removed["mcpServers"]["docs"]["command"], "docs-server");
-    assert_eq!(removed["theme"], "dark");
-    assert_eq!(backup_path(&remove), apply_backup);
-    assert_eq!(backup_files(&config_dir).len(), 1);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("MCP Host \"gemini\" has no Agent MCP Registration adapter"),
+            "{args:?}: {stderr}"
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "no Gemini registration was changed"
+        );
+        assert_eq!(fs::read(&config).unwrap(), original);
+        assert!(!config_dir.join("mcp-registrations").exists());
+    }
 }
 
 #[test]
-fn public_gemini_setup_rejects_unowned_conflicts_without_changing_them() {
-    let directory = TestDirectory::new("mcp-setup-gemini-conflict");
+fn removing_all_known_mcp_hosts_leaves_legacy_gemini_config_untouched() {
+    let directory = TestDirectory::new("mcp-remove-known-hosts");
     let root = directory.path();
     let config = root.join(".gemini").join("settings.json");
     fs::create_dir_all(config.parent().unwrap()).unwrap();
@@ -87,15 +61,19 @@ fn public_gemini_setup_rejects_unowned_conflicts_without_changing_them() {
 }"#;
     fs::write(&config, original).unwrap();
 
-    let setup = run_setup(root, &["mcp", "setup", "--agent", "gemini"]);
+    let remove = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+        .args(["mcp", "setup", "--remove"])
+        .env("HOME", root)
+        .env("USERPROFILE", root)
+        .env("APPDATA", root)
+        .env("XDG_CONFIG_HOME", root)
+        .env("CODEX_HOME", root.join("codex-home"))
+        .env("COPILOT_HOME", root.join("copilot-home"))
+        .output()
+        .expect("aifuel setup command should start");
 
-    assert_eq!(setup.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&setup.stderr).contains("different or unowned"));
-    assert_eq!(fs::read(&config).unwrap(), original);
-
-    let remove = run_setup(root, &["mcp", "setup", "--agent", "gemini", "--remove"]);
-
-    assert_eq!(remove.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&remove.stderr).contains("unowned"));
+    let stderr = String::from_utf8_lossy(&remove.stderr);
+    assert!(remove.status.success(), "{stderr}");
+    assert!(!String::from_utf8_lossy(&remove.stdout).contains("MCP Host gemini:"));
     assert_eq!(fs::read(&config).unwrap(), original);
 }

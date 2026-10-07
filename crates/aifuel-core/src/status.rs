@@ -316,9 +316,7 @@ impl StatusReport {
             .collect();
         let models: Vec<StatusModel> = providers
             .iter()
-            .filter(|provider| {
-                matches!(provider.key, ProviderKey::Gemini | ProviderKey::Antigravity)
-            })
+            .filter(|provider| provider.key == ProviderKey::Antigravity)
             .flat_map(|provider| {
                 let quota_pool_id = quota_pool_id(provider);
                 provider.windows.iter().map(move |window| StatusModel {
@@ -475,7 +473,7 @@ mod tests {
             vec![
                 usage(ProviderKey::Claude, 10.0, Some(2000.0)),
                 usage(ProviderKey::Codex, 10.0, Some(1000.0)),
-                usage(ProviderKey::Gemini, 5.0, Some(3000.0)),
+                usage(ProviderKey::Antigravity, 5.0, Some(3000.0)),
                 ProviderUsage::error(ProviderKey::Copilot, "no token"),
             ],
             Vec::new(),
@@ -483,7 +481,7 @@ mod tests {
         assert_eq!(
             report.route_candidates(),
             vec![
-                ProviderKey::Gemini,
+                ProviderKey::Antigravity,
                 ProviderKey::Codex,
                 ProviderKey::Claude,
                 ProviderKey::Copilot,

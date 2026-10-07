@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 
-use crate::support::{TestDirectory, ai_fuel_config_dir, start_gemini_fixture};
+use crate::support::{TestDirectory, ai_fuel_config_dir, start_code_assist_fixture};
 
 /// Point a spawned command's user config root at the isolated test
 /// directory, matching `support::ai_fuel_config_dir`.
@@ -94,13 +94,15 @@ fn mcp_serves_read_only_status_over_stdio() {
 #[test]
 fn mcp_collects_selected_provider_status_without_executing_a_prompt() {
     let home = TestDirectory::new("mcp-status");
-    fs::create_dir_all(home.path().join(".gemini")).expect("Gemini directory should exist");
+    fs::create_dir_all(home.path().join(".gemini/antigravity-cli"))
+        .expect("Antigravity directory should exist");
     fs::write(
-        home.path().join(".gemini/oauth_creds.json"),
+        home.path()
+            .join(".gemini/antigravity-cli/antigravity-oauth-token"),
         r#"{"access_token":"test-token"}"#,
     )
-    .expect("Gemini credentials should exist");
-    let (endpoint, server) = start_gemini_fixture();
+    .expect("Antigravity credentials should exist");
+    let (endpoint, server) = start_code_assist_fixture();
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .arg("mcp")
@@ -119,7 +121,7 @@ fn mcp_collects_selected_provider_status_without_executing_a_prompt() {
     .expect("initialize request should be written");
     writeln!(
         stdin,
-        "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{{\"name\":\"get_status\",\"arguments\":{{\"provider_id\":\"gemini\",\"refresh\":true}}}}}}"
+        "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{{\"name\":\"get_status\",\"arguments\":{{\"provider_id\":\"antigravity\",\"refresh\":true}}}}}}"
     )
     .expect("get_status request should be written");
     writeln!(
@@ -150,7 +152,7 @@ fn mcp_collects_selected_provider_status_without_executing_a_prompt() {
     assert_eq!(responses[1]["id"], 2);
     assert_eq!(
         responses[1]["result"]["structuredContent"]["providers"][0]["key"],
-        "gemini"
+        "antigravity"
     );
     assert_eq!(
         responses[1]["result"]["structuredContent"]["providers"][0]["windows"][0]["remaining_percent"],
@@ -159,19 +161,21 @@ fn mcp_collects_selected_provider_status_without_executing_a_prompt() {
     let cached = responses[2]["result"]["contents"][0]["text"]
         .as_str()
         .expect("status resource should contain JSON text");
-    assert!(cached.contains("\"key\":\"gemini\""));
+    assert!(cached.contains("\"key\":\"antigravity\""));
 }
 
 #[test]
-fn json_status_command_collects_gemini_quota_through_the_real_binary() {
+fn json_status_command_collects_antigravity_quota_through_the_real_binary() {
     let home = TestDirectory::new("status");
-    fs::create_dir_all(home.path().join(".gemini")).expect("Gemini directory should exist");
+    fs::create_dir_all(home.path().join(".gemini/antigravity-cli"))
+        .expect("Antigravity directory should exist");
     fs::write(
-        home.path().join(".gemini/oauth_creds.json"),
+        home.path()
+            .join(".gemini/antigravity-cli/antigravity-oauth-token"),
         r#"{"access_token":"test-token"}"#,
     )
-    .expect("Gemini credentials should exist");
-    let (endpoint, server) = start_gemini_fixture();
+    .expect("Antigravity credentials should exist");
+    let (endpoint, server) = start_code_assist_fixture();
 
     let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
         .args(["--json"])
@@ -192,9 +196,16 @@ fn json_status_command_collects_gemini_quota_through_the_real_binary() {
     assert_eq!(value["collection"]["outcome"], "complete");
     assert_eq!(
         value["catalog"].as_array().expect("catalog array").len(),
-        76
+        75
     );
-    assert_eq!(value["providers"][0]["key"], "gemini");
+    assert_eq!(value["providers"][0]["key"], "antigravity");
+    assert_eq!(value["providers"][0]["status"], "ok");
+    assert_eq!(
+        value["providers"][0]["windows"][0]["label"],
+        "gemini-3.5-flash"
+    );
+    assert_eq!(value["models"][0]["provider_id"], "antigravity");
+    assert_eq!(value["models"][0]["id"], "gemini-3.5-flash");
     assert_eq!(
         value["providers"][0]["windows"][0]["remaining_percent"],
         50.0
@@ -224,13 +235,15 @@ fn dashboard_serves_embedded_html_over_loopback() {
 #[test]
 fn dashboard_serves_normalized_status_json() {
     let home = TestDirectory::new("dashboard-status");
-    fs::create_dir_all(home.path().join(".gemini")).expect("Gemini directory should exist");
+    fs::create_dir_all(home.path().join(".gemini/antigravity-cli"))
+        .expect("Antigravity directory should exist");
     fs::write(
-        home.path().join(".gemini/oauth_creds.json"),
+        home.path()
+            .join(".gemini/antigravity-cli/antigravity-oauth-token"),
         r#"{"access_token":"test-token"}"#,
     )
-    .expect("Gemini credentials should exist");
-    let (endpoint, server) = start_gemini_fixture();
+    .expect("Antigravity credentials should exist");
+    let (endpoint, server) = start_code_assist_fixture();
     let (mut child, address) = start_dashboard(|command| {
         command
             .env("AIFUEL_HOME", home.path())
@@ -252,7 +265,7 @@ fn dashboard_serves_normalized_status_json() {
 
     assert!(response.starts_with("HTTP/1.1 200"));
     assert!(response.contains(r#""schema_version": 1"#));
-    assert!(response.contains(r#""key": "gemini""#));
+    assert!(response.contains(r#""key": "antigravity""#));
 }
 
 /// Start the dashboard and return the process plus its loopback address.
