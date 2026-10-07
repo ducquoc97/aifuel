@@ -16,7 +16,7 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(10);
+const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(crate) type AsyncRunExecutor =
     for<'a> fn(
