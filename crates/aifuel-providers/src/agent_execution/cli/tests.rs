@@ -240,3 +240,27 @@ fn run_timeout_bounds_provider_capability_preflight() {
             .contains("provider capability preflight timed out")
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn preflight_accepts_slow_provider_launchers() {
+    // Wrapped executables (launcher shims, status trackers) can need more than
+    // a few seconds just to answer `--help`; preflight must allow them instead
+    // of failing the run before the provider ever starts.
+    let directory = TestDirectory::new("slow-launcher");
+    let program = install_fake_cli(
+        &directory.0,
+        "if [ \"$1\" = \"--help\" ]; then sleep 12; printf '%s\\n' '--prompt --approval-mode --output-format'; exit 0; fi\nprintf 'done\\n'",
+        "",
+    );
+    let mut request = cli_test_request();
+    request.working_directory = None;
+    request.timeout = Some(Duration::from_secs(45));
+
+    let result = read_only_test_adapter(program)
+        .execute(&request, &RunCancellationToken::new())
+        .expect("preflight should allow slow launcher wrappers");
+
+    assert_eq!(result.status, RunStatus::Succeeded);
+    assert_eq!(result.output, "done\n");
+}
