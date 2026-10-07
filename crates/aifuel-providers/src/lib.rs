@@ -72,7 +72,7 @@ pub use integrations::{
 pub use model_catalog::{ProviderCatalogDiscovery, ProviderCatalogModel, discover_model_catalog};
 pub use monitoring::{CollectionConfig, ProviderMonitoring};
 pub use opencode_runtime::{OpenCodeAdapter, opencode_adapter};
-pub use registration::agent_mcp_registration_adapter;
+pub use registration::{agent_mcp_registration_adapter, agent_mcp_registration_host_ids};
 pub(crate) use registration::codex_mcp_runtime_entry;
 pub use wire::{WireAdapterError, WireExecutionAdapter, serves as wire_serves};
 
