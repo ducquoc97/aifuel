@@ -11,7 +11,15 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     &["--prompt", "--plan", "--output-format"],
     build_args,
     parse_output,
-    ExecutionCapabilities::new(true, false, false, false).with_prompt_completion(),
+    // Read-only runs the Copilot CLI's `--plan` session mode: the harness
+    // itself blocks task-directed file/shell writes until approval, verified
+    // on WSL with Copilot CLI 1.0.91 (a `bash` write attempt inside the
+    // session folder was refused by the tool layer and produced no file).
+    // The mode does not scope a workspace boundary, so workspace-write stays
+    // blocked.
+    ExecutionCapabilities::new(true, false, false, false)
+        .with_read_only()
+        .with_prompt_completion(),
 )
 // Use the documented flag; the `copilot version` command checks for updates.
 .with_version_probe(&["--version"])

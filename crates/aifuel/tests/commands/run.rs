@@ -46,12 +46,7 @@ fn aifuel(directory: &TestDirectory) -> Command {
 
 #[test]
 fn run_rejects_prompt_only_read_only_without_verified_provider_enforcement() {
-    for (provider, executable) in [
-        ("claude", "claude"),
-        ("copilot", "copilot"),
-        ("gemini", "gemini"),
-        ("antigravity", "agy"),
-    ] {
+    for (provider, executable) in [("gemini", "gemini"), ("antigravity", "agy")] {
         let directory = TestDirectory::new(&format!("{provider}-prompt-read-only"));
         install_fake_command(directory.path(), executable);
 
@@ -83,6 +78,67 @@ fn run_rejects_prompt_only_read_only_without_verified_provider_enforcement() {
             "expected a read-only enforcement error for {provider}, got {stderr:?}"
         );
         assert!(stdout.is_empty(), "{provider} must not launch: {stdout:?}");
+    }
+}
+
+#[test]
+fn read_only_run_passes_native_enforcement_flags_to_supported_providers() {
+    // Enforcement evidence: Claude Code 2.1.289 plan mode refused a
+    // task-directed write on WSL; Copilot CLI 1.0.91's tool layer blocked a
+    // `bash` write attempt in `--plan` mode. The fake executable records the
+    // spawn arguments, so the accepted run proves the enforced flags reach
+    // the provider process. Claude's session driver then dies on the fake's
+    // answer to its initialize handshake, which is expected here.
+    for (provider, executable, enforced_flags) in [
+        ("claude", "claude", "--permission-mode plan"),
+        ("copilot", "copilot", "--plan"),
+    ] {
+        let directory = TestDirectory::new(&format!("{provider}-read-only-flags"));
+        install_fake_command(directory.path(), executable);
+        // Copilot's availability comes from provider-owned file evidence
+        // alone, so the run needs the credential marker discovery looks for.
+        if provider == "copilot" {
+            let copilot_home = directory.path().join(".copilot");
+            fs::create_dir_all(&copilot_home).expect("Copilot home should be creatable");
+            fs::write(copilot_home.join("config.json"), "{}")
+                .expect("Copilot credential marker should be writable");
+        }
+        let args_log = directory.path().join(format!("{provider}.args"));
+
+        let output = Command::new(env!("CARGO_BIN_EXE_aifuel"))
+            .args([
+                "run",
+                "--provider",
+                provider,
+                "--model",
+                "test-model",
+                "--prompt",
+                "hello",
+                "--access",
+                "read-only",
+                "--output",
+                "text",
+            ])
+            .env("PATH", path_with(directory.path()))
+            .env("HOME", directory.path())
+            .env("USERPROFILE", directory.path())
+            .env("APPDATA", directory.path())
+            .env("XDG_CONFIG_HOME", directory.path().join(".config"))
+            .env("AIFUEL_FAKE_ARGS_LOG", &args_log)
+            .output()
+            .expect("aifuel should start");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("cannot enforce read-only access"),
+            "{provider} read-only was validated as supported: {stderr}"
+        );
+        let args = fs::read_to_string(&args_log)
+            .unwrap_or_else(|_| panic!("{provider} must be spawned: {stderr}"));
+        assert!(
+            args.contains(enforced_flags),
+            "{provider} read-only must pass {enforced_flags:?} to the native CLI, got {args:?}"
+        );
     }
 }
 
@@ -220,7 +276,7 @@ fn model_catalog_list_reports_a_missing_cache_without_fabricating_models() {
 }
 
 /// Claude's usage fixture reports 90% remaining while Codex's reports 60%
-/// (5% of its primary window used): Claude ranks first, its read-only
+/// (5% of its primary window used): Claude ranks first, its workspace-write
 /// validation error is a pre-execution launch failure, and the chain moves
 /// to Codex, which runs the prompt.
 #[test]
@@ -245,6 +301,8 @@ fn auto_run_falls_back_to_the_next_ranked_provider_on_a_launch_error() {
             "auto",
             "--prompt",
             "hello",
+            "--access",
+            "workspace-write",
             "--output",
             "json",
         ])
@@ -291,7 +349,7 @@ fn auto_run_falls_back_to_the_next_ranked_provider_on_a_launch_error() {
     assert!(
         attempts[0]["detail"]
             .as_str()
-            .is_some_and(|detail| detail.contains("read-only")),
+            .is_some_and(|detail| detail.contains("workspace-write")),
         "the launch error should carry Claude's validation reason: {stdout}"
     );
     assert_eq!(attempts[1]["provider"], "codex");
@@ -485,6 +543,8 @@ fn explicit_provider_never_falls_back() {
             "test-model",
             "--prompt",
             "hello",
+            "--access",
+            "workspace-write",
             "--output",
             "json",
         ])
@@ -496,7 +556,7 @@ fn explicit_provider_never_falls_back() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(2), "{stderr}");
     assert!(
-        stderr.contains("read-only"),
+        stderr.contains("workspace-write"),
         "the failure should be Claude's own validation: {stderr}"
     );
     assert!(

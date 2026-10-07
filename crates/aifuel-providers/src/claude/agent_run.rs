@@ -11,9 +11,19 @@ pub(crate) static ADAPTER: CliExecutionAdapter = CliExecutionAdapter::new(
     &["--print", "--permission-mode", "--output-format"],
     build_args,
     parse_output,
-    // `plan` and `acceptEdits` do not prove a workspace boundary. Keep
-    // workspace-write blocked until native effect tests establish one.
-    ExecutionCapabilities::new(true, false, false, true).with_prompt_completion(),
+    // Read-only is enforced by `--permission-mode plan`: Claude Code denies
+    // task-directed file/shell writes in plan mode. Verified on WSL with
+    // Claude Code 2.1.289 (a write attempt to the workspace produced no
+    // file; only the native plans directory received bookkeeping). The
+    // runtime session path adds `--permission-prompt-tool stdio` and
+    // withholds `accept` on read-only runs, so the model cannot approve its
+    // own plan exit; this one-shot `--print` path passes
+    // `--permission-prompts none`, which auto-denies any prompt instead.
+    // `acceptEdits` does not prove a workspace boundary, so workspace-write
+    // stays blocked until native effect tests establish one.
+    ExecutionCapabilities::new(true, false, false, true)
+        .with_read_only()
+        .with_prompt_completion(),
 )
 // The Anthropic CLI reference documents this non-interactive version flag.
 .with_version_probe(&["--version"])
@@ -35,6 +45,8 @@ fn build_args(request: &RunRequest) -> Result<Vec<String>, AgentRunError> {
             aifuel_core::AccessMode::WorkspaceWrite => "acceptEdits".to_owned(),
             aifuel_core::AccessMode::Full => "bypassPermissions".to_owned(),
         },
+        "--permission-prompts".to_owned(),
+        "none".to_owned(),
         "--output-format".to_owned(),
         output_format(request.output).to_owned(),
     ]);
